@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/agent-runtime-codex
 
-This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+
+## 0.8.0
+Thu, 15 Oct 2026 10:58:00 GMT
+
+### Minor changes
+
+- Enable scoped owner and peer messaging with ordered native result reports for ordinary members. Centralize Core reporting in AgentService, preserve request-only managed-leader replies, and make result observation optional for host compatibility.
+
+### Patches
+
+- Reuse shared activity opening and remove unused restart and argument validation mechanisms.
 
 ## 0.7.0
 Fri, 09 Oct 2026 03:05:18 GMT

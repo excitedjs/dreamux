@@ -1,6 +1,18 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+
+## 6.4.0
+Thu, 15 Oct 2026 10:58:00 GMT
+
+### Minor changes
+
+- Add FeishuInstanceApi.submitToBoundTeam so an extension can deliver its own input to the one Team the conversation still routes to, and answer with Core's actual admission outcome.
+- Support ordinary Feishu groups switched to thread message format as Collaboration Spaces with one Team per topic: thread_id names the topic whatever the group's current message format is, that format only gates automatic provisioning per message, and saved topic bindings stay effective in chat message format.
+
+### Patches
+
+- Reject bindings with a missing or non-string team_name when loading routing state.
 
 ## 6.3.0
 Fri, 09 Oct 2026 03:05:18 GMT

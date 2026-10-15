@@ -2,6 +2,37 @@
   "name": "@excitedjs/feishu-channel",
   "entries": [
     {
+      "version": "6.4.0",
+      "tag": "@excitedjs/feishu-channel_v6.4.0",
+      "date": "Thu, 15 Oct 2026 10:58:00 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Reject bindings with a missing or non-string team_name when loading routing state."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Add FeishuInstanceApi.submitToBoundTeam so an extension can deliver its own input to the one Team the conversation still routes to, and answer with Core's actual admission outcome."
+          },
+          {
+            "comment": "Support ordinary Feishu groups switched to thread message format as Collaboration Spaces with one Team per topic: thread_id names the topic whatever the group's current message format is, that format only gates automatic provisioning per message, and saved topic bindings stay effective in chat message format."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.12.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.7.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-transport\" to `0.12.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "6.3.0",
       "tag": "@excitedjs/feishu-channel_v6.3.0",
       "date": "Fri, 09 Oct 2026 03:05:18 GMT",

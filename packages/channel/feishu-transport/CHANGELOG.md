@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+
+## 0.12.0
+Thu, 15 Oct 2026 10:58:00 GMT
+
+### Minor changes
+
+- getChatMode reports the effective conversation format: an ordinary group using thread message format answers topic alongside a native topic group, and the raw chat_mode/group_message_type fields stay transport-internal.
 
 ## 0.11.0
 Fri, 09 Oct 2026 03:05:18 GMT

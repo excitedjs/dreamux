@@ -2,6 +2,66 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.27.0",
+      "tag": "@excitedjs/dreamux_v0.27.0",
+      "date": "Thu, 15 Oct 2026 10:58:00 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Encourage useful TeamMate delegation without per-turn skill reloads, document standing identity consequences, and move collaboration usage guidance into teamwork."
+          },
+          {
+            "comment": "Preserve current cron edits during update, startup and fire settlement; remove unreachable internal branches and duplicate provider checks."
+          },
+          {
+            "comment": "Clarify ordinary TeamMate guidance for sharing useful findings and coordinating with peers through send and list."
+          },
+          {
+            "comment": "Simplify ordinary TeamMate prompts to describe send/list capabilities and automatic owner reporting in the Codex collaboration style."
+          },
+          {
+            "comment": "Clarify that TeamLeader TeamMate collaboration is separate from native subagent delegation rules, and encourage useful delegation across different models."
+          },
+          {
+            "comment": "Explain TeamMate collaboration benefits and complementary model perspectives without restricting delegated task categories or changing native collaboration mode."
+          },
+          {
+            "comment": "Update the dispatcher maintenance reference to describe that saved Feishu topic bindings stay effective across group message-format switches and that a switch is never a hand-edit repair case."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Remove all core forwarding exports and aggregate import paths; import symbols directly from their defining modules and retain package-main/CLI smoke coverage."
+          },
+          {
+            "comment": "Enable scoped owner and peer messaging with ordered native result reports for ordinary members. Centralize Core reporting in AgentService, preserve request-only managed-leader replies, and make result observation optional for host compatibility."
+          }
+        ],
+        "none": [
+          {
+            "comment": "Test-only coverage for the Feishu extension input-delivery capability: a new integration test drives the real Core submission, dedup and rendering path through the real Channel provider. No shipped behavior or version change."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.9.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.8.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.12.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.7.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `6.4.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.26.0",
       "tag": "@excitedjs/dreamux_v0.26.0",
       "date": "Fri, 09 Oct 2026 03:05:18 GMT",

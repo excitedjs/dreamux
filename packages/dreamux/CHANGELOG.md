@@ -1,6 +1,24 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+
+## 0.27.0
+Thu, 15 Oct 2026 10:58:00 GMT
+
+### Minor changes
+
+- Remove all core forwarding exports and aggregate import paths; import symbols directly from their defining modules and retain package-main/CLI smoke coverage.
+- Enable scoped owner and peer messaging with ordered native result reports for ordinary members. Centralize Core reporting in AgentService, preserve request-only managed-leader replies, and make result observation optional for host compatibility.
+
+### Patches
+
+- Encourage useful TeamMate delegation without per-turn skill reloads, document standing identity consequences, and move collaboration usage guidance into teamwork.
+- Preserve current cron edits during update, startup and fire settlement; remove unreachable internal branches and duplicate provider checks.
+- Clarify ordinary TeamMate guidance for sharing useful findings and coordinating with peers through send and list.
+- Simplify ordinary TeamMate prompts to describe send/list capabilities and automatic owner reporting in the Codex collaboration style.
+- Clarify that TeamLeader TeamMate collaboration is separate from native subagent delegation rules, and encourage useful delegation across different models.
+- Explain TeamMate collaboration benefits and complementary model perspectives without restricting delegated task categories or changing native collaboration mode.
+- Update the dispatcher maintenance reference to describe that saved Feishu topic bindings stay effective across group message-format switches and that a switch is never a hand-edit repair case.
 
 ## 0.26.0
 Fri, 09 Oct 2026 03:05:18 GMT

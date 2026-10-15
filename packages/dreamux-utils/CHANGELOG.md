@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+
+## 0.7.0
+Thu, 15 Oct 2026 10:58:00 GMT
+
+### Minor changes
+
+- Add shared activity file opening with canonical root and file identity checks.
 
 ## 0.6.0
 Fri, 09 Oct 2026 03:05:18 GMT

@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Fri, 09 Oct 2026 03:05:18 GMT and should not be manually modified.
+This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+
+## 0.9.0
+Thu, 15 Oct 2026 10:58:00 GMT
+
+### Minor changes
+
+- Enable scoped owner and peer messaging with ordered native result reports for ordinary members. Centralize Core reporting in AgentService, preserve request-only managed-leader replies, and make result observation optional for host compatibility.
+
+### Patches
+
+- Reuse the shared activity file opener while preserving native evidence, file identity and provider errors.
 
 ## 0.8.0
 Fri, 09 Oct 2026 03:05:18 GMT
