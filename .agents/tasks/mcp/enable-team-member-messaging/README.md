@@ -305,6 +305,25 @@ work categories: 'Delegate exploration, verification, and review'."
 The final capability explanation contains no delegated-task taxonomy. It
 retains the general usefulness criterion, not a fixed set of work types.
 
+### Capability rationale alpha authorization
+
+After the corrected guidance and its CI passed, the operator requested:
+
+> 发一个 alpha 包出来
+
+English rendering: "Publish an alpha package."
+This authorizes a feature-branch alpha of the corrected capability rationale,
+publication-artifact checks, and the associated records. It does not authorize
+installation, restart, merge or Team dissolution. Native mode and effort remain
+user-selected. Release and registry evidence is recorded in verification.md.
+
+The [successful feature-branch release](https://github.com/excitedjs/dreamux/actions/runs/38713522361)
+published `@excitedjs/dreamux@0.27.0-alpha.g4fe2c7166332` after
+[source CI](https://github.com/excitedjs/dreamux/actions/runs/38712075694)
+passed all nine checks. Public registry and tarball checks passed; latest and
+beta did not move. This Team did not install or restart the target, and model
+behavior under this alpha remains unaccepted. PR #475 remains unmerged.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

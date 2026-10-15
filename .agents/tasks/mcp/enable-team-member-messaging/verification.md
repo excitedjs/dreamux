@@ -518,3 +518,29 @@ the final operator identity remain in their existing positions.
   no new real-model behavior, installation, restart or alpha evidence is claimed.
 - The prior pending follow-up patch note was replaced with a Rush-generated
   capability-rationale note, retaining the user-selected native-mode boundary.
+
+### Capability rationale alpha publication
+
+- [Source CI](https://github.com/excitedjs/dreamux/actions/runs/38712075694)
+  passed all nine checks, including both Linux and macOS Rush jobs.
+- The operator-authorized [feature-branch release](https://github.com/excitedjs/dreamux/actions/runs/38713522361)
+  succeeded and published `@excitedjs/dreamux@0.27.0-alpha.g4fe2c7166332`.
+  Build, built-CLI smoke, prerelease apply, pack/manifest/public-content audit
+  and OIDC publication passed. Stable version and publish jobs were skipped;
+  no release version commit or source tag was made.
+- The first fixed-version registry request returned HTTP 404, while the first
+  tag lookup still returned the preceding alpha. A later fixed-version lookup,
+  metadata request and tarball download succeeded. Publication was not rerun;
+  no registry authentication or operator configuration was changed.
+- Root downloaded the public tarball and verified its SHA-512 integrity against
+  registry metadata, manifest name/version and registry-installable dependencies
+  with no remaining workspace protocol. Compiled TeamLeader guidance matches
+  the source paragraph; the bundled teamwork file matches source byte-for-byte.
+  Superseded imperative task categories and exemption wording are absent from
+  both surfaces. The canonical public-content tarball scan passed.
+- Before/after public tag snapshots confirmed alpha points to the new version,
+  latest remains `0.26.0`, and beta remains `0.27.0-beta.277`.
+- This is publication and artifact evidence only. This Team did not install,
+  restart or run model acceptance on the released alpha. Native mode and effort
+  remain user-selected; earlier live evidence retains its recorded provenance.
+  The PR remains unmerged under the existing merge hold.
