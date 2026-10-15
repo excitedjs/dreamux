@@ -23,8 +23,8 @@ Current source owners:
 ## Design Principles
 
 - An identity statement says who the model is and what it has. The TeamLeader
-  additionally prefers Dreamux TeamMates for delegated exploration, verification,
-  and review, encourages useful collaboration across different models, and
+  additionally explains the team-collaboration benefits of Dreamux TeamMates,
+  including context continuity and complementary model perspectives, and
   routes missing guidance to `teamwork` (see Prompt Shape). Its spawn description
   identifies the independent Dreamux runtime session. Neither surface changes
   native collaboration mode or exempts a call from runtime instructions.
@@ -176,8 +176,8 @@ Append prompts layer onto an already-capable runtime prompt, so they should be
 short role deltas rather than a full reintroduction.
 
 The TeamLeader append prompt names its identity, MCP servers, and workspace
-facts, prefers TeamMates for delegated exploration, verification and review,
-encourages useful delegation across different models, and routes missing
+facts, explains why TeamMates' workspace sharing, context continuity and model
+diversity make them better suited to team collaboration, and routes missing
 collaboration guidance to `teamwork`. The TeamLeader spawn description identifies
 the independent Dreamux runtime-session mechanism. This is a TeamLeader role
 delta, not a Dispatcher prompt change or a runtime policy override. Ultra and

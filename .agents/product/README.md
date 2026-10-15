@@ -266,9 +266,10 @@ the same change that touches it.
 
 - **TeamLeaders are guided to delegate useful independent work.** Their launch
   prompt encourages TeamMate collaboration when it can save time or improve
-  quality, preferring different models for complementary perspectives. It
-  directs delegated exploration, verification, and review to Dreamux TeamMates
-  rather than native subagents. The TeamLeader's spawn description identifies
+  quality. It explains why TeamMates are better suited to team collaboration:
+  shared workspaces, context continuity, and different models for complementary
+  perspectives. It expresses a capability-based preference over native subagents,
+  not a prohibition on them. The TeamLeader's spawn description identifies
   the separate Dreamux runtime-session mechanism. Native collaboration mode and
   reasoning effort remain the user's choice; Dreamux does not enable Ultra or
   override native delegation restrictions. This guidance is TeamLeader-only.

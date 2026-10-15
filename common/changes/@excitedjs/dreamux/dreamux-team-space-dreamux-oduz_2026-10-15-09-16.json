@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Prefer Dreamux TeamMates for TeamLeader exploration, verification and review while leaving native collaboration mode and reasoning effort to the user.",
+      "comment": "Explain TeamMate collaboration benefits and complementary model perspectives without restricting delegated task categories or changing native collaboration mode.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

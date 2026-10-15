@@ -279,6 +279,32 @@ Local checks and independent follow-up review are recorded in verification.md.
 The existing push/quality authority applies; merge, install, restart and Team
 dissolution remain unauthorized.
 
+The operator then rejected the imperative comparison:
+
+> 写的还是不行，应该是解释： teammate 可以更好的支撑 团队协作，并可调用不同模型进行视角补充。这是一种比原生 subagent 更好的选择。
+>
+> 而不是生硬的  rather than native subagents.
+
+English rendering: "Explain that TeamMates better support team collaboration
+and can use different models for complementary perspectives, making them a
+better choice than native subagents, instead of the blunt 'rather than native
+subagents'."
+
+The launch paragraph and teamwork introduction now explain the actual
+collaboration capabilities behind that preference. The imperative exclusion
+is removed, including its duplicate in the runtime-selection paragraph. Native
+mode and effort remain unchanged and user-selected; this is a copy correction,
+not a new delegation rule or behavioral-acceptance claim.
+
+The operator additionally clarified:
+
+> 另外能力指引这块，你也不应该写那几个限定的工作。 Delegate exploration, verification, and review
+
+English rendering: "The capability guidance should not name those restricted
+work categories: 'Delegate exploration, verification, and review'."
+The final capability explanation contains no delegated-task taxonomy. It
+retains the general usefulness criterion, not a fixed set of work types.
+
 ## Design evidence
 
 The selected solution is final.md. Earlier consultations remain comparison

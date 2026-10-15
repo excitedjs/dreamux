@@ -500,3 +500,21 @@ the final operator identity remain in their existing positions.
   follow-up. A user's non-Ultra explicit-request-only mode may still constrain
   proactive delegation; this change deliberately does not override that mode.
   Earlier releases and model evidence retain their original provenance.
+
+### Capability rationale copy correction
+
+- The operator rejected the blunt task-category directive and requested a
+  reasoned comparison: team collaboration and complementary model perspectives.
+  The launch paragraph now explains workspace sharing, context across turns
+  and different models; the teamwork introduction explains the same benefits.
+  The fixed list of delegated work categories is removed, including its skill
+  duplicate. No tool, provider, configuration or effort setting changes here.
+- Independent read-only review of both changed source surfaces found no
+  blocking issue: no exclusive-capability claim, native-subagent prohibition,
+  runtime override or default Ultra. It did not run tests or certify model
+  behavior. Earlier MCP action-site clarification remains unchanged.
+- Final Rush build, lint, test and typecheck:tests each exited 0. No assertions
+  or dependency inputs changed. The existing opt-in model exclusions remain;
+  no new real-model behavior, installation, restart or alpha evidence is claimed.
+- The prior pending follow-up patch note was replaced with a Rush-generated
+  capability-rationale note, retaining the user-selected native-mode boundary.
