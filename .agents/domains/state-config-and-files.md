@@ -664,10 +664,18 @@ creates and immediately replaces fresh files concurrently. Windows retries a
 temporarily blocked atomic rename for at most one second; it never unlinks the
 committed destination first.
 
-`runServe()` awaits `prepareLogDirectory()` before constructing any file logger.
-Preparation tightens real directories and existing files and rejects linked log
-entries without changing their targets. Newly created Windows log files inherit
-the private directory ACL; synchronous Pino writes retain immediate-exit logs.
+`runServe()` awaits `prepareLogDirectory()` and privately prepares the server,
+channel, and workflow log destinations for its configured dispatcher IDs before
+constructing file loggers. `prepareLogFile()` creates an empty file without
+replacing existing content and confirms current-user ownership. This is needed
+for elevated Windows tokens, whose newly created files otherwise default to
+Administrators ownership despite inheriting a private DACL. Log subdirectories
+are also explicitly owned by the current user, so a later limited service can
+reopen them. Linked log entries are rejected without changing their targets;
+synchronous Pino writes retain immediate-exit logs.
+
+Attachment cache publication likewise sets temporary-file ownership before
+writing bytes and verifies existing files before returning a cache hit.
 
 `WorkflowJournal` prepares access at its owning create/load boundary: new files
 are privately published, and an existing file is tightened before loading its

@@ -24,8 +24,12 @@ import { Server } from '../server.js';
 import { ConfigService } from '../config/service.js';
 import { ProviderRegistry } from '../registry/registry.js';
 import { startPlugins } from '../plugin/host.js';
-import { createLogger, prepareLogDirectory } from '../platform/logger.js';
-import { errorInfo } from '@excitedjs/dreamux-utils';
+import {
+  createLogger,
+  prepareLogDirectory,
+  prepareLogFile,
+} from '../platform/logger.js';
+import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
 import {
   adminSocketLockPath,
   adminSocketPath,
@@ -69,8 +73,21 @@ export async function runServe(): Promise<void> {
 
   await mkdir(stateRoot(), { recursive: true });
   await prepareLogDirectory(logsRoot());
-  await mkdir(channelLogDir(), { recursive: true });
-  await mkdir(workflowLogDir(), { recursive: true });
+  await ensureOwnerOnlyDir(channelLogDir());
+  await ensureOwnerOnlyDir(workflowLogDir());
+  // Dispatcher IDs are fixed by the loaded config for this server lifetime.
+  // Prepare their files before synchronous logger factories can write to them.
+  await Promise.all(
+    [
+      serverLogPath(),
+      ...configService
+        .current()
+        .dispatchers.flatMap(({ id }) => [
+          channelLogPath(id),
+          workflowLogPath(id),
+        ]),
+    ].map(prepareLogFile),
+  );
 
   // The CLI is the only constructor of file-backed loggers; everything else
   // (tests) gets stderr-only defaults. Both stream to stderr too, so a

@@ -18,6 +18,7 @@ import {
   createLogger,
   loggerToLevelFn,
   prepareLogDirectory,
+  prepareLogFile,
 } from '../src/platform/logger.js';
 import {
   expectOwnerOnlyPermissions,
@@ -45,9 +46,12 @@ describe('logger factory', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('creates an owner-only file under a prepared log directory', async () => {
+  it('prepares an owner-only file and directory before synchronous logging', async () => {
     await prepareLogDirectory(dir);
     const filePath = join(dir, 'nested', 'server.log');
+    await prepareLogFile(filePath);
+    await expectOwnerOnlyPermissions(join(dir, 'nested'), 0o700);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
     const logger = createLogger({ name: 'server', filePath, stderr: false });
     logger.info('hello');
 
@@ -59,13 +63,16 @@ describe('logger factory', () => {
 
   it('tightens a pre-existing wider-permission file to 0600', async () => {
     const filePath = join(dir, 'pre.log');
-    writeFileSync(filePath, '', { mode: 0o644 });
+    writeFileSync(filePath, 'existing log line\n', { mode: 0o644 });
     await makeWorldReadable(filePath, 0o644);
     await prepareLogDirectory(dir);
+    await prepareLogFile(filePath);
     await expectOwnerOnlyPermissions(filePath, 0o600);
     const logger = createLogger({ filePath, stderr: false });
     logger.info('x');
-    expect(readFileSync(filePath, 'utf8')).toContain('"msg":"x"');
+    const contents = readFileSync(filePath, 'utf8');
+    expect(contents).toContain('existing log line\n');
+    expect(contents).toContain('"msg":"x"');
   });
 
   it('rejects linked log entries without tightening the external target', async () => {
@@ -146,6 +153,7 @@ describe('logger factory', () => {
   it('writes to both the file and stderr when filePath is set (foreground stays visible)', async () => {
     await prepareLogDirectory(dir);
     const filePath = join(dir, 'dual.log');
+    await prepareLogFile(filePath);
     // We cannot easily capture fd 2 here; assert the file half of the dual
     // stream. The stderr half is exercised by foreground `serve` in practice.
     const logger = createLogger({ name: 'server', filePath });
