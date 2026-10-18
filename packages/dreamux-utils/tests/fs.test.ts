@@ -15,6 +15,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { publishFileExclusive, writeFileAtomic } from '../src/fs.js';
 import { TransactionalStore } from '../src/transactional-store.js';
+import { windowsPowerShellEnvironment } from '../src/process-command.js';
 import { expectOwnerOnlyPermissions } from './permissions.js';
 
 let root: string;
@@ -159,7 +160,7 @@ try {
     ],
     {
       windowsHide: true,
-      env: { ...process.env, DREAMUX_TEST_LOCK: path },
+      env: { ...windowsPowerShellEnvironment(), DREAMUX_TEST_LOCK: path },
       stdio: ['pipe', 'pipe', 'pipe'],
     },
   );

@@ -7,10 +7,15 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import * as fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openActivityFile } from '../src/index.js';
+
+vi.mock('node:fs/promises', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:fs/promises')>()),
+}));
 
 const messages = {
   notFound: 'native activity missing',
@@ -26,6 +31,8 @@ beforeEach(async () => {
   );
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   await rm(root, { recursive: true, force: true });
 });
 
@@ -92,8 +99,88 @@ describe('openActivityFile', () => {
     ).rejects.toMatchObject({
       detail: 'locator_outside_root',
       message: messages.outsideRoot,
-      cause: { code: 'ELOOP' },
+      ...(process.platform === 'win32' ? {} : { cause: { code: 'ELOOP' } }),
     });
+  });
+
+  it('refuses a leaf directory link before attempting to open its target', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'win32' });
+    const target = join(root, 'target');
+    await mkdir(target);
+    const link = join(root, 'link');
+    await symlink(target, link, 'junction');
+    const opening = vi.spyOn(fs, 'open');
+    await expect(
+      openActivityFile(link, [root], messages),
+    ).rejects.toMatchObject({
+      detail: 'locator_outside_root',
+      message: messages.outsideRoot,
+    });
+    expect(opening).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { opening: 1, phase: 'before' },
+    { opening: 1, phase: 'after' },
+    { opening: 2, phase: 'before' },
+    { opening: 2, phase: 'after' },
+  ])(
+    'rejects a file replaced $phase open $opening and closes held handles',
+    async ({ opening, phase }) => {
+      vi.stubGlobal('process', { ...process, platform: 'win32' });
+      const path = join(root, 'native');
+      await writeFile(path, 'original activity');
+      const handles: fs.FileHandle[] = [];
+      const originalOpen = fs.open;
+      let calls = 0;
+      const replace = async () => {
+        await fs.rename(path, join(root, 'previous'));
+        await writeFile(path, 'replacement activity');
+      };
+      vi.spyOn(fs, 'open').mockImplementation(async (...args) => {
+        calls += 1;
+        const replacing = calls === opening;
+        if (replacing && phase === 'before') await replace();
+        const handle = await originalOpen(...args);
+        handles.push(handle);
+        if (replacing && phase === 'after') await replace();
+        return handle;
+      });
+      await expect(
+        openActivityFile(path, [root], messages),
+      ).rejects.toMatchObject({
+        detail: 'unreadable',
+        message: messages.changedWhileOpening,
+      });
+      expect(handles).toHaveLength(opening);
+      for (const handle of handles) {
+        await expect(handle.stat()).rejects.toMatchObject({ code: 'EBADF' });
+      }
+    },
+  );
+
+  it('rejects a leaf replaced by a directory link during open and closes its handle', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'win32' });
+    const path = join(root, 'native');
+    const target = join(root, 'target');
+    await writeFile(path, 'original activity');
+    await mkdir(target);
+    const originalOpen = fs.open;
+    let held: fs.FileHandle | undefined;
+    vi.spyOn(fs, 'open').mockImplementationOnce(async (...args) => {
+      held = await originalOpen(...args);
+      await fs.rename(path, join(root, 'previous'));
+      await symlink(target, path, 'junction');
+      return held;
+    });
+    await expect(
+      openActivityFile(path, [root], messages),
+    ).rejects.toMatchObject({
+      detail: 'locator_outside_root',
+      message: messages.outsideRoot,
+    });
+    expect(held).toBeDefined();
+    await expect(held!.stat()).rejects.toMatchObject({ code: 'EBADF' });
   });
 
   it('refuses an intermediate directory symlink that escapes the allowed root', async () => {

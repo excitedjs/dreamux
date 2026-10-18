@@ -12,6 +12,7 @@ import { access, chmod, lstat, mkdir, stat, unlink } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { windowsPowerShellEnvironment } from './process-command.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -70,7 +71,10 @@ export async function killProcessGroup(
       ],
       {
         windowsHide: true,
-        env: { ...process.env, DREAMUX_PROCESS_ID: String(pgid) },
+        env: {
+          ...windowsPowerShellEnvironment(),
+          DREAMUX_PROCESS_ID: String(pgid),
+        },
       },
     );
     return;
@@ -183,7 +187,7 @@ async function setWindowsOwnerOnlyAccess(
     {
       windowsHide: true,
       env: {
-        ...process.env,
+        ...windowsPowerShellEnvironment(),
         DREAMUX_PRIVATE_PATH: path,
         DREAMUX_PRIVATE_KIND: kind,
       },
