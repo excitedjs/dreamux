@@ -16,6 +16,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -154,13 +155,15 @@ describe('packages/dreamux/bin/dreamux', () => {
         'console.log(JSON.stringify({ args: process.argv.slice(2), bin: process.env.DREAMUX_BIN })); process.exitCode = 7;',
       );
       const args = ['path with spaces', 'x&y', '{"value":"a b"}'];
+      // DREAMUX_BIN names the installed file, including resolved temp-parent symlinks.
+      const expected = { args, bin: realpathSync(bin) };
       const result = spawnSync(process.execPath, [bin, ...args], {
         encoding: 'utf8',
         env: { ...process.env, DREAMUX_NODE_BIN: process.execPath },
         windowsHide: true,
       });
       expect(result.status).toBe(7);
-      expect(JSON.parse(result.stdout)).toEqual({ args, bin });
+      expect(JSON.parse(result.stdout)).toEqual(expected);
 
       const selectedNode = spawnSync(process.execPath, [bin, ...args], {
         encoding: 'utf8',
@@ -168,7 +171,7 @@ describe('packages/dreamux/bin/dreamux', () => {
         windowsHide: true,
       });
       expect(selectedNode.status).toBe(7);
-      expect(JSON.parse(selectedNode.stdout)).toEqual({ args, bin });
+      expect(JSON.parse(selectedNode.stdout)).toEqual(expected);
 
       const missingNode = spawnSync(process.execPath, [bin], {
         encoding: 'utf8',

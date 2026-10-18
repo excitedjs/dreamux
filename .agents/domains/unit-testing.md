@@ -93,6 +93,10 @@ dimension, retain the result projection and point the folding obligation to
 the test that actually submits multiple inputs and observes their native end.
 
 ## Disposable homes and native platform behavior
+The root `.gitattributes` pins detected text files to LF on checkout, including
+Windows hosts with `core.autocrlf=true`, so the same Prettier gate runs everywhere.
+Launcher path assertions compare canonical installed paths with `realpathSync`:
+macOS temporary directories can resolve through `/var` to `/private/var`.
 
 All package `test` and `test:watch` scripts enter
 `/common/scripts/run-tests.mjs`. It creates a unique short `.dt-*` directory
