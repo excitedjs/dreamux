@@ -21,7 +21,7 @@ The full test run took 6 minutes 42 seconds. Its warnings identify the explicit
 live-model opt-in boundary and expected test logger output. After that run, only
 the new 800-case native publication regression's execution budget was raised
 from 15 to 60 seconds for its 1,600 native permission-process invocations; its
-workload and assertions are unchanged. No production code changed after the run.
+workload and assertions are unchanged. The later hosted-runner findings and their production fixes are recorded below.
 
 ## Hosted runner follow-up
 
@@ -32,6 +32,15 @@ attributes now retain LF under `core.autocrlf=true` (checked with a disposable
 Git checkout), and the launcher test compares the canonical installed path.
 Argument preservation and exit-code assertions are unchanged. The targeted
 Windows launcher suite and its lint/test type checks pass.
+
+The subsequent Windows runner reached the native suite and exposed inherited
+PowerShell 7 module paths shadowing Windows PowerShell modules, plus a leaf-link
+check relying on unavailable Windows O_NOFOLLOW. Native regressions reproduce
+module shadowing and exercise linked leaves and file replacement at both open
+boundaries without requiring file-symlink privileges. Production helpers now
+reset only PSModulePath, and activity reads verify leaf and descriptor identity
+before reading. Live-model fixtures also use native executable resolution and
+PowerShell commands, with private credential-copy roots.
 
 The published alpha was installed globally on the native Windows machine.
 After a first scheduled instance exited with `0xC000013A`, the task was started
@@ -60,10 +69,22 @@ No accepted blocking finding remains unresolved. Product behavior review is
 recorded in the final design. Knowledge links and task records are checked with
 `.agents/scripts/check.sh` before submission.
 
+## Authenticated native model checks
+
+With usable Codex authentication restored, the explicit model gate passed all
+six cases across the three live-model files on native Windows (102 seconds).
+It exercised real model execution, ordinary/ultrathink effort and cold resume,
+persisted session continuity, structured output, in-flight activity reads,
+unbound native turn completion, and issue #63 mid-operation input folding with
+MCP reply/reaction calls. Feishu platform IO was intercepted locally by the
+fixture; these were not live platform sends. Operator authentication and
+configuration were read into private disposable homes, not modified by tests.
+
 ## Coverage boundary
 
 Default installed-Codex checks initialize the real protocol without model auth.
-Model-turn cases remain explicit opt-in and are not certified by these checks.
+Model-turn cases remain explicit opt-in; their separate authenticated result is
+recorded above and is not implied by the default suite.
 Unix-only signal/mode/socket tests remain exercised on the Unix CI matrix;
 Windows runs native ACL, named-pipe and process-tree counterparts. Cross-platform
 CI results and published artifact status are owned by GitHub, not this task record.

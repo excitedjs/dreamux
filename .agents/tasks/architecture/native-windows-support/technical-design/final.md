@@ -8,6 +8,8 @@ Shared async process utilities own PATH/PATHEXT lookup, npm Node shim execution,
 Windows argument preservation and descendant termination. Unix process groups
 retain their existing behavior. Native Windows termination waits for process
 exit so filesystem cleanup follows handle release.
+Windows PowerShell helpers clear inherited PSModulePath so a PowerShell 7 parent
+through Node cannot shadow the native 5.1 modules used for ACLs and scheduled tasks.
 
 ## IPC and providers
 
@@ -36,6 +38,8 @@ preparation precedes synchronous file logging. Atomic writes secure new temporar
 files before content is written. The WorkflowJournal owner prepares privacy at
 creation or recovery load, then appends only to the existing file through its
 serialized queue. Path containment uses native path operations.
+Activity file opens retain Unix O_NOFOLLOW; Windows checks leaf metadata before
+and after each open against the held descriptor before any content is read.
 
 ## Tests and delivery
 

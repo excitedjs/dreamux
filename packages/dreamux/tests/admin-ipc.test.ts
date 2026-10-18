@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { createConnection } from 'node:net';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { windowsPowerShellEnvironment } from '@excitedjs/dreamux-utils';
 
 import { adminJsonInvoker } from '../src/admin/client.js';
 import {
@@ -77,7 +78,7 @@ try {
             '-EncodedCommand',
             Buffer.from(script, 'utf16le').toString('base64'),
           ],
-          { windowsHide: true },
+          { windowsHide: true, env: windowsPowerShellEnvironment() },
         );
         const acl = JSON.parse(stdout) as {
           protected: boolean;

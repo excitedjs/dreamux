@@ -67,6 +67,17 @@ export function environmentValue(
   return key === undefined ? undefined : env[key];
 }
 
+/** Let Windows PowerShell rebuild its own module paths when launched from pwsh. */
+export function windowsPowerShellEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  // A pwsh -> Node -> powershell.exe launch otherwise inherits PowerShell 7's
+  // modules, whose shared names shadow incompatible Windows PowerShell modules.
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'),
+  );
+}
+
 /** Spawn a native executable or a Windows command shim with literal arguments. */
 export async function spawnCommand(
   command: string,

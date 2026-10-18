@@ -36,6 +36,8 @@ against.
   windows, and literal argument forwarding through npm command shims. Standard
   npm Node shims launch their script directly, preserving multiline arguments;
   other batch files reject multiline arguments that `cmd.exe` cannot preserve.
+  `windowsPowerShellEnvironment` lets Windows PowerShell rebuild its module
+  paths instead of inheriting incompatible PowerShell 7 modules through Node.
 - **fs** — atomic-write primitives, one per publish semantic
   (`publishFileExclusive` for create-only, `writeFileAtomic` for overwrite).
   Private Windows files receive a current-user ACL before data is written.
@@ -62,7 +64,10 @@ against.
   (`openActivityFile`, `OpenedActivityFile`,
   `createScanBudget`, `readBytesAt`, `isPathWithin`, `scanDigest`,
   `isScanDigest`, `activityQueryFingerprint`, `SCAN_DISCOVERY_MAX_ENTRIES`,
-  `SCAN_DISCOVERY_MAX_ELAPSED_MS`).
+  `SCAN_DISCOVERY_MAX_ELAPSED_MS`). POSIX opens use `O_NOFOLLOW`; Windows
+  checks the leaf before and after each open and matches both identities to
+  the held descriptor before exposing it for reading. Links and replaced
+  files are rejected, with all failed-open handles closed.
 - **activity-error** — the error a provider-owned Activity reader throws and
   catches for its own control flow, with a `reason` that projects across the
   provider seam (`ActivityError`, `ActivityErrorDetail`,

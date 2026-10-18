@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { windowsPowerShellEnvironment } from '@excitedjs/dreamux-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -32,6 +33,6 @@ try {
       '-EncodedCommand',
       Buffer.from(script, 'utf16le').toString('base64'),
     ],
-    { windowsHide: true },
+    { windowsHide: true, env: windowsPowerShellEnvironment() },
   );
 }

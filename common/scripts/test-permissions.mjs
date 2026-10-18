@@ -41,7 +41,18 @@ $full = @($rules | Where-Object { $_.IdentityReference -eq $sid -and $_.AccessCo
       'powershell.exe',
     ),
     ['-NoProfile', '-NonInteractive', '-Command', script],
-    { windowsHide: true, env: { ...process.env, DREAMUX_TEST_PATH: path } },
+    {
+      windowsHide: true,
+      env: {
+        // PowerShell 7 module paths cannot be inherited by Windows PowerShell.
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key]) => key.toLowerCase() !== 'psmodulepath',
+          ),
+        ),
+        DREAMUX_TEST_PATH: path,
+      },
+    },
   );
   assert.deepEqual(JSON.parse(stdout), { foreign: 0, full: 1, owner: true });
 }
