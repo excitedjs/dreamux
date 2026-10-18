@@ -12,7 +12,7 @@ All four repository gates and the knowledge check were run on the final tree:
 - `node common/scripts/install-run-rush.js typecheck:tests` — SUCCESS. This is
   the gate that proves no test still builds a `FeishuDocCommentText` with the
   removed `quote` field.
-- `.agents/scripts/check.sh` — task records and KB reachability OK.
+- `.agents/scripts/check.mjs` — task records and KB reachability OK.
 - `rush change --verify` — satisfied by three added change files.
 
 ## What the payload actually contains

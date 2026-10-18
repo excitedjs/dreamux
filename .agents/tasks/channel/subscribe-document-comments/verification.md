@@ -11,7 +11,7 @@ reading the summary lines rather than the exit code:
 | `rush lint` | `SUCCESS: 7` / `NO OP: 1` |
 | `rush test` | `SUCCESS: 4` / `SUCCESS WITH WARNINGS: 3` / `NO OP: 1`, no `FAILURE` |
 | `rush typecheck:tests` | `SUCCESS: 7` / `NO OP: 1` |
-| `.agents/scripts/check.sh` | `Task records OK: 41 checked` / `KB OK (262 files)` |
+| `.agents/scripts/check.mjs` | `Task records OK: 41 checked` / `KB OK (262 files)` |
 
 The three warning operations are the codex and claude-code runtime suites
 writing to stderr while asserting error paths; they predate this change and do

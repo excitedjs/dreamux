@@ -68,7 +68,7 @@ execution-safety parser.
 - Check both display fields, unchanged structured action labels/items, and
   original arguments on started/completed activity.
 - Run the repository build, lint, test, and `typecheck:tests` through
-  `node common/scripts/install-run-rush.js`, plus `.agents/scripts/check.sh`
+  `node common/scripts/install-run-rush.js`, plus `.agents/scripts/check.mjs`
   and the task-record validator. Resolve independent review findings.
 - Check the actual Feishu title and expanded code segment when a permitted
   local-built display probe is available; otherwise explicitly report that

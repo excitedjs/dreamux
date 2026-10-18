@@ -13,7 +13,7 @@ the developer and re-run by the TeamLeader for build, lint, and `typecheck:tests
   live Codex suite's own logs.
 - `rush typecheck:tests` — 6 SUCCESS, 2 NO OP.
 - `rush change --verify` and `git diff --check` clean.
-- `.agents/scripts/check.sh` — KB OK, 157 files reachable.
+- `.agents/scripts/check.mjs` — KB OK, 157 files reachable.
 
 ## What the tests lock
 

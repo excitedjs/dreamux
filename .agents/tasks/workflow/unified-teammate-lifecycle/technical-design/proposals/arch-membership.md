@@ -618,7 +618,7 @@ Not deleted (intentionally):
 
 - `rush lint` must still pass; in particular, verify no-sync-IO rule.
 - `rush build` / `rush test` green.
-- `.agents/scripts/check.sh` green after knowledge-base updates (§8).
+- `.agents/scripts/check.mjs` green after knowledge-base updates (§8).
 - No import from `teammate-collection/` into any `teammate-service/` file (enforceable with a simple grep-based lint or import-boundary test).
 
 ### 10.6 Verification of dependency direction

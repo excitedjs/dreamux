@@ -110,7 +110,7 @@ change behavior, grep the KB for the facts you changed; nothing else will.
 Before committing KB changes, run:
 
 ```bash
-.agents/scripts/check.sh
+node .agents/scripts/check.mjs
 ```
 
 It validates links, reachability from `root.md`, domains-page source-path

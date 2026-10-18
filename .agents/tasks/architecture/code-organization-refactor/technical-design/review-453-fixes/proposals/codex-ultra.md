@@ -403,7 +403,7 @@ ordinary explanatory notes, not invented `BREAKING:`/`Rebuild:` instructions.
 
 After source and documentation closeout, run all four repository gates through
 `node common/scripts/install-run-rush.js`: `build`, `lint`, `test`, and
-`typecheck:tests`; also run `.agents/scripts/check.sh`. Report separately:
+`typecheck:tests`; also run `.agents/scripts/check.mjs`. Report separately:
 deterministic owner tests, built public-package loading, real Codex #63 evidence,
 and any actual Claude/Feishu external checks. Fake Feishu transport proves local
 routing and card calls, not real platform delivery. Historical green runs are

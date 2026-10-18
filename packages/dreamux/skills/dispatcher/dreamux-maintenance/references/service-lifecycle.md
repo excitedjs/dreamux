@@ -25,7 +25,11 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
 - Windows installs one `Dreamux-<current-user-SID>` interactive, limited task per
   account, which starts at that user's logon. A different `DREAMUX_ROOT` does
   not create a second managed task. Use `dreamux daemon status` to inspect it.
-  `<DREAMUX_ROOT>/daemon.ps1` is generated and owned by `daemon install`; rerun
+  Before registration, installation prepares current-user ownership and private
+  ACLs for the log directory and existing logs, including daemon stdout/stderr,
+  so logs created by an elevated installer remain usable by the limited task.
+  Dry runs leave permissions unchanged.
+  `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
   installation to refresh its pinned Node command and captured environment.
   Do not hand-edit that launcher.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
@@ -51,7 +55,7 @@ A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
 Windows managed `stop` and `restart` forcefully terminate and await the task
-process tree, including native runtime descendants. They do not guarantee
+Job owned by its Node launcher, including native runtime descendants. They do not guarantee
 graceful draining or completion delivery. Inspect persisted state after restart;
 its normal startup rules determine recovery. Task startup runs at user logon,
 not before a user signs in.

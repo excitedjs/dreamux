@@ -88,7 +88,7 @@ Repository gates:
     and named `origin/main`; no fetch was attempted.
 - `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain workflow --slug unified-teammate-lifecycle`
   - Passed.
-- `.agents/scripts/check.sh`
+- `.agents/scripts/check.mjs`
   - Passed: `KB OK (119 files reachable from root.md)`.
 - `git diff --check`
   - Passed.
@@ -180,7 +180,7 @@ Final repository gates:
   - Passed with the existing baseline-remote warning.
 - `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain workflow --slug unified-teammate-lifecycle`
   - Passed.
-- `.agents/scripts/check.sh`
+- `.agents/scripts/check.mjs`
   - Passed: `KB OK (119 files reachable from root.md)`.
 - `git diff --check`
   - Passed.
@@ -668,7 +668,7 @@ Repo-wide searches confirmed:
   Collection + Service topology.
 - Repaired the archive link to the intentionally removed
   `teammate-collection/owned-teammates.ts`.
-- `.agents/scripts/check.sh`
+- `.agents/scripts/check.mjs`
   - Passed after the latest-`next` task-route merge:
     `KB OK (116 files reachable from root.md)`.
 

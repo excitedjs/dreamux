@@ -29,7 +29,7 @@ after the pre-review fixes, on the branch based on `next` at #444:
   test failed. The developer's run before the comment-only fixes reported 160
   test files and 2,639 tests passed, none skipped, including 10 live Codex
   tests.
-- `.agents/scripts/check.sh`: task records and knowledge base OK.
+- `.agents/scripts/check.mjs`: task records and knowledge base OK.
 
 ## TeamLeader pre-review
 

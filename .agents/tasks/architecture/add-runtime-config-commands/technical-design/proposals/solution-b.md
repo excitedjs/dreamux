@@ -495,7 +495,7 @@ matter.
 | Valid write in file on return and used by next launch | Write, read file, then start a TeamMate with a fake provider and assert the config it received; no restart. |
 | Empty secret keeps stored value | File bytes contain the old secret after a write that sent `''`. |
 | No Command touches `dispatchers` | Output schema has no such key; a hand-written `~/` `cwd` value survives a write unchanged. |
-| Maintenance skill | Review of `config-envelope.md` and `feishu-access-v3.md` against the two required statements; `.agents/scripts/check.sh` for the KB side. |
+| Maintenance skill | Review of `config-envelope.md` and `feishu-access-v3.md` against the two required statements; `.agents/scripts/check.mjs` for the KB side. |
 | Gates | The four rush commands, reading the `==[` summary lines, not exit codes. |
 
 ## 10. Open questions that are the operator's

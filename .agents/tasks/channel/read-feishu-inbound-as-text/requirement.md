@@ -143,7 +143,7 @@ says it is a card the model can pull in full with lark-cli.
   carries the body as written, `<at user_id="…">Name</at>` included; a body
   whose escaped size exceeds one card splits into cards that each fit.
 - `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass;
-  `.agents/scripts/check.sh` passes.
+  `.agents/scripts/check.mjs` passes.
 
 ## Decisions and unknowns
 

@@ -30,8 +30,9 @@ covers these steps and explains what `doctor` does and does not verify.
 
 ## Native Windows
 
-Windows runs natively with Node.js 22.7 or newer and Windows PowerShell; WSL
-is not required. After building the checkout, use PowerShell from its root:
+Windows runs natively with Node.js 22.7 or newer. Normal runtime capabilities
+use Node and native Windows bindings; PowerShell is used only to manage the
+optional Task Scheduler service. After building the checkout, for example:
 
 ```powershell
 node .\packages\dreamux\bin\dreamux onboard
@@ -47,7 +48,7 @@ The managed service is one Scheduled Task for the current user, starts at
 user logon, and runs with limited privileges. `daemon start`, `stop`, `restart`
 and `uninstall` manage it. Windows stop/restart forcefully terminate the full
 process tree; they do not drain active turns. The generated
-`<DREAMUX_ROOT>/daemon.ps1` captures the Node command and service environment;
+`<DREAMUX_ROOT>/daemon.mjs` captures the Node command and service environment;
 rerun `daemon install` to refresh it rather than editing the script.
 
 Local administration uses a private named pipe, and Codex uses child stdio.

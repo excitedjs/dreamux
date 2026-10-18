@@ -527,7 +527,7 @@ change follows from this consumer-scope decision.
   the live receive-side uncertainty belongs only to the new native-post path.
 - Verify the observed platform-rejection envelope through logging and MCP,
   alongside cancellation/network-error identity and partial-send observation.
-- Run monorepo build, lint, test, and `typecheck:tests`; run `.agents/scripts/check.sh`.
+- Run monorepo build, lint, test, and `typecheck:tests`; run `.agents/scripts/check.mjs`.
 - Generate Rush change notes for the changed channel/transport contracts and
   creation-time reply guidance, and actionable send failures. Identity formats
   remain readable as they are;

@@ -308,7 +308,7 @@ the four Rush gates run; a test that fails is deleted and logged in
 | 2 | Team-then-Dispatcher order, existing error contracts | Trace of `TeamService.admit` (service.ts:552-555) composing `assertOpen` before dispatcher admission; error table §4.4 cites unchanged classes/codes. No error class or message is edited anywhere in the diff |
 | 3 | Admitted-before-close retains tracking, runtime stop, lock handoff/release, finalization | Whole-diff structural accounting: the PR's touched ranges exclude `createFreshEntity`'s body, `selfCloseIfClosing`, `heldMembers`, `AgentService.lock`, `run.ts`. PR #460's undo path cited as the already-landed lock-release fix (not re-fixed) |
 | 4 | Queued delivery, stop-and-reclaim, R67 order, no second close flag | Diff accounting: no completion-router, dissolve, or `WorkflowService` lifecycle edit; no new flag/token type in the diff |
-| — | Regression net | `rush build`, `rush lint` (dependency-cruiser layering holds: `service/agent` collection tier may still import its own `platform/work-fence` type as today), `rush test`, `rush typecheck:tests`, plus `.agents/scripts/check.sh` for the knowledge updates |
+| — | Regression net | `rush build`, `rush lint` (dependency-cruiser layering holds: `service/agent` collection tier may still import its own `platform/work-fence` type as today), `rush test`, `rush typecheck:tests`, plus `.agents/scripts/check.mjs` for the knowledge updates |
 
 Predicted test impact: **none**. No live test constructs Workflow TeamMates or
 pins the wrapper (the workflow-run suite's `createLocked` cases were deleted in

@@ -7,7 +7,6 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { execFile } from 'node:child_process';
 import {
   link,
   mkdir,
@@ -17,12 +16,10 @@ import {
   writeFile,
   type FileHandle,
 } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
-import { promisify } from 'node:util';
+import { dirname } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { setWindowsOwnerOnlyAccess } from './windows-security.js';
 
-const execFileAsync = promisify(execFile);
-let windowsIdentity: Promise<string> | undefined;
 const WINDOWS_RENAME_LOCK_TIMEOUT_MS = 1_000;
 const WINDOWS_RENAME_LOCK_RETRY_MS = 25;
 
@@ -139,31 +136,13 @@ async function writeTemporaryFile(
     await writeFile(path, data, { flag: 'wx', mode });
     return;
   }
-  // Set the new file's DACL before putting any private data in it. Unlike
-  // chmod, icacls enforces owner-only access on Windows regardless of parent.
+  // Set the new file's owner and DACL before putting private data in it.
+  // Elevated tokens can create files owned by Administrators with explicit
+  // default grants, which removing inherited entries alone does not remove.
   const handle = await open(path, 'wx', mode);
   try {
     if ((mode & 0o077) === 0) {
-      const system32 = join(
-        process.env['SystemRoot'] ?? 'C:\\Windows',
-        'System32',
-      );
-      windowsIdentity ??= execFileAsync(
-        join(system32, 'whoami.exe'),
-        ['/user', '/fo', 'csv', '/nh'],
-        { windowsHide: true },
-      ).then(({ stdout }) => {
-        const sid = stdout.match(/S-1-\d+(?:-\d+)+/);
-        if (sid === null)
-          throw new Error('whoami did not return the current Windows user SID');
-        return sid[0];
-      });
-      const sid = await windowsIdentity;
-      await execFileAsync(
-        join(system32, 'icacls.exe'),
-        [path, '/inheritance:r', '/grant:r', `*${sid}:F`],
-        { windowsHide: true },
-      );
+      await setWindowsOwnerOnlyAccess(path, 'file');
     }
     await handle.writeFile(data, 'utf8');
     return handle;

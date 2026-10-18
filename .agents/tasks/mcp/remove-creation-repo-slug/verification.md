@@ -14,7 +14,7 @@ supported repo inputs, and temporary Git worktree naming/branch behavior.
 ## Checks
 
 - Task-record validation: Passed on 2026-09-09.
-- `.agents/scripts/check.sh`: Passed on 2026-09-09 (193 reachable files).
+- `.agents/scripts/check.mjs`: Passed on 2026-09-09 (193 reachable files).
 - `git diff --check`: Passed on 2026-09-09.
 - Rush dependency installation: `node common/scripts/install-run-rush.js update`
   failed on 2026-09-09 before dependency installation. Rush refuses to install

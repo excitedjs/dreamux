@@ -30,6 +30,7 @@ import {
   type FileLedgerEntry,
 } from '../platform/file-ledger.js';
 import { pathExists } from '../platform/fs-errors.js';
+import { prepareLogDirectory } from '../platform/logger.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import { logsRoot, stateRoot } from '../platform/paths.js';
 import {
@@ -217,6 +218,9 @@ export async function installUserService(
   if (unit.platform === 'launchd') {
     await registerLaunchd(unit.path, unitStatus, options);
   } else if (unit.platform === 'windows') {
+    // An elevated installer can create Administrators-owned logs. Prepare
+    // their user ownership before the limited task tries to open them.
+    if (!options.answers.dryRun) await prepareLogDirectory(logDir);
     await registerWindowsService(
       unit.path,
       options.host.runner,

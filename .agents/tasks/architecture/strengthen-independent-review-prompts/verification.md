@@ -53,7 +53,7 @@ recorded as follow-up candidates; neither changes this skill-only patch.
 - Skill frontmatter validation: the skill-creator `quick_validate.py` over
   `.agents/skills/dev-workflow` — passed.
 - `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain architecture --slug strengthen-independent-review-prompts` — passed.
-- `.agents/scripts/check.sh` — passed.
+- `.agents/scripts/check.mjs` — passed.
 - `git diff --check` — passed.
 
 Rush build, lint, test, and type-test gates were not run because no package,

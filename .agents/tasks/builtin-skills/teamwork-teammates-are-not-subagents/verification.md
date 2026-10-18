@@ -8,7 +8,7 @@
   tests that read the skill file (`mcp-tool-descriptions`,
   `bundled-skill-sources`, `team-leader-prompt`) stay green; the fragments the
   first one rejects are absent from the skill body.
-- `.agents/scripts/check.sh` and `git diff --check` — passed.
+- `.agents/scripts/check.mjs` and `git diff --check` — passed.
 
 ## Not verified
 

@@ -115,7 +115,7 @@ the environment-injected hook override trap. Config/state/maintenance, neutral
 contracts, CLI, glossary, and root routing are unchanged and need no update.
 Knowledge validation passed with
 `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain channel --slug display-turn-usage-summary`,
-`.agents/scripts/check.sh` (206 reachable files), and `git diff --check HEAD`.
+`.agents/scripts/check.mjs` (206 reachable files), and `git diff --check HEAD`.
 The final `rush smoke-built-cli` also passed. Implementation and knowledge closeout
 are complete; the task's done state does not assert green live verification or
 merge readiness. Delivery is draft-only until the outstanding gate is cleared.

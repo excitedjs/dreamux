@@ -131,10 +131,10 @@ Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
   and `.npmrc` are shared canonical guardrails with the sibling repo; if a
   guardrail false-positives, stop and ask rather than editing a local allowlist.
 - **The anti-leak pre-commit gate is mandatory.** `common/git-hooks/pre-commit`
-  runs gitleaks over staged changes and `common/scripts/check-internal-content.sh`
+  runs gitleaks over staged changes and `common/scripts/check-internal-content.mjs`
   over staged content, and it fails the commit when gitleaks is not installed.
   Skipping is not permitted: never commit with `--no-verify`, and never work
-  around a missing binary. Install it — `common/scripts/install-gitleaks.sh` —
+  around a missing binary. Install it — `node common/scripts/install-gitleaks.mjs` —
   and retry. This applies to CI and release automation too; the release bot
   commits through the same hook on purpose.
 - **No synchronous blocking IO in package source:** `/packages/*/src/**` must
@@ -190,7 +190,7 @@ Before finishing a non-trivial PR, ask:
 If yes, update `.agents/` in the same PR and run:
 
 ```bash
-.agents/scripts/check.sh
+node .agents/scripts/check.mjs
 ```
 
 ## Changelog Responsibility

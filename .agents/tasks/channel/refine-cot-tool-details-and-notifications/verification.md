@@ -22,7 +22,7 @@ Passed on this amendment:
 - `node common/scripts/install-run-rush.js test`, including real Codex 0.153.4
   and the issue #63 non-blocking-inbound live gate.
 - `node common/scripts/install-run-rush.js typecheck:tests`.
-- Task-record validation, `.agents/scripts/check.sh` (227 reachable files),
+- Task-record validation, `.agents/scripts/check.mjs` (227 reachable files),
   and `git diff --check`.
 - Rush patch change file generated with `rush change --bulk`; validation with
   `rush change --verify --target-branch origin/next --no-fetch` passed.
@@ -73,7 +73,7 @@ Validation on the initial status implementation (before the final heading remova
   Codex integration and non-blocking-inbound live gate. Runtime tests emitted
   expected diagnostic warnings; the command exited successfully.
 - `node common/scripts/install-run-rush.js typecheck:tests`: passed.
-- `.agents/scripts/check.sh`: passed (223 files reachable).
+- `.agents/scripts/check.mjs`: passed (223 files reachable).
 - `git diff --check`: passed.
 - Rush patch change file: generated with `rush change --bulk`; verification
   against `origin/next` passed after the change file was committed.
@@ -182,7 +182,7 @@ Final local checks after the budget-rule withdrawal:
 | Rush smoke-built-cli | Passed, 1 operation |
 | git diff --check | Passed |
 | dev-workflow skill validation | Passed |
-| .agents/scripts/check.sh | Passed, 223 reachable KB files |
+| .agents/scripts/check.mjs | Passed, 223 reachable KB files |
 
 The removed test covered only the rejected shared START budget. The approved
 long-name test and existing event-size assertions remain. No live Feishu probe or

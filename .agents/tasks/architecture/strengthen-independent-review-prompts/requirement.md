@@ -74,7 +74,7 @@
   adding a new turn or review seat or duplicating that posture in the work prompt.
 - The change does not alter existing review counts, workflow topology, approval
   authority, write boundaries, or shared review machinery.
-- Skill frontmatter validation, task validation, `.agents/scripts/check.sh`, and
+- Skill frontmatter validation, task validation, `.agents/scripts/check.mjs`, and
   `git diff --check` pass.
 
 ## Decisions

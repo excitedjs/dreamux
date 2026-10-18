@@ -290,15 +290,12 @@ describe('real Codex #63 inbound gate', () => {
         });
         await server.start();
         const marker = `ISSUE63_LIVE_MARKER_${Date.now()}`;
-        const blockingCommand =
-          process.platform === 'win32'
-            ? 'Start-Sleep -Seconds 6; Write-Output issue63-sleep-done'
-            : 'sleep 6; echo issue63-sleep-done';
+        const blockingCommand = `node -e "setTimeout(() => console.log('issue63-sleep-done'), 6000)"`;
         await routes!.onMessage(
           inbound(
             [
               'Integration gate. Follow this exact sequence.',
-              `First call exec_command${process.platform === 'win32' ? ' using PowerShell' : ''} with cmd ${JSON.stringify(blockingCommand)} and wait for completion.`,
+              `First call exec_command with cmd ${JSON.stringify(blockingCommand)} and wait for completion.`,
               'After it returns, inspect later Feishu input folded into this turn.',
               'Reply through the Feishu MCP reply tool to the later marker message, echoing its marker verbatim.',
               'Do not react or send a plain assistant answer before the reply tool call.',

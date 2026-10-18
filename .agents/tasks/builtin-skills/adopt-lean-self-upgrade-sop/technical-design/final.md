@@ -141,7 +141,7 @@ proposal, every non-upgrade maintenance reference, and every other domain doc.
 
 ## Verification plan
 
-- `.agents/scripts/check.sh` — link and orphan integrity after the doc edits.
+- `.agents/scripts/check.mjs` — link and orphan integrity after the doc edits.
 - `node common/scripts/install-run-rush.js build`, `lint`, `test` — green.
 - Targeted: `packages/dreamux/tests/feishu-allow-chats-release-contract.test.ts`
   and `packages/dreamux/tests/bundled-skill-sources.test.ts` still pass.
@@ -161,7 +161,7 @@ Two blockers were accepted and applied; both are recorded with evidence in
    no reference defines once the staged SOP is gone. Both now state only what a
    routed owner actually requires. This is a deliberate, reported deviation from
    adopting the supplied text verbatim.
-2. `.agents/scripts/check.sh` — the required knowledge gate could not run on stock
+2. `.agents/scripts/check.mjs` — the required knowledge gate could not run on stock
    macOS bash 3.2. One `case` inside a process substitution became a
    parameter-expansion prefix test. The operator extended the implementation
    boundary to cover this file.

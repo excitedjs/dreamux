@@ -33,7 +33,7 @@
   boundary and a matching submission carries Claude Code's sentence as its own
   input item. Behaviors 1 to 6 are not implemented.
 - Verification: `rush build`, `rush lint`, `rush test` and
-  `rush typecheck:tests` all pass, plus `.agents/scripts/check.sh`. The
+  `rush typecheck:tests` all pass, plus `.agents/scripts/check.mjs`. The
   narrowing is covered by test cases for `ultrathinking`, `x_ultrathink_y` and
   `prefixULTRATHINKsuffix`; the last of these asserted the opposite before this
   change.

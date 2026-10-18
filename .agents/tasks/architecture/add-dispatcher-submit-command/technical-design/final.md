@@ -258,7 +258,7 @@ an upgrade: describe them plainly and never use `BREAKING:`, `Rebuild:`, or
     required; it becomes a `SubmitCommand` / `TeamSubmitCommand`
     shape case.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-  `.agents/scripts/check.sh`.
+  `.agents/scripts/check.mjs`.
 
 ## Review adjudication
 

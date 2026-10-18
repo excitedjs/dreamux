@@ -2332,7 +2332,7 @@ After focused tests, implementation validation is:
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 git diff --check
 ```
 
@@ -3305,7 +3305,7 @@ Focused verification required now:
   and `TeammateService` imports from `teammate-collection`;
 - existing non-blocking inbound, Team dissolve/worktree safety, scoped read,
   shutdown, and persistence tests retain their assertions, followed by Rush
-  build/test and `.agents/scripts/check.sh` in implementation.
+  build/test and `.agents/scripts/check.mjs` in implementation.
 
 Explicitly deferred verification belongs with follow-up issues: generalized
 leases/remote resources, automatic provider resubmit plus request-fingerprint

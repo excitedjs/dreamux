@@ -1003,7 +1003,7 @@ one delivery; assert a codex bound-then-unbound terminal pair preserves order.
   background-work/completion entry in both scopes; `provider-runtime.md` for the
   result sink per provider; the architecture notes and `service-types.ts`
   comment asserting "no Agent-facing tool surface"; role/skill text and tool
-  descriptions. `.agents/scripts/check.sh` in the implementing PR.
+  descriptions. `.agents/scripts/check.mjs` in the implementing PR.
 
 ## R2.10 Lifecycle, concurrency, identity
 

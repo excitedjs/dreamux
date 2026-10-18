@@ -517,7 +517,7 @@ The proposal is complete when:
 - installed Codex and Claude Code clients pass live MCP connection gates;
 - product authorization and lifecycle invariants remain at least as strong as
   the baseline;
-- Rush build, lint, test, built CLI smoke, and `.agents/scripts/check.sh` pass;
+- Rush build, lint, test, built CLI smoke, and `.agents/scripts/check.mjs` pass;
   and
 - the exact implementation head is approved by the resident architecture,
   lifecycle, and complexity reviewers.

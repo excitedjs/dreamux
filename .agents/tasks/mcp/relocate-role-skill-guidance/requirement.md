@@ -247,7 +247,7 @@ calling a tool.
   test passes with names unchanged. Each `SKILL.md` body covers the three
   named outline items and contains no MCP tool name used as an operating
   instruction (tool facts live in descriptions).
-- `rush build`, `rush lint`, `rush test`, and `.agents/scripts/check.sh` pass.
+- `rush build`, `rush lint`, `rush test`, and `.agents/scripts/check.mjs` pass.
 
 ## Decisions and unknowns
 

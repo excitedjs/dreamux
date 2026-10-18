@@ -5,7 +5,6 @@ import { randomUUID } from 'node:crypto';
 
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { windowsPowerShellEnvironment } from '@excitedjs/dreamux-utils';
 
 import { controlUserService } from '../src/daemon/control.js';
 import {
@@ -19,7 +18,10 @@ import {
   runDaemonUninstall,
 } from '../src/daemon/install.js';
 import { getServiceStatus } from '../src/daemon/status.js';
-import { renderWindowsService } from '../src/daemon/windows.js';
+import {
+  renderWindowsService,
+  windowsPowerShellEnvironment,
+} from '../src/daemon/windows.js';
 import {
   ExecaCommandRunner,
   type CommandRunner,
@@ -43,9 +45,9 @@ class WindowsRunner implements CommandRunner {
     expect(command).toBe('powershell.exe');
     const script = Buffer.from(args.at(-1) ?? '', 'base64').toString('utf16le');
     this.calls.push({ command, script });
-    if (script.includes('$task.GetInstances(0)')) {
+    if (script.includes('$task.Definition.Actions.Item(1).Arguments')) {
       return JSON.stringify(
-        this.installed ? { enabled: true, pids: [] } : null,
+        this.installed ? { enabled: true, launcher: null } : null,
       );
     }
     return JSON.stringify(
@@ -105,7 +107,7 @@ describe('Windows managed service', () => {
       unitPath: windowsServiceFile(),
       started: true,
     });
-    expect(runner.calls).toHaveLength(4);
+    expect(runner.calls).toHaveLength(5);
     expect(runner.calls[0]?.command).toBe('powershell.exe');
     expect(runner.calls[0]?.script).toContain(
       '-LogonType Interactive -RunLevel Limited',
@@ -233,7 +235,7 @@ describe('Windows managed service', () => {
         );
       const stdout = join(fixtureDir, 'stdout.log');
       const stderr = join(fixtureDir, 'stderr.log');
-      const script = join(fixtureDir, 'daemon.ps1');
+      const script = join(fixtureDir, 'daemon.mjs');
       await writeFile(
         script,
         renderWindowsService(
@@ -242,26 +244,13 @@ describe('Windows managed service', () => {
           stderr,
         ),
       );
-      const result = await execa(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-WindowStyle',
-          'Hidden',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          script,
-        ],
-        {
-          reject: false,
-          windowsHide: true,
-          env: windowsPowerShellEnvironment(),
-          extendEnv: false,
-        },
-      );
-      expect(result.exitCode).toBe(7);
+      const result = await execa(process.execPath, [script], {
+        reject: false,
+        windowsHide: true,
+        env: windowsPowerShellEnvironment(),
+        extendEnv: false,
+      });
+      expect(result.exitCode, result.stderr).toBe(7);
       expect(
         JSON.parse(
           (await readFile(stdout, 'utf8')).replace(/^\uFEFF/, '').trim(),

@@ -424,7 +424,7 @@ an external stop/start and recovery path.
    owner. These are stable contract markers rather than exact prose snapshots.
 10. Run the skill validator, focused skill/model-facing tests, full
     `rush update`, `rush build`, `rush lint`, test typecheck, and `rush test`,
-    plus `.agents/scripts/check.sh`, `rush change --verify`, and
+    plus `.agents/scripts/check.mjs`, `rush change --verify`, and
     `git diff --check`. All pass before push.
 11. Before final approval, run two fresh-context, plan-only forward evaluations
     with a Dispatcher that is not shown the expected answer: one ordinary

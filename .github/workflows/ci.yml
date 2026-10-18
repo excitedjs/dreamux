@@ -7,7 +7,7 @@
 #   - commit-metadata — reject machine-local / malformed commit author emails
 #     (generic, committed) plus an optional private domain denylist supplied via
 #     the AUTHOR_EMAIL_DENYLIST_REGEX repo variable (kept out of this file).
-#   - shellcheck — lint committed shell entry points and hooks.
+#   - scripts — validate Node entry points and repository gates on all platforms.
 #   - rush — bootstrap, build, typecheck, lint, and test the whole workspace via
 #     the monorepo path (the single supported install path — see decision 0006).
 #     The lint step enforces the issue #85 synchronous-blocking-IO ban.
@@ -117,97 +117,39 @@ jobs:
           '
 
   commit-metadata:
-    name: commit metadata — author email check
+    name: commit metadata - author email check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
       - name: Check commit author emails
         env:
-          # Optional private denylist (an extended-regex), kept in repository
-          # config rather than committed so this public workflow carries no
-          # company-specific policy data. Set it under repo Settings → Secrets
-          # and variables → Actions → Variables, e.g.
-          #   AUTHOR_EMAIL_DENYLIST_REGEX = @([^@]*\.)?example\.com$|@([^@]*\.)?example\.org$
-          # The committed checks below already reject machine-local and
-          # malformed author identities even when this variable is unset.
-          DENYLIST_RE: ${{ vars.AUTHOR_EMAIL_DENYLIST_REGEX }}
-        run: |
-          set -euo pipefail
+          AUTHOR_EMAIL_DENYLIST_REGEX: ${{ vars.AUTHOR_EMAIL_DENYLIST_REGEX }}
+        run: node common/scripts/check-author-emails.mjs
 
-          zero=0000000000000000000000000000000000000000
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            commits=$(git log --format='%H' \
-              "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}")
-          elif [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            commits=$(git log -1 --format='%H' HEAD)
-          elif [ "${{ github.event.before }}" = "$zero" ]; then
-            commits=$(git log -1 --format='%H' "${{ github.event.after }}")
-          else
-            commits=$(git log --format='%H' \
-              "${{ github.event.before }}..${{ github.event.after }}")
-          fi
-
-          fail=0
-          while IFS= read -r c; do
-            [ -z "$c" ] && continue
-            email=$(git log -1 --format='%ae' "$c")
-            # Generic, committed checks: GitHub privacy emails pass; machine-local
-            # and malformed identities are rejected outright.
-            case "$email" in
-              *@users.noreply.github.com)
-                continue
-                ;;
-              *@localhost|*@*.local|*@local)
-                echo "::error::commit $c uses a machine-local author email: $email"
-                fail=1
-                continue
-                ;;
-              *@*)
-                : # has a domain — fall through to the optional private denylist
-                ;;
-              *)
-                echo "::error::commit $c has an invalid author email: $email"
-                fail=1
-                continue
-                ;;
-            esac
-            # Optional private denylist from repo config, enforced only when set —
-            # keeps company-specific domains out of this committed file.
-            if [ -n "${DENYLIST_RE}" ] && printf '%s' "$email" | grep -qiE "${DENYLIST_RE}"; then
-              echo "::error::commit $c author email matches the configured denylist: $email"
-              fail=1
-            fi
-          done <<< "$commits"
-          [ "$fail" = 0 ]
-
-  shellcheck:
-    name: shellcheck
+  scripts:
+    name: repository scripts (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck (linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
-      - name: Install shellcheck (macos)
-        if: runner.os == 'macOS'
-        run: brew install shellcheck
-      - name: shellcheck
-        run: |
-          shellcheck \
-            .agents/scripts/check.sh \
-            common/git-hooks/pre-commit \
-            common/scripts/check-internal-content.sh \
-            common/scripts/install-gitleaks.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check native Node repository tools
+        run: node --test common/scripts/tooling.test.mjs
 
   kb:
     name: knowledge base — link & orphan check
@@ -223,8 +165,14 @@ jobs:
           fetch-depth: 0
       - name: Fetch pull request heads
         run: git fetch --no-tags origin '+refs/pull/*/head:refs/pull/*/head'
-      - name: .agents/scripts/check.sh
-        run: ./.agents/scripts/check.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: .agents/scripts/check.mjs
+        run: node .agents/scripts/check.mjs
 
   rush:
     name: rush — bootstrap / build / typecheck / lint / test (${{ matrix.os }})
@@ -291,13 +239,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
       - name: Install gitleaks
         env:
           GITLEAKS_INSTALL_DIR: ${{ runner.temp }}/gitleaks
-        run: |
-          set -euo pipefail
-          common/scripts/install-gitleaks.sh
-          echo "$GITLEAKS_INSTALL_DIR" >> "$GITHUB_PATH"
+        run: node common/scripts/install-gitleaks.mjs
       - name: gitleaks git (full history, lockfile included, --exit-code 1)
         run: gitleaks git . --config .gitleaks.toml --redact --exit-code 1 -v
 
@@ -317,5 +265,8 @@ jobs:
     # reached the default branch on 2026-09-02 without a gate firing.
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
       - name: check-internal-content (every tracked file)
-        run: common/scripts/check-internal-content.sh --tree
+        run: node common/scripts/check-internal-content.mjs --tree

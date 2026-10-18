@@ -3,7 +3,7 @@
 ## Gates
 
 ```bash
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js lint
 node common/scripts/install-run-rush.js test

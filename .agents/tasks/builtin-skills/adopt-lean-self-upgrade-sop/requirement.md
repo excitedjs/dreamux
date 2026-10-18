@@ -83,7 +83,7 @@ The bundled self-upgrade reference states one runnable four-step procedure:
 - `packages/dreamux/skills/dispatcher/dreamux-maintenance/SKILL.md` — also the two
   sentences that referred to a `private recovery` condition, which lost its owner
   when the staged SOP was deleted. Added during implementation review.
-- `.agents/scripts/check.sh` — one `case` inside a process substitution, which made
+- `.agents/scripts/check.mjs` — one `case` inside a process substitution, which made
   the required knowledge gate unrunnable on stock macOS bash. Pre-existing defect;
   the operator extended the boundary to cover it on 2026-09-02.
 - `.agents/skills/dev-workflow/` — restate the fast path's eligibility as a
@@ -122,7 +122,7 @@ The bundled self-upgrade reference states one runnable four-step procedure:
 - Every command named in the reference exists on the current CLI.
 - No internal identifier, private registry, or sibling-repository name appears
   anywhere in the change.
-- `.agents/scripts/check.sh` passes, and `rush build`, `rush lint`, `rush test`
+- `.agents/scripts/check.mjs` passes, and `rush build`, `rush lint`, `rush test`
   are green.
 - A Rush change file exists for `@excitedjs/dreamux`, typed `patch`, describing
   the simplified guide. Not breaking: no config, state, path, or CLI shape

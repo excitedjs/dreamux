@@ -102,7 +102,7 @@ source. Review closeout changed only documentation and one explanatory comment,
 so the four passing source gates were not rerun. All accepted review findings
 are resolved; final parent-PR product decisions and test restoration remain open.
 
-Knowledge closeout passed `.agents/scripts/check.sh` (51 task records and 310
+Knowledge closeout passed `.agents/scripts/check.mjs` (51 task records and 310
 reachable knowledge files) and `git diff --check`.
 
 ## Coverage limit

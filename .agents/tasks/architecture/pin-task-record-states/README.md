@@ -16,7 +16,7 @@
 
 - Status: Granted by the operator on 2026-09-11 (Feishu group), verbatim: "可以，那边贡献的人多，你先把规则定死了，剩下的状态起一个 workflow 去刷一遍。"
 - Approved implementation boundary: the rule and its enforcement in
-  `init_task.py` and `.agents/scripts/check.sh`, the dev-workflow references
+  `init_task.py` and `.agents/scripts/check.mjs`, the dev-workflow references
   that own the task-record format, and the existing task records and domain
   indexes brought into compliance. No new CI job, and no change to the set of
   nine workflow states.

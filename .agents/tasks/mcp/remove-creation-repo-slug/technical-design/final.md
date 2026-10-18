@@ -59,7 +59,7 @@ this implementation plan.
 - Run the repository Rush gates: `build`, `lint`, `test`, `typecheck:tests`.
   Install workspace dependencies with `rush update` if needed. Do not skip live
   runtime checks silently; report any environmental blocker.
-- Run `.agents/scripts/check.sh` and task-record validation.
+- Run `.agents/scripts/check.mjs` and task-record validation.
 - Inspect the whole diff and have one independent read-only TeamMate review it
   against the requirement and this solution after local checks pass.
 

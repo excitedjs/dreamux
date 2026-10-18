@@ -55,7 +55,7 @@ production-code build before the test-only follow-ups.
 | `node common/scripts/install-run-rush.js typecheck:tests` | Exit 0; eight successful operations; the ESLint config package defines no work for this command. |
 | `git diff --check` | Exit 0 after final follow-up inspection. |
 | Task-record check with `--allow-in-flight` | Exit 0 during pre-review. |
-| `.agents/scripts/check.sh` | Exit 0 after independent review and knowledge closeout, with the task marked done. |
+| `.agents/scripts/check.mjs` | Exit 0 after independent review and knowledge closeout, with the task marked done. |
 | Mandatory pre-commit gates | Passed for the reviewed implementation commit, including staged ESLint, author identity, gitleaks, and internal-content checks. |
 | `node common/scripts/install-run-rush.js change --verify --target-branch origin/next --no-fetch` | Exit 0 after committing the reviewed change; Rush recognized all three package change files. |
 

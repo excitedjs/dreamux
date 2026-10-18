@@ -588,7 +588,7 @@ def check_index(name: str, text: str) -> None:
     carry the task's state. Two copies of one fact in two files is the drift
     itself: the record moves on, the index keeps yesterday's answer, and a
     reader has no way to tell which of the two is stale. That the links resolve
-    is checked once for the whole knowledge base by `.agents/scripts/check.sh`.
+    is checked once for the whole knowledge base by `.agents/scripts/check.mjs`.
     """
     for link, rest in INDEX_BULLET_RE.findall("\n".join(unfenced_lines(text))):
         for state in re.findall(r"`([^`]+)`", rest):

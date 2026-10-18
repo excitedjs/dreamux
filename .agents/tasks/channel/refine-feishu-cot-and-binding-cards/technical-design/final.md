@@ -169,7 +169,7 @@ Core's error vocabulary, poll Team status, or persist a route-removal reason.
   `team.status` call.
 - Update the product catalog and Channel domain for the three removal semantics,
   canonical runtime context, selected Card 2.0 presentation, and successful
-  superseded-anchor terminal; run `.agents/scripts/check.sh`.
+  superseded-anchor terminal; run `.agents/scripts/check.mjs`.
 - Add Rush change files for `@excitedjs/feishu-channel`,
   `@excitedjs/dreamux-types`, and `@excitedjs/dreamux`, then run Rush build,
   lint, test, and `typecheck:tests`. No state rebuild is needed.

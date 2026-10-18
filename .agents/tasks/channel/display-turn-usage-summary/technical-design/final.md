@@ -110,6 +110,6 @@ backfill, transcript scan, query, timer, or additional IO is introduced.
   of an observed live card.
 - One independent read-only implementation review follows the TeamLeader's
   pre-review. Update the product catalog and provider-runtime knowledge for the
-  new row and native accounting scope, then run `.agents/scripts/check.sh`.
+  new row and native accounting scope, then run `.agents/scripts/check.mjs`.
 - No commit, push, PR, merge, runtime installation/restart, or Team dissolution is
   authorized by this solution alone.

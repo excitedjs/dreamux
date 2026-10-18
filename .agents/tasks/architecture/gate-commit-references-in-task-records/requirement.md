@@ -75,7 +75,7 @@ clone together with a full clone of the public repository that includes every
   holds every commit made in it, which are the commits no other checkout can
   see.
 - [Knowledge closeout](/.agents/skills/dev-workflow/references/knowledge-closeout.md)
-  already has the author run `.agents/scripts/check.sh` in their own checkout.
+  already has the author run `.agents/scripts/check.mjs` in their own checkout.
 - #413's label rule already rejects `- Commit:` and `- Baseline:`. The citations
   above sit in prose or under other labels, such as `- Review baseline:`, which a
   label rule does not see.
@@ -101,7 +101,7 @@ prose.
 - The organization-URL half of upstream's gate. Dreamux has one public home:
   the GitHub URLs in tracked files name `excitedjs/dreamux`,
   `excitedjs/claudemux`, and third-party projects. Internal hosts are already
-  `common/scripts/check-internal-content.sh`'s job.
+  `common/scripts/check-internal-content.mjs`'s job.
 - Scanning outside `.agents/tasks/`. Outside the frozen archive no file cites a
   commit, so there is no failure scenario to name there.
 - A pre-commit hook change. The author-side run already happens at knowledge
@@ -110,7 +110,7 @@ prose.
 
 ## Acceptance criteria
 
-- `.agents/scripts/check.sh` fails, naming the file and line, when a line
+- `.agents/scripts/check.mjs` fails, naming the file and line, when a line
   outside a `## Historical …` section, in any file of the task tree, contains a
   hash that resolves to a commit — including inside a fenced block.
 - It passes a 64-character digest, a blob hash, hexadecimal that names no
@@ -119,7 +119,7 @@ prose.
   the label rule.
 - The `kb` job resolves the commits of other pull requests, not only the one
   under test.
-- `.agents/scripts/check.sh` passes after the rewrite.
+- `.agents/scripts/check.mjs` passes after the rewrite.
 
 ## Decisions and unknowns
 

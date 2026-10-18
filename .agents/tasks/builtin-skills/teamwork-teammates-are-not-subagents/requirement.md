@@ -45,7 +45,7 @@
 - `identity` includes standing to contradict the leader's framing.
 - One new situation section covers review rounds that keep adding mechanism.
 - Skill validator, Rush build, lint, test, `typecheck:tests`,
-  `.agents/scripts/check.sh`, and `git diff --check` pass.
+  `.agents/scripts/check.mjs`, and `git diff --check` pass.
 
 ## Decisions and unknowns
 
