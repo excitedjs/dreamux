@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -72,7 +73,8 @@ test('author identity keeps local rejection and applies the denylist to every ad
 });
 
 test('normal Git commits execute the Node hook and cannot bypass either content gate', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'dreamux-hook-'));
+  // Git resolves Windows short names and macOS /var symlinks in its repo root.
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'dreamux-hook-')));
   try {
     await run('git', ['init', '--quiet', dir]);
     await run('git', ['config', 'user.name', 'Fixture'], { cwd: dir });
@@ -183,7 +185,7 @@ test('knowledge checker preserves links, reachability, citations and its Python 
       '[domain](domains/current.md)\n[tasks](tasks/README.md)\n',
     );
     await writeFile(
-      join(dir, '.agents/domains/current.md'),
+      join(dir, '.agents', 'domains', 'current.md'),
       '`/packages/fixture/src/live.ts`\n',
     );
     await writeFile(join(dir, 'packages/fixture/src/live.ts'), 'export {};\n');
@@ -197,7 +199,7 @@ test('knowledge checker preserves links, reachability, citations and its Python 
     const good = await run(process.execPath, command, { cwd: dir });
     assert.match(good.stdout, /Task records OK: 0 checked/);
     assert.match(good.stdout, /KB OK \(2 files/);
-    await writeFile(join(dir, '.agents/orphan.md'), '[broken](absent.md)\n');
+    await writeFile(join(dir, '.agents', 'orphan.md'), '[broken](absent.md)\n');
     await writeFile(join(dir, 'packages/fixture/CLAUDE.md'), '`absent.ts`\n');
     await assert.rejects(
       run(process.execPath, command, { cwd: dir }),
