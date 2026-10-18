@@ -73,6 +73,8 @@ directly; operating-system libraries load only when a Windows operation runs.
 - **windows-job** — native Job ownership for the Windows launch adapter and
   daemon service boundary. Named service Jobs have a protected current-user ACL;
   daemon control can acquire an existing Job or reserve its name before startup.
+  Current-process membership is queried against that exact native Job, so service
+  control can recognize a caller that its own stop operation would terminate.
   Termination waits for its nested trees to exit; the caller retains the Job
   until `close()` so a concurrent service launch cannot reuse its name.
 - **activity-scan** — neutral scan mechanism shared by provider-owned Activity

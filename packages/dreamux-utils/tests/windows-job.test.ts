@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -101,6 +101,33 @@ function retainProcesses(pids: number[]) {
 describe.skipIf(process.platform !== 'win32')(
   'native Windows Job ownership',
   () => {
+    it('distinguishes the current process from a child assigned to the exact Job', async () => {
+      const name = `Local\\Dreamux-membership-${randomUUID()}`;
+      const job = await WindowsJob.create(name);
+      try {
+        expect(await job.containsCurrentProcess()).toBe(false);
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `
+import { WindowsJob } from ${JSON.stringify(jobModule)};
+const job = await WindowsJob.acquire(${JSON.stringify(name)});
+await job.assignCurrentProcess();
+console.log(await job.containsCurrentProcess());
+`,
+          ],
+          { windowsHide: true },
+        );
+        expect(stdout.trim()).toBe('true');
+        expect(await job.containsCurrentProcess()).toBe(false);
+      } finally {
+        await job.terminate();
+        job.close();
+      }
+    });
+
     it('refuses PID-only Windows tree termination without touching the process', async () => {
       await expect(killProcessGroup(process.pid, 'SIGKILL')).rejects.toThrow(
         'launch-owned Job',

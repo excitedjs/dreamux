@@ -725,8 +725,14 @@ pinned Node command and log paths; rerun `dreamux daemon install` to change it,
 rather than hand-editing it. Task start/restart enables the task. Stop disables
 it while holding or reserving the launcher's named native Job, terminates and
 awaits its member process handles, then stops the task action before releasing
-the Job. It restores the task's previous enabled state. Windows managed stop is forced and does
-not promise graceful draining of admitted work. `daemon uninstall` removes the
+the Job. It restores the task's previous enabled state. A restart invoked by a
+Dispatcher must survive termination of its own service Job: control checks
+current-process membership before task mutation and hands a member's operation
+to a short-lived same-user Node process created through WMI. That process uses
+the actual registered task identity and the same stop/start path; it creates no
+additional scheduled task or persisted state. The ordinary restart-intent notice
+remains the self-upgrade completion signal. Windows managed stop is forced and
+does not promise graceful draining of admitted work. `daemon uninstall` removes the
 service and generated launcher; `dreamux uninstall` additionally removes the
 Dreamux root under its existing provider-home exclusion rules.
 
