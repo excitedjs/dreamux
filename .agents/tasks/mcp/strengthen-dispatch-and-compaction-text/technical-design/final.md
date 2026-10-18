@@ -61,7 +61,7 @@ without rewriting unrelated documentation or native protocol handling.
 - Run the repository monorepo gates with
   `node common/scripts/install-run-rush.js`: `build`, `lint`, `test`, and
   `typecheck:tests`; run `update` first if workspace dependencies require it.
-- Run `.agents/scripts/check.sh` and the task initializer's `check` command.
+- Run `.agents/scripts/check.mjs` and the task initializer's `check` command.
 - The COT change is provider-emitted text, not a frontend implementation. Verify
   provider activity output through existing runtime tests; report live Feishu
   card and real-model compliance observations as not run unless actually tested.

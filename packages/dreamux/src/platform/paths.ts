@@ -129,7 +129,15 @@ export function runRoot(): string {
 
 /** Generated Windows user-service launch definition, owned by daemon install. */
 export function windowsServiceFile(): string {
-  return join(dreamuxRoot(), 'daemon.ps1');
+  return join(dreamuxRoot(), 'daemon.mjs');
+}
+
+/** Kernel ownership for this installed launcher, recorded in its definition. */
+export function windowsServiceJobName(): string {
+  const identity = createHash('sha256')
+    .update(resolve(windowsServiceFile()).toLowerCase())
+    .digest('hex');
+  return `Local\\Dreamux-service-${identity}`;
 }
 
 /**

@@ -259,7 +259,7 @@ the earlier unbound-report silence is deliberately replaced under Q1/Q1a.
 No implementation or live acceptance evidence is claimed by this consultation.
 After approval, sync the implementation baseline with `next` and run the
 monorepo's build, lint, test, and `typecheck:tests` gates. Run
-`.agents/scripts/check.sh` at knowledge closeout.
+`.agents/scripts/check.mjs` at knowledge closeout.
 
 | Scenario | Required evidence |
 | --- | --- |

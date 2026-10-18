@@ -80,7 +80,10 @@ The three-way rule, in one line each:
   so no `@types/node` ambient global (`NodeJS`, `Buffer`, and the rest) can
   appear in its declarations, keeping a host typings dependency out of every
   external provider package that compiles against it.
-- `@excitedjs/dreamux-utils` — pure helpers, depends on nothing.
+- `@excitedjs/dreamux-utils` — shared helpers and native process/filesystem
+  capabilities, with no Dreamux package dependency. Koffi provides Windows
+  kernel interfaces that Node does not expose; callers use the same shared
+  capability contracts on every platform.
 - Provider and plugin packages — depend on `dreamux-types` (and may use
   `dreamux-utils`), never on `@excitedjs/dreamux`.
 

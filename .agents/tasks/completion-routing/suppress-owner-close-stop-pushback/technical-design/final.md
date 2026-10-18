@@ -150,7 +150,7 @@ and the admission line, so it is a change of its own.
   not retracted; a run created across the `closeAdmission` fence stops without
   delivery.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-  `.agents/scripts/check.sh`, `git diff --check`.
+  `.agents/scripts/check.mjs`, `git diff --check`.
 
 ## Superseded design
 

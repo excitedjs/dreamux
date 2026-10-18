@@ -50,7 +50,7 @@ the external runtime timed out or produced no mid-turn activity
 node common/scripts/install-run-rush.js change --verify --target-branch origin/next --no-fetch
 PASS
 
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 PASS — 162 files reachable
 
 git diff --check

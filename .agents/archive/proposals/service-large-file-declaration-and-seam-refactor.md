@@ -286,7 +286,7 @@ prepared-session close/reset operations within that sequence.
   declarations live in `scheduler/service.ts`. No other architecture claim
   changes.
 - Add this active proposal to `.agents/root.md`; this is a reachability index
-  update required by `.agents/scripts/check.sh`, not another architecture claim.
+  update required by `.agents/scripts/check.mjs`, not another architecture claim.
 
 ## Planned file list
 
@@ -389,7 +389,7 @@ node common/scripts/install-run-rush.js typecheck:tests --to @excitedjs/dreamux
 node common/scripts/install-run-rush.js build --to @excitedjs/dreamux
 node common/scripts/install-run-rush.js test --to @excitedjs/dreamux
 node common/scripts/install-run-rush.js smoke-built-cli --to @excitedjs/dreamux
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 git diff --check
 ```
 

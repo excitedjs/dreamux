@@ -215,7 +215,7 @@ a full green suite is not evidence that a boundary rule is right.
 
 - Implementation: complete. The 2026-09-01 corrective round and the 2026-09-02
   simplification round both passed TeamLeader pre-review.
-- Knowledge closeout and `.agents/scripts/check.sh`: complete. The accepted
+- Knowledge closeout and `.agents/scripts/check.mjs`: complete. The accepted
   decision record carries the corrected-lifecycle amendment, and
   [`domains/channel.md`](/.agents/domains/channel.md) and
   [`domains/provider-runtime.md`](/.agents/domains/provider-runtime.md) state the

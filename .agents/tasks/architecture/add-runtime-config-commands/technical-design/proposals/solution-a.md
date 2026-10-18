@@ -581,7 +581,7 @@ in this task/change notes, not repair recipes in current references.
 | Valid config committed when write returns and used at next launch | Through the Channel port, change a configured runtime; inspect file, launch a new runtime and observe its create context, and confirm an existing runtime was neither stopped nor reconfigured. Load a previously absent provider through the same importer and launch it. |
 | Empty secret retains stored value | Read/edit/write round trip; reorder Agent array; overlap a real-secret replacement and a write carrying blanks; retain the latest successful value. Cover new id, omitted field, and unchanged non-secret empty value. |
 | No Command reads/writes dispatchers | Closed input rejects `dispatchers`; outputs contain only `agents`; successful write preserves the process-held raw Dispatcher JSON even when disk has been hand-edited. |
-| Maintenance ownership and quiesce guidance | Review owning config/state references against the final implementation; run `.agents/scripts/check.sh`. |
+| Maintenance ownership and quiesce guidance | Review owning config/state references against the final implementation; run `.agents/scripts/check.mjs`. |
 | Full gates | `node common/scripts/install-run-rush.js build`, `lint`, `test`, and `typecheck:tests` must all pass for each completed delivery boundary. Run Rush update if dependency/export wiring requires it. No per-package npm install. |
 
 Additional load-bearing regressions are necessary because the storage criterion
@@ -984,7 +984,7 @@ The revised three PRs are:
    this PR only after both infrastructure PRs meet all four gates.
 
 Every PR runs build, lint, test, and `typecheck:tests`; the relevant KB delta
-also runs `.agents/scripts/check.sh`. Staging is a technical delivery choice,
+also runs `.agents/scripts/check.mjs`. Staging is a technical delivery choice,
 not permission to leave the final architecture with raw-document write bypasses.
 The final exception is the journal's initialization, because it is not a mutable
 JSON document and is expressly outside the document migration.

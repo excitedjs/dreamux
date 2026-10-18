@@ -35,9 +35,11 @@ describe('SupervisedChild', () => {
       } catch {
         /* best-effort cleanup even if the test already exercised stop() */
       }
-      // Belt-and-suspenders: force-kill by pid if stop() somehow didn't land,
-      // so a runaway child can never outlive the test.
-      if (child.pid !== null && isProcessGroupAlive(child.pid)) {
+      if (
+        process.platform !== 'win32' &&
+        child.pid !== null &&
+        isProcessGroupAlive(child.pid)
+      ) {
         try {
           await killProcessGroup(child.pid, 'SIGKILL');
         } catch {
@@ -85,6 +87,123 @@ describe('SupervisedChild', () => {
       const proc = await child.start();
       const [message] = await once(proc, 'message');
       expect(message).toEqual(args);
+    } finally {
+      await child.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves bidirectional fork IPC and immediate target messages', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dreamux fork ipc '));
+    const modulePath = join(root, 'child.cjs');
+    await writeFile(
+      modulePath,
+      `
+      process.send({ ready: true });
+      process.on('message', message => process.send(message));
+    `,
+    );
+    const child = new SupervisedChild({
+      kind: 'fork',
+      modulePath,
+      options: { silent: true },
+    });
+    started.push(child);
+    try {
+      const proc = await child.start();
+      expect((await once(proc, 'message'))[0]).toEqual({ ready: true });
+      const next = once(proc, 'message');
+      const message = {
+        text: 'first\nsecond',
+        path: 'a b',
+        control: { ready: true, started: true },
+      };
+      await new Promise<void>((resolve, reject) =>
+        proc.send(message, (error) => (error ? reject(error) : resolve())),
+      );
+      expect((await next)[0]).toEqual(message);
+    } finally {
+      await child.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'runs NODE_OPTIONS preloads only after acquiring the target tree',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'dreamux preload '));
+      const preload = join(root, 'preload.cjs');
+      await writeFile(
+        preload,
+        `
+      const { spawn } = require('node:child_process');
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'NODE_OPTIONS'));
+      const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore', env });
+      child.once('spawn', () => console.log(JSON.stringify({ pid: child.pid })));
+    `,
+      );
+      const child = new SupervisedChild({
+        kind: 'spawn',
+        command: process.execPath,
+        args: ['-e', 'setInterval(() => {}, 1000)'],
+        options: {
+          env: {
+            ...process.env,
+            NODE_OPTIONS: `--require ${JSON.stringify(preload)}`,
+          },
+        },
+      });
+      started.push(child);
+      try {
+        const proc = await child.start();
+        const [output] = await once(proc.stdout!, 'data');
+        const { pid } = JSON.parse(String(output)) as { pid: number };
+        expect(isProcessAlive(pid)).toBe(true);
+        await child.stop();
+        expect(isProcessAlive(pid)).toBe(false);
+      } finally {
+        await child.stop();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('stopping one tree leaves a separately supervised tree alive', async () => {
+    const first = makeChild('setInterval(() => {}, 1000)');
+    const second = makeChild('setInterval(() => {}, 1000)');
+    await Promise.all([first.start(), second.start()]);
+    const secondPid = second.pid!;
+    await first.stop();
+    expect(isProcessAlive(secondPid)).toBe(true);
+    await second.stop();
+    expect(isProcessAlive(secondPid)).toBe(false);
+  });
+
+  it('delivers the complete final fork message before disconnect and exit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dreamux final ipc '));
+    const modulePath = join(root, 'child.cjs');
+    const payload = 'final result '.repeat(100_000);
+    await writeFile(
+      modulePath,
+      `process.send({ payload: ${JSON.stringify(payload)} }, () => process.disconnect());`,
+    );
+    const child = new SupervisedChild({
+      kind: 'fork',
+      modulePath,
+      options: { silent: true },
+    });
+    started.push(child);
+    try {
+      const proc = await child.start();
+      const messages: unknown[] = [];
+      proc.on('message', (message) => messages.push(message));
+      const closed = once(proc, 'close');
+      // A busy host leaves the forwarding pipe backpressured while the sender
+      // completes its own IPC write and disconnects.
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+      await closed;
+      expect(messages).toHaveLength(1);
+      expect(messages[0]).toEqual({ payload });
     } finally {
       await child.stop();
       await rm(root, { recursive: true, force: true });
@@ -237,7 +356,7 @@ describe('SupervisedChild', () => {
         expect(isProcessAlive(parentPid)).toBe(false);
         expect(isProcessAlive(grandchildPid)).toBe(false);
       } finally {
-        if (isProcessAlive(grandchildPid))
+        if (process.platform !== 'win32' && isProcessAlive(grandchildPid))
           process.kill(grandchildPid, 'SIGKILL');
       }
     },

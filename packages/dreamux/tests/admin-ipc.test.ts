@@ -1,11 +1,13 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execFile } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { windowsPowerShellEnvironment } from '@excitedjs/dreamux-utils';
+import * as windowsPipe from '@excitedjs/dreamux-utils';
+import {
+  currentWindowsUserSid,
+  readWindowsPermissions,
+} from '../../../common/scripts/test-permissions.mjs';
 
 import { adminJsonInvoker } from '../src/admin/client.js';
 import {
@@ -14,7 +16,10 @@ import {
 } from '../src/admin/socket.js';
 import { createLogger } from '../src/platform/logger.js';
 import { adminSocketAddress } from '../src/platform/paths.js';
-import * as windowsPipe from '../src/admin/windows-pipe.js';
+
+vi.mock('@excitedjs/dreamux-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof windowsPipe>()),
+}));
 
 const roots: string[] = [];
 const servers: AdminSocketServer[] = [];
@@ -55,39 +60,17 @@ describe('native local admin IPC', () => {
     'keeps every pipe instance owner-only after repeated client connections',
     async () => {
       const { server, client } = await start('private');
-      const pipeName = adminSocketAddress(server.socketPath).slice(
-        '\\\\.\\pipe\\'.length,
-      );
+      const address = adminSocketAddress(server.socketPath);
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const script = `
-$ErrorActionPreference = 'Stop'
-$pipe = [System.IO.Pipes.NamedPipeClientStream]::new('.', '${pipeName}', [System.IO.Pipes.PipeDirection]::InOut)
-try {
-  $pipe.Connect(5000)
-  $security = $pipe.GetAccessControl()
-  @{ protected = $security.AreAccessRulesProtected; owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value; rules = @($security.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier]) | ForEach-Object { @{ sid = $_.IdentityReference.Value; type = [string]$_.AccessControlType; rights = [string]$_.PipeAccessRights } }) } | ConvertTo-Json -Depth 3 -Compress
-} finally { $pipe.Dispose() }
-`;
-        const { stdout } = await promisify(execFile)(
-          'powershell.exe',
-          [
-            '-NoProfile',
-            '-NonInteractive',
-            '-WindowStyle',
-            'Hidden',
-            '-EncodedCommand',
-            Buffer.from(script, 'utf16le').toString('base64'),
-          ],
-          { windowsHide: true, env: windowsPowerShellEnvironment() },
-        );
-        const acl = JSON.parse(stdout) as {
-          protected: boolean;
-          owner: string;
-          rules: { sid: string; type: string; rights: string }[];
-        };
+        const acl = readWindowsPermissions(address, true);
         expect(acl.protected).toBe(true);
         expect(acl.rules).toEqual([
-          { sid: acl.owner, type: 'Allow', rights: 'FullControl' },
+          {
+            sid: currentWindowsUserSid(),
+            type: 'Allow',
+            mask: 0x1f01ff,
+            flags: 0,
+          },
         ]);
         await expect(client.invoke('echo', {})).resolves.toMatchObject({
           label: 'private',

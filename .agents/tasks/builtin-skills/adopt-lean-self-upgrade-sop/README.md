@@ -20,7 +20,7 @@
   [the final solution](/.agents/tasks/builtin-skills/adopt-lean-self-upgrade-sop/technical-design/final.md#implementation-boundary).
   No `packages/*/src` and no test file may change.
 - Boundary extension: on 2026-09-02 the operator answered "1" to the reviewer's
-  second blocker, adding `.agents/scripts/check.sh` to the writable set so the
+  second blocker, adding `.agents/scripts/check.mjs` to the writable set so the
   required knowledge gate could be made runnable on stock macOS bash.
 
 ## Delivery

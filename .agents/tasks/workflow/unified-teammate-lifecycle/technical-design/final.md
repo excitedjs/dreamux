@@ -1315,7 +1315,7 @@ Provider-private ID use is allowed only inside the matching runtime package.
   without weakened assertions;
 - Rush build, typecheck, test typecheck, lint, and test;
 - Rush change verification;
-- `.agents/scripts/check.sh`;
+- `.agents/scripts/check.mjs`;
 - `git diff --check`;
 - full-diff public-artifact and secret scan.
 

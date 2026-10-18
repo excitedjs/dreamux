@@ -752,7 +752,7 @@ authorization.
 - Rush change files: `@excitedjs/dreamux-utils` (new export),
   `@excitedjs/dreamux` (store refactor + Commands),
   `@excitedjs/feishu-channel` (document stores); plain notes, no
-  `BREAKING:`. Run `.agents/scripts/check.sh`.
+  `BREAKING:`. Run `.agents/scripts/check.mjs`.
 
 ## 10. Staging (infrastructure first; each stage independently shippable)
 

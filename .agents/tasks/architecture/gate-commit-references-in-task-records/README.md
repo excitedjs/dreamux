@@ -38,6 +38,6 @@
   lists what the rewrite left as written and why.
 - Knowledge closeout: Complete. `task-records.md` owns the rule; the `kb` row of
   [CI Gates](/.agents/domains/repository-operations-and-release.md) and the
-  header of `.agents/scripts/check.sh` describe what the job now fetches and
+  header of `.agents/scripts/check.mjs` describe what the job now fetches and
   checks. No package boundary, CLI surface, protocol contract, or persisted
   state shape changed, so no change file is needed.

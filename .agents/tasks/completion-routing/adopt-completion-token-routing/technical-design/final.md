@@ -87,7 +87,7 @@ developer writes code only. After independent review by two seats checking the
 implementation against this architecture, a batch multi-agent stage re-covers
 the deleted areas guided by the acceptance matrix in the requirement. Gates
 before PR: rush build, lint, typecheck, deterministic test suite, `rush change`
-with a breaking note for the provider ABI, and `.agents/scripts/check.sh`.
+with a breaking note for the provider ABI, and `.agents/scripts/check.mjs`.
 
 ## Background-turn repair (2026-09-07)
 

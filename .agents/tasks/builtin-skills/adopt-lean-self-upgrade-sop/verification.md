@@ -10,8 +10,8 @@ Commands, all from the repository root:
 | `node common/scripts/install-run-rush.js lint` | SUCCESS, 7 operations, 1 no-op |
 | `node common/scripts/install-run-rush.js test` | SUCCESS 4, SUCCESS WITH WARNINGS 3, NO OP 1, no failure |
 | `npx vitest run tests/feishu-allow-chats-release-contract.test.ts tests/bundled-skill-sources.test.ts` | 13 tests passed |
-| `.agents/scripts/check.sh` | `KB OK (146 files reachable from root.md)`, exit 0 |
-| `shellcheck .agents/scripts/check.sh` | clean |
+| `.agents/scripts/check.mjs` | `KB OK (146 files reachable from root.md)`, exit 0 |
+| `shellcheck .agents/scripts/check.mjs` | clean |
 | `git diff --check` | clean |
 
 `rush update` needed `--bypass-policy`: this machine sets `core.hooksPath` to an
@@ -55,7 +55,7 @@ so: the two lines are unchanged in the source this SOP came from, so the two
 copies now differ. The deviation was taken because the dangling reference is
 caused by this change's own deletion.
 
-### Blocker 2 — the required `.agents/scripts/check.sh` gate could not run (accepted, fixed under an extended boundary)
+### Blocker 2 — the required `.agents/scripts/check.mjs` gate could not run (accepted, fixed under an extended boundary)
 
 `check.sh` failed to parse on stock macOS bash 3.2, so an acceptance criterion of
 this task could not be met. The defect predates this change: the same failure

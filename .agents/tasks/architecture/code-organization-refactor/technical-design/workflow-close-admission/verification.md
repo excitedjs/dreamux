@@ -42,7 +42,7 @@ added, modified, or deleted. R43's final-parent coverage obligation remains.
 `git diff --check` passes. During implementation/review the KB checker
 reported only the active task-state guard. Final closeout uses the durable
 completed R73 state and leaves remaining parent work explicitly in intake.
-Final `.agents/scripts/check.sh` passed: 51 task records and 327 reachable KB
+Final `.agents/scripts/check.mjs` passed: 51 task records and 327 reachable KB
 files. The staged anti-leak and internal-content scans passed. The ordinary
 minor Rush change note was generated with `rush change`;
 `change --verify --no-fetch --target-branch origin/feat/plugin-system-mvp`

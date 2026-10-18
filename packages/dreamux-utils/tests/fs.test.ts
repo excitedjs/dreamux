@@ -9,24 +9,61 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import * as fs from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { publishFileExclusive, writeFileAtomic } from '../src/fs.js';
 import { TransactionalStore } from '../src/transactional-store.js';
-import { windowsPowerShellEnvironment } from '../src/process-command.js';
 import { expectOwnerOnlyPermissions } from './permissions.js';
+import {
+  holdWindowsReadLock,
+  makeWorldReadable,
+} from '../../../common/scripts/test-permissions.mjs';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
 
 let root: string;
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'dreamux-write-'));
 });
 afterEach(async () => {
+  vi.restoreAllMocks();
   await rm(root, { recursive: true, force: true });
 });
 
 describe('atomic filesystem publication', () => {
+  it.skipIf(process.platform !== 'win32')(
+    'removes explicit default grants and assigns current-user ownership before writing private content',
+    async () => {
+      const originalOpen = fs.open;
+      let privateWrites = 0;
+      vi.spyOn(fs, 'open').mockImplementation(async (path, flags, mode) => {
+        const handle = await originalOpen(path, flags, mode);
+        // Reproduce a creation context whose default DACL contains explicit
+        // foreign grants. No account defaults or pre-existing files change.
+        await makeWorldReadable(String(path), 0o644);
+        const originalWrite = handle.writeFile.bind(handle);
+        vi.spyOn(handle, 'writeFile').mockImplementation(async (...args) => {
+          await expectOwnerOnlyPermissions(String(path), 0o600);
+          privateWrites++;
+          return originalWrite(...args);
+        });
+        return handle;
+      });
+      const path = join(root, 'private.json');
+      expect(await publishFileExclusive(path, 'created')).toBe(true);
+      await writeFileAtomic(path, 'replaced');
+      expect(privateWrites).toBe(2);
+      await expectOwnerOnlyPermissions(path, 0o600);
+      expect(await readFile(path, 'utf8')).toBe('replaced');
+      expect(await readdir(root)).toEqual(['private.json']);
+    },
+    15_000,
+  );
+
   it('writes exact content with private default permissions and no temporary leftovers', async () => {
     const path = join(root, 'state.json');
     await writeFileAtomic(path, '{"a":1}');
@@ -133,50 +170,6 @@ describe('atomic filesystem publication', () => {
     60_000,
   );
 });
-
-/** Hold a real deny-delete Windows file handle until the test releases stdin. */
-async function holdWindowsReadLock(path: string): Promise<() => Promise<void>> {
-  const child = spawn(
-    join(
-      process.env['SystemRoot'] ?? 'C:\\Windows',
-      'System32',
-      'WindowsPowerShell',
-      'v1.0',
-      'powershell.exe',
-    ),
-    [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      `
-$ErrorActionPreference = 'Stop'
-$handle = [System.IO.File]::Open($env:DREAMUX_TEST_LOCK, 'Open', 'Read', 'Read')
-try {
-  [Console]::WriteLine('locked')
-  [Console]::Out.Flush()
-  [Console]::ReadLine() | Out-Null
-} finally { $handle.Dispose() }
-`,
-    ],
-    {
-      windowsHide: true,
-      env: { ...windowsPowerShellEnvironment(), DREAMUX_TEST_LOCK: path },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    },
-  );
-  const closed = once(child, 'close');
-  const ready = once(child.stdout, 'data');
-  await once(child, 'spawn');
-  expect(String((await ready)[0]).trim()).toBe('locked');
-  let released = false;
-  return async () => {
-    if (!released) {
-      released = true;
-      child.stdin.end('\n');
-    }
-    await closed;
-  };
-}
 
 describe('transactional publication owner', () => {
   it('serializes updates and exposes the committed disk value to afterCommit', async () => {

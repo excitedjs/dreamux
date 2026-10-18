@@ -403,11 +403,11 @@ before touching either.
 | 5 npm providers | Loader tests for both import shapes (bare default → provider; plugin refs → plugin); pending change notes rewritten; no Core package-name case in the diff |
 | 6 Pairing expiry | Expiry/retry/approval/concurrent-merge cases in the access owner |
 | 7 COT route retirement | Parent-vs-exact-topic cases; restoration/future-anchor behavior pinned unchanged |
-| 8 Documentation | Product catalog diff, s4b-03 note, `agent-runtime.ts` comment, maintenance reference + `.agents` closeout; `.agents/scripts/check.sh` |
+| 8 Documentation | Product catalog diff, s4b-03 note, `agent-runtime.ts` comment, maintenance reference + `.agents` closeout; `.agents/scripts/check.mjs` |
 | 9 Final-parent coverage | Ledger accounting complete; named locked contracts restored; #63 live gate restored with live evidence when Codex is present; evidence classes labeled |
 
 Gates after closeout: `rush build`, `rush lint`, `rush test`,
-`rush typecheck:tests`, and `.agents/scripts/check.sh`. One developer
+`rush typecheck:tests`, and `.agents/scripts/check.mjs`. One developer
 implements; tests travel with the batch (this is the R43 stage).
 
 ## 6. Rejected alternatives

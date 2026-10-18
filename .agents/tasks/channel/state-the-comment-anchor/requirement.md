@@ -88,7 +88,7 @@ comment could not be read.
   and delivers without it when Feishu does not.
 - The `<quote>` note no longer claims the content is the anchored text.
 - `anchor_deleted` appears only when Feishu says the content was deleted.
-- `build`, `lint`, `test`, `typecheck:tests`, and `.agents/scripts/check.sh` are
+- `build`, `lint`, `test`, `typecheck:tests`, and `.agents/scripts/check.mjs` are
   green, and the knowledge pages that describe the envelope match the code.
 
 ## Decisions and unknowns

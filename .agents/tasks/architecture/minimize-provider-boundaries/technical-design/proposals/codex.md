@@ -1057,7 +1057,7 @@ Final implementation gates are:
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 ```
 
 Also run the repository lint, change-file verification, anti-leak scan, built-in

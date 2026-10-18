@@ -35,7 +35,7 @@ all test suites ran without skips.
 | `node common/scripts/install-run-rush.js test --only @excitedjs/agent-runtime-codex --only @excitedjs/feishu-channel` | Passed, including the added canonical Windows quoting cases. |
 | `node common/scripts/install-run-rush.js test` | Passed with the existing operator Codex proxy supplied through `HTTP_PROXY` and `HTTPS_PROXY`: 149 test files, 2,263 tests, no skips; includes all 9 `codex-live.test.ts` cases on Codex 0.153.4. |
 | `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain channel --slug align-codex-command-display` | Passed with this verification record included. |
-| `.agents/scripts/check.sh` | Passed: 193 files reachable. |
+| `.agents/scripts/check.mjs` | Passed: 193 files reachable. |
 | `git diff --check` | Passed. |
 
 The initial live-test process initialized Codex 0.153.4 but received no model

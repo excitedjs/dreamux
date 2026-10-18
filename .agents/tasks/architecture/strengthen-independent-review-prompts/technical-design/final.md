@@ -41,7 +41,7 @@ Keep every existing reviewer, turn, workflow, and output contract unchanged.
 ## Verification
 
 - Validate the skill frontmatter with the existing skill-creator validator.
-- Run the task checker, `.agents/scripts/check.sh`, and `git diff --check`.
+- Run the task checker, `.agents/scripts/check.mjs`, and `git diff --check`.
 - Use one ordinary read-only implementation review to check wording, ownership,
   and scope. It must not claim to prove the prompt's future effectiveness; that
   remains operator-observed.

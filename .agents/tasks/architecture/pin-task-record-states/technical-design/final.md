@@ -28,7 +28,7 @@ and then leaving the repository holding it.
 - `TRUNK_STATES = {intake, blocked, done}`, rejected unless `--allow-in-flight`
   is passed.
 
-`.agents/scripts/check.sh` calls it as check 5 and never passes
+`.agents/scripts/check.mjs` calls it as check 5 and never passes
 `--allow-in-flight`. CI's existing `kb` job already runs that script, so the
 rule became binding without a new CI job — and without touching
 `.github/workflows`, which needs a push credential this workflow does not have.

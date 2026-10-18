@@ -19,9 +19,9 @@ items and the live-test stalls below are superseded by the rebase verification.
 - `node common/scripts/install-run-rush.js typecheck:tests`: passed after making the intentionally partial Feishu session fake's test-boundary cast explicit.
 - `node common/scripts/install-run-rush.js test`: all provider package suites passed. Dreamux passed 1,071 tests, including the new receipt tests; five existing live Codex tests stalled without model activity or timed out. Their cause was not established in this workspace; no test or assertion was skipped or weakened.
 - `node common/scripts/install-run-rush.js smoke-built-cli`: pending.
-- `common/scripts/install-gitleaks.sh`: passed with the existing network proxy after the direct asset download failed; checksum-verified version 8.30.1 installed. No commit gate was bypassed.
+- `common/scripts/install-gitleaks.mjs`: passed with the existing network proxy after the direct asset download failed; checksum-verified version 8.30.1 installed. No commit gate was bypassed.
 - `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain mcp --slug strengthen-dispatch-and-compaction-text`: passed.
-- `.agents/scripts/check.sh`: passed.
+- `.agents/scripts/check.mjs`: passed.
 - `git diff --check` and `git diff --cached --check`: passed.
 - Rush generated five patch change files with `change --bulk --bump-type patch --target-branch origin/next --no-fetch`; release notes were then scoped to their owning packages. `change --verify` does not count uncommitted notes; its final check is pending the commit.
 
@@ -38,7 +38,7 @@ items and the live-test stalls below are superseded by the rebase verification.
 - `git range-diff` confirmed that the replay-test reconciliation, adjacent test comment, and integration context account for the rebase differences; all three dispatch constants still match `next` before #380 merged exactly.
 - `node common/scripts/install-run-rush.js update`, `build`, `lint`, `typecheck:tests`, `test`, and `smoke-built-cli`: all passed in the receiving workspace. The full test command included real Codex 0.153.4 integration tests; no live-test skip flag was used. The earlier live-test stalls did not recur.
 - `node common/scripts/install-run-rush.js change --verify --target-branch origin/next --no-fetch`: passed after the change files were committed.
-- `.agents/scripts/check.sh`, `git diff --check`, and the mandatory staged ESLint, author identity, gitleaks, and internal-content gates: passed.
+- `.agents/scripts/check.mjs`, `git diff --check`, and the mandatory staged ESLint, author identity, gitleaks, and internal-content gates: passed.
 - [GitHub Actions run 34343587453](https://github.com/excitedjs/dreamux/actions/runs/34343587453): all nine checks passed for the revision the re-review approved, including the Ubuntu and macOS Rush pipelines.
 - The final change after that approval updates documentation only. It follows the normal PR checks before the authorized squash merge; the PR is the authoritative record of that final run and merge.
 

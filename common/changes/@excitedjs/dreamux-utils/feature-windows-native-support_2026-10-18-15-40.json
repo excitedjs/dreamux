@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add native Windows executable and npm shim launching with literal multiline arguments, awaited descendant termination, and owner-only filesystem ACLs.",
+      "comment": "Add native Windows executable and npm shim launching with literal multiline arguments, launch-owned Job Object termination, and owner-only filesystem and pipe ACLs through native bindings. Process and file capabilities no longer invoke PowerShell, taskkill, icacls, or whoami.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-utils"
     }

@@ -868,7 +868,7 @@ line; CI forbids `major`).
 
 **Knowledge delta**: `.agents/reference/current-architecture.md`,
 `channel-runtime.md`, `state-and-paths.md`; a new decision record superseding
-`.agents/decisions/agent-activity-capability.md`; then `.agents/scripts/check.sh`.
+`.agents/decisions/agent-activity-capability.md`; then `.agents/scripts/check.mjs`.
 
 ---
 
@@ -909,7 +909,7 @@ the binding half of `channel-service.test.ts` — with equivalent coverage
 re-established in the Feishu package, not dropped.
 
 Full gate: `node common/scripts/install-run-rush.js build`, then
-`node common/scripts/install-run-rush.js test`, plus `.agents/scripts/check.sh`.
+`node common/scripts/install-run-rush.js test`, plus `.agents/scripts/check.mjs`.
 
 ---
 

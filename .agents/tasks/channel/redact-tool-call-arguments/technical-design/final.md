@@ -101,6 +101,6 @@ untouched; the extension made while chasing the symptoms is reverted.
   projection-level case, with the three that locked the old exemption rewritten
   against the acceptance criteria.
 - `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-  `.agents/scripts/check.sh`.
+  `.agents/scripts/check.mjs`.
 - Independent review by Devbox, which found the last two of the six symptoms
   above; both are covered by the walk.

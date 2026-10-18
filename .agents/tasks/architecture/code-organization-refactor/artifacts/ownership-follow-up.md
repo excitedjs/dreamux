@@ -64,7 +64,7 @@ than the candidate below and should be chosen against current source.
   member construction, Feishu binding/access, plugin initialization, and
   provider submission. Their current behavior is preserved in this pass.
 - Run repository build, lint, test, and `typecheck:tests` after the complete
-  implementation, plus `.agents/scripts/check.sh` for knowledge updates.
+  implementation, plus `.agents/scripts/check.mjs` for knowledge updates.
   R43 still applies to this child PR: no new or repaired unit tests; any
   invalidated deletion must be reported with the exact lost contract for the
   TeamLeader's ledger. Do not remove a test merely to hide a new regression.

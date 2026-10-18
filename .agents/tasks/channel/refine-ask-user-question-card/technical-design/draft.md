@@ -167,7 +167,7 @@ status line take the place of the option panels and buttons.
 ## 5. Verification
 
 - `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`.
-- `.agents/scripts/check.sh`.
+- `.agents/scripts/check.mjs`.
 - Live, once a build carrying the change runs: send a card with `text` holding
   a heading, a list, and a mention, and confirm it renders above the questions;
   submit one card and cancel another and confirm both keep the explanation;

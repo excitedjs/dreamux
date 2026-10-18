@@ -18,7 +18,11 @@ import { createServer, type Server as NetServer, type Socket } from 'node:net';
 import { dirname } from 'node:path';
 
 import type { DreamuxLogger, JsonValue } from '@excitedjs/dreamux-types';
-import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
+import {
+  ensureOwnerOnlyDir,
+  errorInfo,
+  restrictWindowsPipe,
+} from '@excitedjs/dreamux-utils';
 import {
   DreamuxError,
   TransportError,
@@ -37,7 +41,6 @@ import {
 } from '../platform/instance-lock.js';
 import { adminSocketAddress, adminSocketLockPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
-import { restrictWindowsPipe } from './windows-pipe.js';
 
 /**
  * The slice of `Server` this transport actually calls: the admitted Command

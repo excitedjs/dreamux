@@ -10,9 +10,17 @@ import { mkdtemp, rm, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { expectOwnerOnlyPermissions } from './permissions.js';
+import {
+  currentWindowsUserSid,
+  isWindowsAdministrator,
+  readWindowsPermissions,
+  setWindowsFixturePermissions,
+  withWindowsRestorePrivilege,
+} from '../../../common/scripts/test-permissions.mjs';
 
 import {
   isProcessAlive,
@@ -70,57 +78,62 @@ describe('isProcessAlive', () => {
   });
 });
 
-describe('isProcessGroupAlive / killProcessGroup with a real detached child', () => {
-  let child: ReturnType<typeof spawn> | null = null;
+describe.skipIf(process.platform === 'win32')(
+  'isProcessGroupAlive / killProcessGroup with a real detached child',
+  () => {
+    let child: ReturnType<typeof spawn> | null = null;
 
-  afterEach(async () => {
-    if (child && child.pid !== undefined) {
-      try {
-        await killProcessGroup(child.pid, 'SIGKILL');
-      } catch {
-        /* already gone */
+    afterEach(async () => {
+      if (
+        child &&
+        child.pid !== undefined &&
+        child.exitCode === null &&
+        child.signalCode === null
+      ) {
+        try {
+          await killProcessGroup(child.pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
       }
-    }
-    child = null;
-  });
-
-  it('reports a freshly spawned detached child group as alive, then not-alive after SIGKILL', async () => {
-    child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
-      detached: process.platform !== 'win32',
-      windowsHide: true,
+      child = null;
     });
-    await new Promise<void>((resolve, reject) => {
-      child!.once('spawn', () => resolve());
-      child!.once('error', reject);
+
+    it('reports a freshly spawned detached child group as alive, then not-alive after SIGKILL', async () => {
+      child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+      });
+      await new Promise<void>((resolve, reject) => {
+        child!.once('spawn', () => resolve());
+        child!.once('error', reject);
+      });
+      const pgid = child.pid!;
+      // A detached child is its own process-group leader, so its pid == its pgid.
+      expect(isProcessGroupAlive(pgid)).toBe(true);
+
+      const closed = once(child, 'close');
+      await killProcessGroup(pgid, 'SIGKILL');
+      await closed;
+      expect(isProcessGroupAlive(pgid)).toBe(false);
+      // Native Windows termination includes a cold PowerShell/WMI startup on CI.
+    }, 15_000);
+
+    it('killProcessGroup on an already-absent group is a silent no-op (ESRCH swallowed)', async () => {
+      const deadPgid = await getProvablyDeadPid();
+      await expect(
+        killProcessGroup(deadPgid, 'SIGTERM'),
+      ).resolves.toBeUndefined();
     });
-    const pgid = child.pid!;
-    // A detached child is its own process-group leader, so its pid == its pgid.
-    expect(isProcessGroupAlive(pgid)).toBe(true);
 
-    await killProcessGroup(pgid, 'SIGKILL');
-
-    // Give the kernel a moment to reap the signalled group.
-    const deadline = Date.now() + 2_000;
-    while (isProcessGroupAlive(pgid) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    expect(isProcessGroupAlive(pgid)).toBe(false);
-  });
-
-  it('killProcessGroup on an already-absent group is a silent no-op (ESRCH swallowed)', async () => {
-    const deadPgid = await getProvablyDeadPid();
-    await expect(
-      killProcessGroup(deadPgid, 'SIGTERM'),
-    ).resolves.toBeUndefined();
-  });
-
-  it('isProcessGroupAlive/killProcessGroup ignore non-positive or non-finite pgids', async () => {
-    expect(isProcessGroupAlive(0)).toBe(false);
-    expect(isProcessGroupAlive(-5)).toBe(false);
-    await expect(killProcessGroup(0, 'SIGTERM')).resolves.toBeUndefined();
-    await expect(killProcessGroup(-5, 'SIGTERM')).resolves.toBeUndefined();
-  });
-});
+    it('isProcessGroupAlive/killProcessGroup ignore non-positive or non-finite pgids', async () => {
+      expect(isProcessGroupAlive(0)).toBe(false);
+      expect(isProcessGroupAlive(-5)).toBe(false);
+      await expect(killProcessGroup(0, 'SIGTERM')).resolves.toBeUndefined();
+      await expect(killProcessGroup(-5, 'SIGTERM')).resolves.toBeUndefined();
+    });
+  },
+);
 
 describe('ensureOwnerOnlyDir', () => {
   let root: string;
@@ -131,31 +144,25 @@ describe('ensureOwnerOnlyDir', () => {
   });
 
   it.skipIf(process.platform !== 'win32')(
-    'enforces native privacy when an inherited module path shadows Windows PowerShell modules',
+    'enforces native privacy without an external command search path',
     async () => {
-      root = await mkdtemp(join(tmpdir(), 'dreamux-utils-powershell-'));
-      const modules = join(root, 'PowerShell 7 Modules');
-      const security = join(modules, 'Microsoft.PowerShell.Security');
-      await mkdir(security, { recursive: true });
-      await writeFile(
-        join(security, 'Microsoft.PowerShell.Security.psd1'),
-        "@{ ModuleVersion = '7.0.0'; RootModule = 'Security.psm1'; FunctionsToExport = @('Get-Acl') }",
-      );
-      await writeFile(
-        join(security, 'Security.psm1'),
-        "throw 'This module requires PowerShell 7'",
-      );
-      vi.stubEnv(
-        'PSModulePath',
-        `${modules};${process.env['PSModulePath'] ?? ''}`,
-      );
+      root = await mkdtemp(join(tmpdir(), 'dreamux-utils-native-'));
+      vi.stubEnv('PATH', '');
       const target = join(root, 'private');
       await ensureOwnerOnlyDir(target);
       await expectOwnerOnlyPermissions(target, 0o700);
+      expect(readWindowsPermissions(target)).toMatchObject({
+        protected: true,
+        rules: [{ flags: 3 }],
+      });
       const file = join(target, 'private.json');
       await writeFile(file, '{}');
       await ensureOwnerOnlyFile(file);
       await expectOwnerOnlyPermissions(file, 0o600);
+      expect(readWindowsPermissions(file)).toMatchObject({
+        protected: true,
+        rules: [{ flags: 0 }],
+      });
     },
     15_000,
   );
@@ -212,6 +219,35 @@ describe('ensureOwnerOnlyDir', () => {
       /it is owned by uid \d+, not the current user \(uid -1\)/,
     );
   });
+
+  it.skipIf(process.platform !== 'win32')(
+    'refuses a foreign Windows owner without changing its ACL',
+    async (context) => {
+      if (!isWindowsAdministrator()) context.skip();
+      root = await mkdtemp(join(tmpdir(), 'dreamux-utils-foreign-owner-'));
+      const target = join(root, 'foreign');
+      await mkdir(target);
+      const sid = currentWindowsUserSid();
+      withWindowsRestorePrivilege(() =>
+        setWindowsFixturePermissions(target, `O:SYD:P(A;OICI;FA;;;${sid})`),
+      );
+      try {
+        const before = readWindowsPermissions(target);
+        expect(before.owner).toBe('S-1-5-18');
+        await expect(ensureOwnerOnlyDir(target)).rejects.toThrow(
+          'owned by a different Windows user',
+        );
+        expect(readWindowsPermissions(target)).toEqual(before);
+      } finally {
+        withWindowsRestorePrivilege(() =>
+          setWindowsFixturePermissions(
+            target,
+            `O:${sid}D:P(A;OICI;FA;;;${sid})`,
+          ),
+        );
+      }
+    },
+  );
 });
 
 describe('ensureOwnerOnlyFile', () => {

@@ -559,7 +559,7 @@ The revised implementation is acceptable only when these statements are true:
   subscription-channel MCP contract changes, `AgentRuntime.channelInput()`
   hook removal, `InboundDeliveryHooks` removal, `status.json` retirement,
   identity-store/type relocation, and `AgentRuntimePathContext` changes.
-- `.agents/scripts/check.sh`, build, test, and `rush change --verify` pass.
+- `.agents/scripts/check.mjs`, build, test, and `rush change --verify` pass.
 
 ## Consequences
 

@@ -29,7 +29,7 @@ Once closeout is ready, request `done` through a stage-transition card and set t
 state after approval. Before committing, run:
 
 ```bash
-.agents/scripts/check.sh
+node .agents/scripts/check.mjs
 git diff --check
 ```
 

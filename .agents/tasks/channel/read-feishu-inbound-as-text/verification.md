@@ -79,7 +79,7 @@ read. The second is recorded as a known limit in the design.
 ## Gates
 
 `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass on the
-whole repository at the submitted commit; `.agents/scripts/check.sh` passes.
+whole repository at the submitted commit; `.agents/scripts/check.mjs` passes.
 `rush typecheck:tests` is the gate that caught the test files still importing
 `InboundContentPart` and `FeishuMessageReadMode`.
 

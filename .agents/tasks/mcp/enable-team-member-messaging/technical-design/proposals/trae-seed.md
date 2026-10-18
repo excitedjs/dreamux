@@ -538,7 +538,7 @@ idempotency ledger, generation counter, or quiet detector is introduced.
   reopen caller extension; Q3 exclusion), `.agents/domains/provider-runtime.md`
   (sink contract per provider), current-architecture/completion ownership
   notes, role/skill text and tool descriptions. Knowledge check
-  `.agents/scripts/check.sh` in the implementing PR.
+  `.agents/scripts/check.mjs` in the implementing PR.
 
 ## 11. Acceptance criteria mapping
 
@@ -876,7 +876,7 @@ avoids claiming more than "provider-observed normal result".
    prompt states the actual delivery contract and the two tools; Workflow
    line untouched; product catalog background-work bullet reversed for
    ordinary Team members; provider-runtime and architecture docs updated;
-   `.agents/scripts/check.sh` with the PR.
+   `.agents/scripts/check.mjs` with the PR.
 8. **Change/verification.** Ordinary `minor` notes on four packages; no
    `BREAKING:`, no state/config/maintenance change. Gates: build, lint,
    test, `typecheck:tests` (fixtures must adopt the required context field).
@@ -1583,7 +1583,7 @@ review.
    exceptions), and the three envelope forms; product catalog reverses the
    background-silence bullet for ordinary members of **both** owners and
    states the stopped-owner push-back asymmetry; provider-runtime and
-   service docs; `.agents/scripts/check.sh`; ordinary `minor` notes on
+   service docs; `.agents/scripts/check.mjs`; ordinary `minor` notes on
    four packages; no `BREAKING:`.
 
 ## CR2.4 Material disagreements remaining after adjudication

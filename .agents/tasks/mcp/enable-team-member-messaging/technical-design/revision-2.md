@@ -258,7 +258,7 @@ tests without weakening owner-stop/Workflow/folding assertions to obtain green.
 Implementing-PR knowledge: product entries for both scopes, background results,
 peer reopening, terminal-publication stop timing and offline-owner asymmetry;
 provider/service/architecture and role/tool/session contract notes. Run
-`.agents/scripts/check.sh` at closeout. Ordinary minor Rush notes for Core,
+`.agents/scripts/check.mjs` at closeout. Ordinary minor Rush notes for Core,
 types and both adapters; no state/config/path migration or BREAKING note.
 
 ## 7. Compatibility, accounting, and risk

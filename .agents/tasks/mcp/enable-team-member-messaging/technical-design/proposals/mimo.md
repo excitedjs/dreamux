@@ -433,7 +433,7 @@ named addition (the result sink, the member delegate, the `attrs` thread).
 | Peer send reopens a closed member; teardown fences hold | existing reopen path through the member delegate | Reopen test via peer send; refusal during Team teardown |
 | Workflow members: no tools, locked input refused, script results, no duplicate report | construction-time arm + existing lock | `createLocked` entity has no member catalog and no result reporting; peer send to locked member refused |
 | Validate through both in-tree runtimes; busy differences documented | provider wiring + docs | Live tests fail loudly when Codex is absent (repo rule); fixtures cover the sink contract in both providers |
-| Update role instructions, tool descriptions, product behavior, owning docs | §11 knowledge delta | `.agents/scripts/check.sh` green with the implementation PR |
+| Update role instructions, tool descriptions, product behavior, owning docs | §11 knowledge delta | `.agents/scripts/check.mjs` green with the implementation PR |
 
 Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests` all
 green. Load-bearing tests (completion folding, owner-stop suppression, the
@@ -1222,7 +1222,7 @@ their unbound coverage, never the fold. Docs in the same change: product
 catalog (member messaging; the background-work bullet reversed for ordinary
 members of both owners; the stopped-owner asymmetry stated), provider-runtime
 (sink contract, ordering rule), current-architecture and service notes, role
-and tool copy; `.agents/scripts/check.sh` with the implementation.
+and tool copy; `.agents/scripts/check.mjs` with the implementation.
 
 ## 2.13 Acceptance and verification mapping
 

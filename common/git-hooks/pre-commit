@@ -1,186 +1,21 @@
-#!/bin/sh
-# Local pre-commit pre-flight. Three fast gates that shorten the feedback loop
-# before CI:
-#
-#   1. staged-eslint — lint staged package TypeScript against each package's
-#      ESLint flat config. This enforces the source max-lines cap, the issue #85
-#      n/no-sync ban, import / syntax backstops, and package-specific guards.
-#   2. author-identity — verify the commit author email is well-formed, is not
-#      a machine-local identity, and (optionally) is not on a private denylist.
-#      Mirrors the `commit-metadata` job in `.github/workflows/ci.yml` so a bad
-#      author email fails in <100 ms locally instead of minutes later in CI.
-#   3. anti-leak — scan the *staged* changes with gitleaks. dreamux is a PUBLIC
-#      repo: company-internal content (Feishu ids, tokens, private-mirror
-#      registry URLs, secrets) must never be committed.
-#   4. internal-content — scan the *staged* changes for internal identifiers and
-#      paths that `.gitleaks.toml` deliberately does not cover, because that
-#      config is shared verbatim with the internal sibling repository where
-#      those paths are legitimate.
-#
-# The ESLint gate fails if package dependencies are missing because Rush only
-# installs this hook after `rush install` / `rush update`, which should also
-# install the package-local eslint binaries. The anti-leak gate FAILS HARD when
-# gitleaks is not installed: a guardrail that silently steps aside is not a
-# guardrail. Install it with `common/scripts/install-gitleaks.sh`.
-#
-# Rush installs this script into .git/hooks on `rush install` / `rush update`.
-# If your hooks aren't wired up yet, point git at this directory manually:
-#   git config core.hooksPath common/git-hooks
-#
-# The optional denylist in gate (2) mirrors the CI-side repository variable:
-#   AUTHOR_EMAIL_DENYLIST_REGEX
-# Set it as an (extended, case-insensitive) regex — matching author emails are
-# rejected. Example (bash):
-#   export AUTHOR_EMAIL_DENYLIST_REGEX='@([a-z0-9-]+\.)*(example\.com|example\.org)$'
-# Keep the regex out of committed files: this is a public repo and the denylist
-# is operator-owned configuration.
+#!/usr/bin/env node
+// Rush copies this hook to .git/hooks, so locate its implementation via Git.
+const { execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
 
-repo_root=$(git rev-parse --show-toplevel)
-
-# --- 1. staged ESLint gate ---------------------------------------------------
-# Lint only staged package src/tests .ts files, each against its owning package's
-# flat config. This keeps the hook fast while exercising the same rules as
-# `rush lint` for files that are about to be committed.
-staged_ts=$(git diff --cached --name-only --diff-filter=ACMR -- '*.ts')
-if [ -n "$staged_ts" ]; then
-  eslint_failed=0
-  eslint_missing=0
-  oldifs=$IFS
-  IFS='
-'
-  set -f # filenames are literal; do not glob-expand them
-  for f in $staged_ts; do
-    [ -n "$f" ] || continue
-    # Walk up to the nearest ancestor holding an eslint.config.js (package root).
-    d=$(dirname "$f")
-    pkg=""
-    while [ "$d" != "." ] && [ "$d" != "/" ]; do
-      if [ -f "$repo_root/$d/eslint.config.js" ]; then
-        pkg=$d
-        break
-      fi
-      d=$(dirname "$d")
-    done
-    [ -n "$pkg" ] || continue
-    rel=${f#"$pkg"/}
-    case "$rel" in
-      src/*.ts|tests/*.ts) ;;
-      *) continue ;;
-    esac
-    eslint_bin="$repo_root/$pkg/node_modules/.bin/eslint"
-    if [ ! -x "$eslint_bin" ]; then
-      eslint_missing=1
-      continue
-    fi
-    if ! (
-      cd "$repo_root/$pkg" || exit 1
-      "$eslint_bin" "$rel"
-    ); then
-      eslint_failed=1
-    fi
-  done
-  set +f
-  IFS=$oldifs
-  if [ "$eslint_failed" = 1 ]; then
-    echo "[staged-eslint] ESLint flagged staged package TypeScript." >&2
-    echo "[staged-eslint] Fix it before committing — CI runs the same rules." >&2
-    exit 1
-  fi
-  if [ "$eslint_missing" = 1 ]; then
-    echo "[staged-eslint] eslint is missing in at least one package." >&2
-    echo "[staged-eslint] Run: node common/scripts/install-run-rush.js update" >&2
-    echo "[staged-eslint] Then retry the commit." >&2
-    exit 1
-  fi
-fi
-
-# --- 2. author-identity gate ------------------------------------------------
-# Rejects malformed and machine-local author emails, plus any email matching
-# the optional AUTHOR_EMAIL_DENYLIST_REGEX. Semantics are intentionally
-# identical to the `commit-metadata` / "Check commit author emails" step in
-# .github/workflows/ci.yml so a local commit aborts with the same reason CI
-# would have failed 5+ minutes later.
-#
-# Prefer the GIT_AUTHOR_EMAIL env var set by `git commit -c --author` etc.,
-# then fall back to the resolved git config value (covers the common path of
-# `user.email` in repo / global / system config order).
-author_email="${GIT_AUTHOR_EMAIL:-$(git config user.email || true)}"
-
-if [ -z "$author_email" ]; then
-  echo "[author-identity] author email is not set." >&2
-  echo "[author-identity] Run: git config user.email <your-github-email>" >&2
-  exit 1
-fi
-
-case "$author_email" in
-  *@users.noreply.github.com)
-    # Always allow GitHub privacy emails — guaranteed public-repo-safe.
-    ;;
-  *@localhost|*@*.local|*@local)
-    echo "[author-identity] author email is a machine-local identity: $author_email" >&2
-    echo "[author-identity] Set a real email via: git config user.email <your-github-email>" >&2
-    exit 1
-    ;;
-  *@*)
-    # Well-formed address with a domain — fall through to optional denylist.
-    ;;
-  *)
-    echo "[author-identity] author email is invalid (no @-domain): $author_email" >&2
-    echo "[author-identity] Set a real email via: git config user.email <your-github-email>" >&2
-    exit 1
-    ;;
-esac
-
-# Optional private denylist (env var, never committed). Matches the CI-side
-# repository variable name so operators can set-and-forget across both.
-if [ -n "${AUTHOR_EMAIL_DENYLIST_REGEX:-}" ]; then
-  if printf '%s' "$author_email" | grep -qiE "$AUTHOR_EMAIL_DENYLIST_REGEX"; then
-    echo "[author-identity] author email matches AUTHOR_EMAIL_DENYLIST_REGEX: $author_email" >&2
-    echo "[author-identity] Fix with: git config user.email <allowed-github-email>" >&2
-    exit 1
-  fi
-fi
-
-# --- 3. anti-leak gate -------------------------------------------------------
-# This gate is mandatory. It does not warn-and-pass, and `--no-verify` is not an
-# accepted way past it: dreamux is public, and a leak that reaches the default
-# branch cannot be un-published. If gitleaks is missing, install it.
-#
-# `common/scripts/install-gitleaks.sh` installs into ~/.local/bin by default,
-# which is not on every shell's PATH, so look there (and in an explicit
-# GITLEAKS_INSTALL_DIR) before declaring it absent.
-gitleaks_bin=""
-if command -v gitleaks >/dev/null 2>&1; then
-  gitleaks_bin=gitleaks
-elif [ -n "${GITLEAKS_INSTALL_DIR:-}" ] && [ -x "$GITLEAKS_INSTALL_DIR/gitleaks" ]; then
-  gitleaks_bin="$GITLEAKS_INSTALL_DIR/gitleaks"
-elif [ -x "$HOME/.local/bin/gitleaks" ]; then
-  gitleaks_bin="$HOME/.local/bin/gitleaks"
-fi
-
-if [ -z "$gitleaks_bin" ]; then
-  echo "[anti-leak] gitleaks is not installed — refusing to commit." >&2
-  echo "[anti-leak] This gate is mandatory and must not be skipped." >&2
-  echo "[anti-leak] Do NOT commit with --no-verify. Install it instead:" >&2
-  echo "[anti-leak]   common/scripts/install-gitleaks.sh" >&2
-  echo "[anti-leak] Then retry the commit." >&2
-  exit 1
-fi
-
-if ! "$gitleaks_bin" git --staged \
-  --config "$repo_root/.gitleaks.toml" \
-  --redact --exit-code 1 -v; then
-  echo "[anti-leak] gitleaks flagged a potential secret in your staged changes." >&2
-  echo "[anti-leak] Remove it before committing — this is a public repo." >&2
-  exit 1
-fi
-
-# --- 4. internal-content gate ------------------------------------------------
-# Internal identifiers and paths that .gitleaks.toml does not cover, because it
-# is shared verbatim with the internal sibling repository. Same patterns the
-# release workflow applies to packed tarballs, applied to the source tree so a
-# leak in a test or a fixture is caught before the default branch rather than at
-# publish time.
-if ! sh "$repo_root/common/scripts/check-internal-content.sh" --staged; then
-  exit 1
-fi
+(async () => {
+  const { stdout } = await promisify(execFile)(
+    'git',
+    ['rev-parse', '--show-toplevel'],
+    { windowsHide: true },
+  );
+  await import(
+    pathToFileURL(join(stdout.trim(), 'common', 'scripts', 'pre-commit.mjs'))
+      .href
+  );
+})().catch((error) => {
+  console.error(error.message);
+  process.exitCode = 1;
+});

@@ -6,10 +6,20 @@ The published executable is a plain Node ESM launcher that resolves its own
 symlink and compiled entrypoint independently of the caller working directory.
 Shared async process utilities own PATH/PATHEXT lookup, npm Node shim execution,
 Windows argument preservation and descendant termination. Unix process groups
-retain their existing behavior. Native Windows termination waits for process
-exit so filesystem cleanup follows handle release.
-Windows PowerShell helpers clear inherited PSModulePath so a PowerShell 7 parent
-through Node cannot shadow the native 5.1 modules used for ACLs and scheduled tasks.
+retain their existing behavior. Windows uses native Job Object ownership from
+before the target starts, including descendants whose ancestors already exited.
+Termination first closes the Job to new members, holds and verifies its member
+process handles, then waits for those objects to finish exiting. The Job's active
+count alone can reach zero before Windows releases a process's working directory.
+Numeric PID ancestry is not process ownership: Windows can reuse a parent's PID
+while an older child still records it. The previous snapshot/taskkill traversal
+is therefore replaced rather than filtered or retried.
+
+Shared capabilities use Node APIs first. Where Node lacks the required Windows
+kernel interface, the platform implementation uses the pinned Koffi native
+binding with asynchronous calls for blocking work. Business paths do not spawn
+PowerShell, icacls, whoami, or taskkill for filesystem, IPC, or process management.
+Platform command lines remain confined to persistent-service management.
 
 ## IPC and providers
 
@@ -28,9 +38,13 @@ own configuration overrides and OS home fallback.
 ## Service and privacy
 
 Windows uses an interactive, limited-token Task Scheduler task for the current
-user. Installation owns `DREAMUX_ROOT/daemon.ps1`, including pinned executable,
-arguments, environment and append-only log routing. Stop resolves this task's
-running engine, terminates its owned process tree, then stops the task. The
+user. Installation owns `DREAMUX_ROOT/daemon.mjs`, including pinned executable,
+arguments, environment and append-only log routing. The Node launcher owns a
+named service Job, and ordinary supervised children retain their own nested Jobs.
+Stop disables the task and acquires its named Job, reserving the name if startup
+has not created it yet. It terminates and awaits the owned processes before
+stopping the task action, then releases the Job. A late launcher cannot create
+another Job during this interval. No process tree is reconstructed from PIDs. The
 previous task-enabled state is preserved. Unix service managers remain unchanged.
 
 Shared filesystem utilities enforce Windows ACLs and Unix modes. Log directory
@@ -48,6 +62,9 @@ The wrapper allocates a short disposable home, sets HOME, USERPROFILE, CODEX_HOM
 CLAUDE_CONFIG_DIR and DREAMUX_ROOT, and removes only that generated directory.
 Live model opt-in passes the original auth source separately for fixture copies.
 Native ACL assertions use real Windows permissions instead of synthetic mode bits.
+Repository-owned file cleanup, content scanning, download verification, and
+knowledge checks use Node rather than Bash/PowerShell orchestration. Git,
+gitleaks, build tools, and mature archive tools remain direct executable calls.
 CI runs Rush gates on Linux, macOS and Windows. Delivery creates the PR to `next`
 first, then dispatches the existing alpha workflow on that branch.
 

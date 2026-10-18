@@ -73,7 +73,7 @@ Treat issue #110 as complete for Phase 1 when these checks hold:
 
 ## Validation guardrails
 
-- `.agents/scripts/check.sh` must pass for this closure record and linked
+- `.agents/scripts/check.mjs` must pass for this closure record and linked
   documents.
 - Config tests must cover valid v2 shapes, old-shape rejection, reserved npm
   refs, wrong provider kinds, and both builtin Agent Runtime config shapes.

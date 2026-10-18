@@ -66,7 +66,7 @@ included, from all three settlement texts.
 
 | Command | Result |
 | --- | --- |
-| `.agents/scripts/check.sh` | Task records OK: 43 checked; KB OK (270 files reachable from root.md) |
+| `.agents/scripts/check.mjs` | Task records OK: 43 checked; KB OK (270 files reachable from root.md) |
 | `git diff --check` | Clean |
 
 ## Not covered locally

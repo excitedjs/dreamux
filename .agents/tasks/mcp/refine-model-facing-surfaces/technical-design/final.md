@@ -20,7 +20,7 @@ context, not control; the channel is model-visible by provider, not by id.
 
 Accepted when:
 
-- the four Rush gates, `.agents/scripts/check.sh`, and `rush change --verify`
+- the four Rush gates, `.agents/scripts/check.mjs`, and `rush change --verify`
   are green on the delivery branch (structure and text);
 - after release, the operator's Codex TeamLeader, on a turn that only answers
   a channel message, reports no skill load, and can find the Feishu channel's
@@ -342,7 +342,7 @@ replaced; an unreadable root is named. Change file:
 - `.agents/product/dynamic-workflow-usage.md`: its two references to the
   shared skill's path (found at implementation; the KB check fails on a dead
   path).
-- `.agents/scripts/check.sh` green. `dreamux-maintenance` untouched (no
+- `.agents/scripts/check.mjs` green. `dreamux-maintenance` untouched (no
   config or state shape changes).
 
 ### 3.11 Change files
@@ -527,7 +527,7 @@ text only).
 ## 8. Verification
 
 Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-`.agents/scripts/check.sh`, `rush change --verify`, the gitleaks pre-commit.
+`.agents/scripts/check.mjs`, `rush change --verify`, the gitleaks pre-commit.
 
 Beyond the gates, before the PR is marked ready: start a Claude Code
 TeamLeader from an existing adapter cache after the rename and confirm the

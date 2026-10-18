@@ -201,7 +201,7 @@ Feishu Channel package. No rebuild or state migration is required.
   manual binding, prove no status call follows create, preserve one status call
   for manual binding, and pin the `leader_state !== null` pre-bind guard.
 - Run Rush build, lint, test, and `typecheck:tests`; run task validation,
-  `.agents/scripts/check.sh`, Rush change verification, and `git diff --check`.
+  `.agents/scripts/check.mjs`, Rush change verification, and `git diff --check`.
 
 ## Review adjudication
 

@@ -176,7 +176,7 @@ Channel is their only consumer. No record gives a reason for the spelling.
   rows, inputs, and end reasons as before, and a turn's usage and interrupt
   lines, sharing one native id, both appear.
 - `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`, and
-  `.agents/scripts/check.sh` pass.
+  `.agents/scripts/check.mjs` pass.
 
 ## Decisions and unknowns
 
