@@ -24,7 +24,7 @@ import { Server } from '../server.js';
 import { ConfigService } from '../config/service.js';
 import { ProviderRegistry } from '../registry/registry.js';
 import { startPlugins } from '../plugin/host.js';
-import { createLogger } from '../platform/logger.js';
+import { createLogger, prepareLogDirectory } from '../platform/logger.js';
 import { errorInfo } from '@excitedjs/dreamux-utils';
 import {
   adminSocketLockPath,
@@ -68,7 +68,7 @@ export async function runServe(): Promise<void> {
   const configService = await ConfigService.open({ providerRegistry });
 
   await mkdir(stateRoot(), { recursive: true });
-  await mkdir(logsRoot(), { recursive: true });
+  await prepareLogDirectory(logsRoot());
   await mkdir(channelLogDir(), { recursive: true });
   await mkdir(workflowLogDir(), { recursive: true });
 

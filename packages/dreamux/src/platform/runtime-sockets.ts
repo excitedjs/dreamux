@@ -138,6 +138,8 @@ export function allocateRuntimeSocketPath(
 export async function sweepRuntimeSocketDirs(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string[]> {
+  // Windows providers use process stdio, so no Unix socket endpoints exist.
+  if (process.platform === 'win32') return [];
   const swept: string[] = [];
   for (const dir of runtimeSocketDirCandidates(env)) {
     try {

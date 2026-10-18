@@ -21,6 +21,7 @@ BASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VER
 case "$(uname -s)" in
   Linux) os="linux" ;;
   Darwin) os="darwin" ;;
+  MINGW* | MSYS*) os="windows" ;;
   *) echo "unsupported OS: $(uname -s)" >&2; exit 1 ;;
 esac
 
@@ -30,7 +31,13 @@ case "$(uname -m)" in
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-asset="gitleaks_${GITLEAKS_VERSION}_${os}_${arch}.tar.gz"
+extension="tar.gz"
+binary="gitleaks"
+if [ "$os" = "windows" ]; then
+  extension="zip"
+  binary="gitleaks.exe"
+fi
+asset="gitleaks_${GITLEAKS_VERSION}_${os}_${arch}.${extension}"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
@@ -58,11 +65,15 @@ if [ "$expected" != "$actual" ]; then
   exit 1
 fi
 
-tar -xzf "$workdir/$asset" -C "$workdir" gitleaks
+if [ "$extension" = "zip" ]; then
+  unzip -q "$workdir/$asset" "$binary" -d "$workdir"
+else
+  tar -xzf "$workdir/$asset" -C "$workdir" "$binary"
+fi
 mkdir -p "$INSTALL_DIR"
-install -m 0755 "$workdir/gitleaks" "$INSTALL_DIR/gitleaks"
+install -m 0755 "$workdir/$binary" "$INSTALL_DIR/$binary"
 
-installed="$("$INSTALL_DIR/gitleaks" version 2> /dev/null || true)"
+installed="$("$INSTALL_DIR/$binary" version 2> /dev/null || true)"
 case "$installed" in
   *"$GITLEAKS_VERSION"*) ;;
   *)

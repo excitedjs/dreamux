@@ -18,7 +18,7 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 // Test-only internal coupling: public provider creation is sufficient for execution,
 // but native RPC/version/notification observations have no public equivalent.
-import { CodexWsClient } from '../../../agent-runtime/codex/dist/rpc.js';
+import { CodexRpcClient } from '../../../agent-runtime/codex/dist/rpc.js';
 import { codexVersionSatisfies } from '../../../agent-runtime/codex/dist/version.js';
 import type { ServerNotification } from '../../../agent-runtime/codex/dist/types.js';
 import { createLogger } from '../../src/platform/logger.js';
@@ -33,7 +33,7 @@ if (skipLiveModelGate)
   );
 
 export interface LiveCodexRequest {
-  readonly client: CodexWsClient;
+  readonly client: CodexRpcClient;
   readonly method: string;
   readonly params: unknown;
   result?: unknown;
@@ -49,7 +49,10 @@ export async function liveCodexProvider() {
   const dir = await mkdtemp(join(tmpdir(), 'dreamux-native-live-'));
   const cwd = join(dir, 'cwd');
   const codexHome = join(dir, 'codex');
-  const authHome = process.env['CODEX_HOME'] ?? join(homedir(), '.codex');
+  const authHome =
+    process.env['DREAMUX_TEST_AUTH_HOME'] ??
+    process.env['CODEX_HOME'] ??
+    join(homedir(), '.codex');
   try {
     await Promise.all([mkdir(cwd), mkdir(codexHome)]);
     // Preserve the actual configured model/provider and usable auth, as #63
@@ -78,16 +81,16 @@ export async function liveCodexProvider() {
     runtimeSocketDirs: () => [dir],
   };
   const requests: LiveCodexRequest[] = [];
-  const clients: CodexWsClient[] = [];
+  const clients: CodexRpcClient[] = [];
   const notifications: Array<{
-    client: CodexWsClient;
+    client: CodexRpcClient;
     notification: ServerNotification;
   }> = [];
-  const original = CodexWsClient.prototype.request;
+  const original = CodexRpcClient.prototype.request;
   const requestSpy = vi
-    .spyOn(CodexWsClient.prototype, 'request')
+    .spyOn(CodexRpcClient.prototype, 'request')
     .mockImplementation(async function <R = unknown>(
-      this: CodexWsClient,
+      this: CodexRpcClient,
       method: string,
       params: unknown,
     ): Promise<R> {

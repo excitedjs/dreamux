@@ -10,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ClaudeCodeStreamRpc } from '../../agent-runtime/claude-code/dist/rpc.js';
 import { TurnManager } from '../../agent-runtime/codex/dist/turn-manager.js';
 import { CodexReasoningEffort } from '../../agent-runtime/codex/dist/reasoning-effort.js';
-import type { CodexWsClient } from '../../agent-runtime/codex/dist/rpc.js';
+import type { CodexRpcClient } from '../../agent-runtime/codex/dist/rpc.js';
 import { CodexNativeReplay } from './helpers/codex-native-replay.js';
 import { ControlledRuntimeProvider } from './helpers/controlled-runtime-provider.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
@@ -58,7 +58,7 @@ class ReplayProvider extends ControlledRuntimeProvider {
       },
     );
     const client = new CodexNativeReplay();
-    const codexClient = client as unknown as CodexWsClient;
+    const codexClient = client as unknown as CodexRpcClient;
     const manager = new TurnManager({
       threadId: 'replay-thread',
       client: codexClient,

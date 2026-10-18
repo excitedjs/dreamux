@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Run Dreamux natively on Windows with a Node launcher, private named-pipe admin/MCP transport, Task Scheduler user service, and native process, path and permission handling.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

@@ -27,9 +27,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tests.json",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
-    "lint": "eslint . && prettier --check . '!**/*.md' '!**/dist/**' '!**/CHANGELOG.json' '!**/.rush/**'",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "lint": "eslint . && prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\"",
+    "test": "node ../../common/scripts/run-tests.mjs run",
+    "test:watch": "node ../../common/scripts/run-tests.mjs",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run build"
   },

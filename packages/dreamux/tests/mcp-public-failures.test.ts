@@ -418,11 +418,7 @@ describe('every advertised tool answers both kinds of failure the same way', () 
       expect(tools.length).toBeGreaterThan(0);
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(
-            build(stated),
-            tool.name,
-            ARGS[tool.name] ?? {},
-          ),
+          await throughTheRegistry(delegate, tool.name, ARGS[tool.name] ?? {}),
         );
         expect(message, `tool '${tool.name}'`).toMatch(/^BAD_REQUEST: /);
         expect(message, `tool '${tool.name}'`).not.toMatch(UNCLASSIFIED);
@@ -441,11 +437,7 @@ describe('every advertised tool answers both kinds of failure the same way', () 
       }>;
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(
-            build(unstated),
-            tool.name,
-            ARGS[tool.name] ?? {},
-          ),
+          await throughTheRegistry(delegate, tool.name, ARGS[tool.name] ?? {}),
         );
         expect(message, `tool '${tool.name}'`).toBe(
           'INTERNAL: cannot read properties of undefined (reading nope)',

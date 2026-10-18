@@ -12,12 +12,14 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { expectOwnerOnlyPermissions } from './permissions.js';
 
 import {
   isProcessAlive,
   isProcessGroupAlive,
   killProcessGroup,
   ensureOwnerOnlyDir,
+  ensureOwnerOnlyFile,
   removeEmptyLogFile,
   pathExists,
 } from '../src/os.js';
@@ -31,7 +33,10 @@ import {
  * live hazard, not just test flake.
  */
 async function getProvablyDeadPid(): Promise<number> {
-  const child = spawn('node', ['-e', 'process.exit(0)'], { detached: true });
+  const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+    detached: process.platform !== 'win32',
+    windowsHide: true,
+  });
   const pid = await new Promise<number>((resolve, reject) => {
     child.once('spawn', () => {
       if (child.pid === undefined)
@@ -71,7 +76,7 @@ describe('isProcessGroupAlive / killProcessGroup with a real detached child', ()
   afterEach(async () => {
     if (child && child.pid !== undefined) {
       try {
-        killProcessGroup(child.pid, 'SIGKILL');
+        await killProcessGroup(child.pid, 'SIGKILL');
       } catch {
         /* already gone */
       }
@@ -80,8 +85,9 @@ describe('isProcessGroupAlive / killProcessGroup with a real detached child', ()
   });
 
   it('reports a freshly spawned detached child group as alive, then not-alive after SIGKILL', async () => {
-    child = spawn('node', ['-e', 'setInterval(() => {}, 1000)'], {
-      detached: true,
+    child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     });
     await new Promise<void>((resolve, reject) => {
       child!.once('spawn', () => resolve());
@@ -91,7 +97,7 @@ describe('isProcessGroupAlive / killProcessGroup with a real detached child', ()
     // A detached child is its own process-group leader, so its pid == its pgid.
     expect(isProcessGroupAlive(pgid)).toBe(true);
 
-    killProcessGroup(pgid, 'SIGKILL');
+    await killProcessGroup(pgid, 'SIGKILL');
 
     // Give the kernel a moment to reap the signalled group.
     const deadline = Date.now() + 2_000;
@@ -103,14 +109,16 @@ describe('isProcessGroupAlive / killProcessGroup with a real detached child', ()
 
   it('killProcessGroup on an already-absent group is a silent no-op (ESRCH swallowed)', async () => {
     const deadPgid = await getProvablyDeadPid();
-    expect(() => killProcessGroup(deadPgid, 'SIGTERM')).not.toThrow();
+    await expect(
+      killProcessGroup(deadPgid, 'SIGTERM'),
+    ).resolves.toBeUndefined();
   });
 
-  it('isProcessGroupAlive/killProcessGroup ignore non-positive or non-finite pgids', () => {
+  it('isProcessGroupAlive/killProcessGroup ignore non-positive or non-finite pgids', async () => {
     expect(isProcessGroupAlive(0)).toBe(false);
     expect(isProcessGroupAlive(-5)).toBe(false);
-    expect(() => killProcessGroup(0, 'SIGTERM')).not.toThrow();
-    expect(() => killProcessGroup(-5, 'SIGTERM')).not.toThrow();
+    await expect(killProcessGroup(0, 'SIGTERM')).resolves.toBeUndefined();
+    await expect(killProcessGroup(-5, 'SIGTERM')).resolves.toBeUndefined();
   });
 });
 
@@ -121,22 +129,21 @@ describe('ensureOwnerOnlyDir', () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
 
-  it('creates a fresh directory with 0700 permissions', async () => {
+  it('creates a fresh directory with owner-only permissions', async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-os-'));
     const target = join(root, 'nested', 'dir');
     await ensureOwnerOnlyDir(target);
     const info = await stat(target);
     expect(info.isDirectory()).toBe(true);
-    expect(info.mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(target, 0o700);
   });
 
-  it('tightens an existing directory that has permissive group/other bits', async () => {
+  it('tightens an existing directory that has permissive access', async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-os-'));
     const target = join(root, 'loose');
     await mkdir(target, { mode: 0o755 });
     await ensureOwnerOnlyDir(target);
-    const info = await stat(target);
-    expect(info.mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(target, 0o700);
   });
 
   it('is idempotent: calling it twice on an already-0700 dir does not throw', async () => {
@@ -151,7 +158,11 @@ describe('ensureOwnerOnlyDir', () => {
     const real = join(root, 'real');
     await mkdir(real, { mode: 0o700 });
     const link = join(root, 'link');
-    await symlink(real, link);
+    await symlink(
+      real,
+      link,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
     await expect(ensureOwnerOnlyDir(link)).rejects.toThrow(
       /it is a symlink, not a real directory/,
     );
@@ -168,6 +179,40 @@ describe('ensureOwnerOnlyDir', () => {
       ensureOwnerOnlyDir(target, { getuid: () => -1 }),
     ).rejects.toThrow(
       /it is owned by uid \d+, not the current user \(uid -1\)/,
+    );
+  });
+});
+
+describe('ensureOwnerOnlyFile', () => {
+  let root: string;
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it('tightens an existing regular file', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-file-'));
+    const file = join(root, 'private.log');
+    await writeFile(file, 'private data', { mode: 0o644 });
+    await ensureOwnerOnlyFile(file);
+    await expectOwnerOnlyPermissions(file, 0o600);
+  });
+
+  it('rejects a directory junction or symlink before changing its target', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-file-'));
+    const target = join(root, 'target');
+    await mkdir(target);
+    const link = join(root, 'private.log');
+    await symlink(
+      target,
+      link,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await expect(ensureOwnerOnlyFile(link)).rejects.toThrow(
+      /not a regular file/,
+    );
+    await expect(ensureOwnerOnlyFile(target)).rejects.toThrow(
+      /not a regular file/,
     );
   });
 });

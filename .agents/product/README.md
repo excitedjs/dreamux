@@ -606,6 +606,11 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 
 ## Local state and upgrades
 
+- **Windows runs natively.** The CLI, foreground server, local admin/MCP
+  communication and provider children run without Bash or WSL. The managed
+  user service uses Task Scheduler at login. Its stop command terminates the
+  owned process tree; it does not guarantee Unix signal-based graceful draining.
+  (Task: [native Windows support](/.agents/tasks/architecture/native-windows-support/README.md).)
 - **Uninstall recursively removes the Dreamux root.** `dreamux uninstall`
   removes the managed service and the state/run/cache/log paths, then the
   root directory, including other files placed inside that root. Operator-state

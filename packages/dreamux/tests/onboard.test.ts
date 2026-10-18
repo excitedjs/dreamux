@@ -10,7 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, sep } from 'node:path';
 
 import { parse as parsePlist } from 'plist';
@@ -27,6 +27,7 @@ import type {
 import type { ServiceNodeProbe } from '../src/daemon/environment.js';
 import { loadConfig } from '../src/config/load.js';
 import { logsRoot } from '../src/platform/paths.js';
+import { parseSystemdUnit } from '../src/daemon/unit.js';
 
 import {
   testConfigFileObject,
@@ -116,7 +117,7 @@ const noSystemNodeProbe: ServiceNodeProbe = {
 const LINUXBREW_BIN = '/home/linuxbrew/.linuxbrew/bin';
 
 function writeGlobalCodexAuth(_answers: OnboardAnswers): void {
-  const authPath = join(homedir(), '.codex', 'auth.json');
+  const authPath = join(rootForTest(), 'home', '.codex', 'auth.json');
   mkdirSync(dirname(authPath), { recursive: true });
   writeFileSync(authPath, '{}', { mode: 0o600 });
 }
@@ -136,17 +137,22 @@ function countCalls(
 describe('dreamux onboard', () => {
   let root: string;
   let previousHome: string | undefined;
+  let previousUserProfile: string | undefined;
 
   beforeEach(() => {
-    root = mkdtempSync(join(homedir(), '.dreamux-onboard-'));
+    root = mkdtempSync(join(tmpdir(), 'dreamux-onboard-'));
     previousHome = process.env['HOME'];
+    previousUserProfile = process.env['USERPROFILE'];
     process.env['HOME'] = join(root, 'home');
+    process.env['USERPROFILE'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
   });
 
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
+    if (previousUserProfile === undefined) delete process.env['USERPROFILE'];
+    else process.env['USERPROFILE'] = previousUserProfile;
     delete process.env['DREAMUX_ROOT'];
     rmSync(root, { recursive: true, force: true });
   });
@@ -244,25 +250,24 @@ describe('dreamux onboard', () => {
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    expect(serviceUnit).toContain(
-      `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
-    );
+    expect(
+      parseSystemdUnit(serviceUnit).environment?.['DREAMUX_NODE_BIN'],
+    ).toBe(process.execPath);
     // The unit no longer pins CODEX_HOST_CODEX_BIN; the dispatcher's
     // runtime.config.bin resolves off the unit PATH instead (which includes the
     // codex dir below).
     expect(serviceUnit).not.toContain('CODEX_HOST_CODEX_BIN');
-    expect(serviceUnit).toContain(`Environment=HOME=${join(root, 'home')}`);
+    expect(parseSystemdUnit(serviceUnit).environment?.['HOME']).toBe(
+      join(root, 'home'),
+    );
     // The service PATH leads with the stable Node dir and includes the user's
     // local standard bin dir ($HOME/.local/bin here) so provider-owned bare
     // binaries installed there (e.g. local-agent) resolve under the service env.
     const servicePath =
-      serviceUnit
-        .split('\n')
-        .find((line) => line.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
+      parseSystemdUnit(serviceUnit).environment?.['PATH'] ?? '';
     expect(servicePath).toContain(dirname(process.execPath));
     expect(servicePath).toContain(join(root, 'home', '.local', 'bin'));
-    expect(servicePath.split(':')[0]).toBe(dirname(process.execPath));
+    expect(servicePath.split(delimiter)[0]).toBe(dirname(process.execPath));
     expect(ledger.get(join(logsRoot(), 'daemon.stdout.log'))?.status).toBe(
       'created',
     );
@@ -301,13 +306,10 @@ describe('dreamux onboard', () => {
       'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
     );
     const servicePath =
-      serviceUnit
-        .split('\n')
-        .find((line) => line.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
+      parseSystemdUnit(serviceUnit).environment?.['PATH'] ?? '';
     // The stable Node dir leads the service PATH; the user's local standard bin
     // dir is also included so bare provider binaries installed there resolve.
-    expect(servicePath.split(':')[0]).toBe('/usr/local/bin');
+    expect(servicePath.split(delimiter)[0]).toBe('/usr/local/bin');
     expect(servicePath).toContain(join(root, 'home', '.local', 'bin'));
     expect(serviceUnit).not.toContain(
       `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
@@ -328,7 +330,7 @@ describe('dreamux onboard', () => {
       join(root, 'home', '.pyenv', 'shims'),
       '/usr/bin',
       '/bin',
-    ].join(':');
+    ].join(delimiter);
 
     await runOnboard({
       answers,
@@ -344,11 +346,8 @@ describe('dreamux onboard', () => {
       'utf8',
     );
     const servicePath =
-      serviceUnit
-        .split('\n')
-        .find((line) => line.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
-    const parts = servicePath.split(':');
+      parseSystemdUnit(serviceUnit).environment?.['PATH'] ?? '';
+    const parts = servicePath.split(delimiter);
     // Stable dirs lead (the current Node bin dir).
     expect(parts[0]).toBe(dirname(process.execPath));
     // Session PATH entries follow in their original order.
@@ -378,7 +377,7 @@ describe('dreamux onboard', () => {
       platform: 'linux',
       homeDir: join(root, 'home'),
       env: {
-        PATH: [LINUXBREW_BIN, '/usr/bin', '/bin'].join(':'),
+        PATH: [LINUXBREW_BIN, '/usr/bin', '/bin'].join(delimiter),
         CODEX_ACCESS_TOKEN: 'interactive-token-test',
       },
       nodeProbe: noSystemNodeProbe,
@@ -389,12 +388,9 @@ describe('dreamux onboard', () => {
       'utf8',
     );
     const servicePath =
-      serviceUnit
-        .split('\n')
-        .find((line) => line.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
+      parseSystemdUnit(serviceUnit).environment?.['PATH'] ?? '';
     expect(
-      servicePath.split(':').filter((entry) => entry === LINUXBREW_BIN),
+      servicePath.split(delimiter).filter((entry) => entry === LINUXBREW_BIN),
     ).toHaveLength(1);
   });
 
@@ -436,10 +432,7 @@ describe('dreamux onboard', () => {
       'utf8',
     );
     const servicePath =
-      serviceUnit
-        .split('\n')
-        .find((line) => line.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
+      parseSystemdUnit(serviceUnit).environment?.['PATH'] ?? '';
     const parts = servicePath.split(delimiter);
     // Stable dirs lead (the current Node bin dir).
     expect(parts[0]).toBe(dirname(process.execPath));
@@ -479,9 +472,9 @@ describe('dreamux onboard', () => {
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    expect(serviceUnit).toContain(
-      `Environment=DREAMUX_NODE_BIN=${process.execPath}`,
-    );
+    expect(
+      parseSystemdUnit(serviceUnit).environment?.['DREAMUX_NODE_BIN'],
+    ).toBe(process.execPath);
     expect(serviceUnit).not.toContain(
       'Environment=DREAMUX_NODE_BIN=/usr/local/bin/node',
     );

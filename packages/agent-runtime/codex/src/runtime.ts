@@ -17,7 +17,7 @@ import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import { performInitializeHandshake } from './handshake.js';
 import { codexSpawnEnv } from './paths.js';
 import { CodexReasoningEffort } from './reasoning-effort.js';
-import { CodexWsClient } from './rpc.js';
+import { CodexRpcClient } from './rpc.js';
 import type { CodexRuntimeDeps } from './runtime-deps.js';
 import { applyCodexSkillExtraRoots } from './skill-roots.js';
 import { CodexProcess, type CodexProcessExit } from './supervisor.js';
@@ -81,7 +81,7 @@ function createFailFastApprovalHandler(opts: {
 
 export class CodexRuntime implements AgentRuntime {
   private process: CodexProcess | null = null;
-  private client: CodexWsClient | null = null;
+  private client: CodexRpcClient | null = null;
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
   private threadResumed = false;
@@ -217,13 +217,18 @@ export class CodexRuntime implements AgentRuntime {
       );
     }
     const cwd = this.deps.cwd;
-    const socketPath = allocateCodexSocketPath(
-      this.paths.runtimeSocketDirs(),
-      this.dispatcherId,
-    );
+    const transport =
+      globalThis.process.platform === 'win32'
+        ? {}
+        : {
+            socketPath: allocateCodexSocketPath(
+              this.paths.runtimeSocketDirs(),
+              this.dispatcherId,
+            ),
+          };
     const codexLogDir = join(this.paths.logsDir(), 'codex-app-server');
     const process = new CodexProcess({
-      socketPath,
+      ...transport,
       cwd,
       stdoutLogPath: join(codexLogDir, `${this.dispatcherId}.log`),
       stderrLogPath: join(codexLogDir, `${this.dispatcherId}.stderr.log`),
@@ -239,7 +244,7 @@ export class CodexRuntime implements AgentRuntime {
     await process.start();
     this.assertGeneration(generation);
 
-    const client = new CodexWsClient({ socketPath });
+    const client = new CodexRpcClient(process.connectionOptions);
     this.client = client;
     client.onClose((reason) => {
       if (this.client !== client) return;

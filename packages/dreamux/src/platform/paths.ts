@@ -36,6 +36,7 @@
  * `runtime_dir` concept (and its `runtimeRoot()` alias) was retired in issue #98.
  */
 
+import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import {
@@ -126,6 +127,11 @@ export function runRoot(): string {
   return join(dreamuxRoot(), 'run');
 }
 
+/** Generated Windows user-service launch definition, owned by daemon install. */
+export function windowsServiceFile(): string {
+  return join(dreamuxRoot(), 'daemon.ps1');
+}
+
 /**
  * One-shot marker dropped by `dreamux daemon restart --notify-resumed` before
  * it triggers the service-manager restart. The freshly started server reads it
@@ -171,10 +177,24 @@ export function dispatcherCompletionSpillDir(id: string): string {
  * an over-budget path (extreme $HOME length) fails loudly instead of moving.
  */
 export function adminSocketPath(): string {
-  return assertUnixSocketPathBudget(
-    join(runRoot(), 'admin.sock'),
-    'admin socket path',
-  );
+  const path = join(runRoot(), 'admin.sock');
+  return process.platform === 'win32'
+    ? path
+    : assertUnixSocketPathBudget(path, 'admin socket path');
+}
+
+/**
+ * Keep the logical admin path (and its lock file) identical across callers.
+ * Windows IPC lives in the pipe namespace, not at a filesystem socket path.
+ * Hash the absolute path so separate Dreamux roots have separate endpoints,
+ * including roots whose length exceeds the Unix socket path limit.
+ */
+export function adminSocketAddress(socketPath: string): string {
+  if (process.platform !== 'win32') return socketPath;
+  const identity = createHash('sha256')
+    .update(resolve(socketPath).toLowerCase())
+    .digest('hex');
+  return `\\\\.\\pipe\\dreamux-${identity}`;
 }
 
 /**
@@ -517,7 +537,23 @@ export function userLocalBinDirs(options: ExecDirOptions): string[] {
  * include optional Homebrew prefixes; {@link probeStandardExecDirs} adds the
  * platform candidate only when it exists.
  */
-export function systemExecDirs(_platform: NodeJS.Platform): string[] {
+export function systemExecDirs(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = {},
+): string[] {
+  if (platform === 'win32') {
+    const key = Object.keys(env).find(
+      (name) => name.toLowerCase() === 'systemroot',
+    );
+    const root = key === undefined ? undefined : env[key];
+    return root === undefined
+      ? []
+      : [
+          root,
+          join(root, 'System32'),
+          join(root, 'System32', 'WindowsPowerShell', 'v1.0'),
+        ];
+  }
   return ['/usr/local/bin', '/usr/bin', '/bin'];
 }
 
@@ -530,7 +566,7 @@ export function systemExecDirs(_platform: NodeJS.Platform): string[] {
 export function standardExecDirs(options: ExecDirOptions): string[] {
   return dedupeExecDirs([
     ...userLocalBinDirs(options),
-    ...systemExecDirs(options.platform),
+    ...systemExecDirs(options.platform, options.env),
   ]);
 }
 
@@ -598,7 +634,13 @@ export function withServicePath(
   env: NodeJS.ProcessEnv,
   input: ServicePathInput,
 ): NodeJS.ProcessEnv {
-  return { ...env, PATH: buildServicePath(input) };
+  const result = { ...env };
+  if (process.platform === 'win32') {
+    for (const key of Object.keys(result)) {
+      if (key.toUpperCase() === 'PATH') delete result[key];
+    }
+  }
+  return { ...result, PATH: buildServicePath(input) };
 }
 
 function homebrewExecDir(platform: NodeJS.Platform): string | null {

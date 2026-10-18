@@ -14,13 +14,13 @@ import {
   type PlistValue,
 } from 'plist';
 
-import { stateRoot } from '../platform/paths.js';
+import { stateRoot, windowsServiceFile } from '../platform/paths.js';
 import {
   managedServiceEnvironment,
   type ServiceInstallAnswers,
 } from './environment.js';
 
-export type ServicePlatform = 'launchd' | 'systemd';
+export type ServicePlatform = 'launchd' | 'systemd' | 'windows';
 
 export const LAUNCHD_LABEL = 'dev.excited.dreamux';
 export const SYSTEMD_UNIT = 'dreamux.service';
@@ -41,8 +41,11 @@ export function serviceUnitPath(
       path: join(homeDir, '.config', 'systemd', 'user', SYSTEMD_UNIT),
     };
   }
+  if (platform === 'win32') {
+    return { platform: 'windows', path: windowsServiceFile() };
+  }
   throw new Error(
-    `dreamux onboard supports user-level services on macOS and Linux only (got ${platform})`,
+    `dreamux user-level services require macOS, Linux, or Windows (got ${platform})`,
   );
 }
 

@@ -25,11 +25,24 @@ against.
   `RuleViolation` carrying a `dreamux config error in <file>: ...` message
   (`readNonEmptyString`, `readStringArray`, …), built on `json-shape`.
 - **os** — platform/filesystem primitives (`isProcessAlive`,
-  `isProcessGroupAlive`, `killProcessGroup`, `ensureOwnerOnlyDir`,
+  `isProcessGroupAlive`, `killProcessGroup`, `ensureOwnerOnlyDir`, `ensureOwnerOnlyFile`,
   `removeEmptyLogFile`, `pathExists`). These are generic OS helpers, not
-  Dreamux layout/path contracts.
+  Dreamux layout/path contracts. `killProcessGroup` is asynchronous: it signals
+  POSIX groups, or terminates and waits for a Windows process tree. Windows
+  private paths use a protected current-user ACL instead of POSIX mode bits.
+  Permission tightening rejects symlink leaves.
+- **process-command** — async executable resolution (`resolveExecutableOnPath`)
+  and launch (`spawnCommand`) with Windows PATH/PATHEXT handling, hidden child
+  windows, and literal argument forwarding through npm command shims. Standard
+  npm Node shims launch their script directly, preserving multiline arguments;
+  other batch files reject multiline arguments that `cmd.exe` cannot preserve.
 - **fs** — atomic-write primitives, one per publish semantic
   (`publishFileExclusive` for create-only, `writeFileAtomic` for overwrite).
+  Private Windows files receive a current-user ACL before data is written.
+  Their temporary handle remains open through publication and temporary-link
+  cleanup so an exclusively created file stays replaceable on Windows.
+  Atomic replacement retries transient Windows sharing locks for at most one
+  second without unlinking the previously committed file.
 - **completion-body** — bounded teammate-completion resolution: inline a short
   result, spill an over-budget result to an owner-only file under a
   host-supplied spill directory (`resolveCompletionBody`,

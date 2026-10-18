@@ -26,6 +26,7 @@ interface RunnerProbe {
   stopped: boolean;
   sent: WorkflowRunnerParentMessage[];
   beforeStop: (() => Promise<void>) | null;
+  send(message: WorkflowRunnerParentMessage): Promise<void>;
   emit(message: unknown): void;
 }
 const controls = vi.hoisted(() => ({
@@ -143,10 +144,28 @@ const notices = (f: Fixture) =>
   f.provider.runtimes.flatMap((runtime) =>
     runtime.inputs.filter((text) => text.startsWith('<task-notification>')),
   );
-async function terminal(f: Fixture, id: string, status: string) {
-  await vi.waitFor(async () =>
-    expect(await f.workflows.status({ run_id: id })).toMatchObject({ status }),
+function nextRuntime(f: Fixture) {
+  const created = deferred<void>();
+  const createRuntime = f.provider.createRuntime.bind(f.provider);
+  vi.spyOn(f.provider, 'createRuntime').mockImplementationOnce(
+    async (context) => {
+      const runtime = await createRuntime(context);
+      created.resolve();
+      return runtime;
+    },
   );
+  return created.promise;
+}
+function captureRuns() {
+  const runs: WorkflowRun[] = [];
+  const initialize = WorkflowRun.prototype.initialize;
+  vi.spyOn(WorkflowRun.prototype, 'initialize').mockImplementation(
+    async function (this: WorkflowRun) {
+      runs.push(this);
+      await initialize.call(this);
+    },
+  );
+  return runs;
 }
 async function terminalRows(id: string) {
   return (await readFile(paths(id).journal, 'utf8'))
@@ -317,14 +336,7 @@ it('ignores a runner message that arrives after the run is already durably termi
 });
 it('a stale run instance settling late cannot evict a newer live replacement of the same id', async () => {
   const f = await workflowFixture();
-  const runs: WorkflowRun[] = [];
-  const initialize = WorkflowRun.prototype.initialize;
-  vi.spyOn(WorkflowRun.prototype, 'initialize').mockImplementation(
-    async function (this: WorkflowRun) {
-      runs.push(this);
-      await initialize.call(this);
-    },
-  );
+  const runs = captureRuns();
   const entered = deferred<void>(),
     release = deferred<void>();
   f.releases.push(() => release.resolve());
@@ -364,16 +376,17 @@ it('stop() converges already-accepted work: it waits for a submitted turn to set
   f.releases.push(() => release.resolve());
   f.provider.planNext({ stopBarrier: release.promise });
   const accepted = await f.workflows.run({ script: 'noop' });
+  const created = nextRuntime(f);
   controls.runners[0]!.emit({
     type: 'agent_start',
     index: 0,
     prompt: 'work',
     options: {},
   });
-  await vi.waitFor(() =>
-    expect(f.provider.runtimes[1]?.submissions).toHaveLength(1),
-  );
+  await created;
   const runtime = f.provider.runtimes[1]!;
+  await runtime.submitStarted.promise;
+  expect(runtime.submissions).toHaveLength(1);
   const stopping = f.workflows.stop(accepted);
   await runtime.stopStarted.promise;
   expect(runtime.submissions[0]!.isSettled()).toBe(false);
@@ -390,6 +403,7 @@ it('stop() converges already-accepted work: it waits for a submitted turn to set
 });
 it('a failed run delivers its failure through the null-completion-token entry point', async () => {
   const f = await workflowFixture();
+  const runs = captureRuns();
   const delivery = vi.spyOn(
     CompletionDeliveryPolicy.prototype,
     'deliverRuntime',
@@ -400,7 +414,8 @@ it('a failed run delivers its failure through the null-completion-token entry po
     status: 'failed',
     error: 'boom',
   });
-  await vi.waitFor(() => expect(notices(f)).toHaveLength(1));
+  await runs[0]!.settled;
+  expect(notices(f)).toHaveLength(1);
   expect(notices(f)[0]).toContain('boom');
   const calls = delivery.mock.calls.filter(
     (call) => call[2].kind === 'workflow',
@@ -408,7 +423,9 @@ it('a failed run delivers its failure through the null-completion-token entry po
   expect(calls).toHaveLength(1);
   expect(calls[0]![1]).toBeNull();
   expect(calls[0]![2]).toMatchObject({ kind: 'workflow', status: 'failed' });
-  await terminal(f, accepted.run_id, 'failed');
+  expect(await f.workflows.status(accepted)).toMatchObject({
+    status: 'failed',
+  });
 });
 it('keeps completed delivery when its intent wins before explicit stop', async () => {
   const f = await workflowFixture();
@@ -478,20 +495,23 @@ it('does not retract terminal delivery that already started before stop', async 
 });
 it('reaches only createLocked on the teammates dependency and holds the lock until terminal cleanup releases it', async () => {
   const f = await workflowFixture();
+  const runs = captureRuns();
   const held = captureAgents();
   const locked = vi.spyOn(TeammateCollection.prototype, 'createLocked');
   const spawn = vi.spyOn(TeammateCollection.prototype, 'spawn');
   const send = vi.spyOn(TeammateCollection.prototype, 'send');
   const accepted = await f.workflows.run({ script: 'noop' });
+  const created = nextRuntime(f);
   controls.runners[0]!.emit({
     type: 'agent_start',
     index: 0,
     prompt: 'do it',
     options: { schema: { type: 'object' } },
   });
-  await vi.waitFor(() =>
-    expect(f.provider.runtimes[1]?.submissions).toHaveLength(1),
-  );
+  await created;
+  const runtime = f.provider.runtimes[1]!;
+  await runtime.submitStarted.promise;
+  expect(runtime.submissions).toHaveLength(1);
   expect(held).toHaveLength(1);
   const agent = held[0]!;
   await expect(
@@ -504,15 +524,21 @@ it('reaches only createLocked on the teammates dependency and holds the lock unt
   });
   expect(spawn).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
-  expect(f.provider.runtimes[1]!.inputs).toEqual(['<task>do it</task>']);
-  f.provider.runtimes[1]!.submissions[0]!.complete('{"ok":true}');
-  await vi.waitFor(() =>
-    expect(controls.runners[0]!.sent).toContainEqual({
-      type: 'agent_result',
-      index: 0,
-      result: { ok: true },
-    }),
-  );
+  expect(runtime.inputs).toEqual(['<task>do it</task>']);
+  const resultSent = deferred<void>();
+  const runner = controls.runners[0]!;
+  const sendResult = runner.send.bind(runner);
+  vi.spyOn(runner, 'send').mockImplementation(async (message) => {
+    await sendResult(message);
+    if (message.type === 'agent_result') resultSent.resolve();
+  });
+  runtime.submissions[0]!.complete('{"ok":true}');
+  await resultSent.promise;
+  expect(runner.sent).toContainEqual({
+    type: 'agent_result',
+    index: 0,
+    result: { ok: true },
+  });
   await expect(
     agent.close({ note: 'still owned before terminal' }),
   ).rejects.toThrow(/is locked/);
@@ -527,7 +553,8 @@ it('reaches only createLocked on the teammates dependency and holds the lock unt
     status: 'closed',
     close_note: `Workflow ${accepted.run_id} completed`,
   });
-  await vi.waitFor(() => expect(notices(f)).toHaveLength(1));
+  await runs[0]!.settled;
+  expect(notices(f)).toHaveLength(1);
 });
 it('contributes the schema and the system-prompt fragment identically across different agentType steps', async () => {
   const f = await workflowFixture();
@@ -536,6 +563,13 @@ it('contributes the schema and the system-prompt fragment identically across dif
     config: { model: 'alternate' },
   };
   const locked = vi.spyOn(TeammateCollection.prototype, 'createLocked');
+  const created = deferred<void>();
+  const createRuntime = f.provider.createRuntime.bind(f.provider);
+  vi.spyOn(f.provider, 'createRuntime').mockImplementation(async (context) => {
+    const runtime = await createRuntime(context);
+    if (f.provider.runtimes.length === 4) created.resolve();
+    return runtime;
+  });
   await f.workflows.run({ script: 'noop', max_concurrency: 4 });
   const schema = { type: 'object', properties: {} };
   for (const [index, agentType] of [
@@ -549,7 +583,8 @@ it('contributes the schema and the system-prompt fragment identically across dif
       prompt: `p${index}`,
       options: { schema, ...(agentType === undefined ? {} : { agentType }) },
     });
-  await vi.waitFor(() => expect(f.provider.runtimes).toHaveLength(4));
+  await created.promise;
+  expect(f.provider.runtimes).toHaveLength(4);
   expect(locked).toHaveBeenCalledTimes(3);
   expect(locked.mock.calls.map((call) => call[0].agentRuntime)).toEqual([
     'controlled',

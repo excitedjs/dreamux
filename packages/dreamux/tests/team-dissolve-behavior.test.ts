@@ -22,6 +22,17 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 
 type Fixture = Awaited<ReturnType<typeof dispatcherFixture>>;
 const execFileAsync = promisify(execFile);
+function observeError(fixture: Fixture, message: string) {
+  const observed = deferred<void>();
+  const original = fixture.log.error;
+  const calls = vi
+    .spyOn(fixture.log, 'error')
+    .mockImplementation((...args: unknown[]) => {
+      Reflect.apply(original, fixture.log, args);
+      if (args[1] === message) observed.resolve();
+    });
+  return { calls, observed: observed.promise };
+}
 async function git(cwd: string, args: string[]) {
   return (await execFileAsync('git', args, { cwd })).stdout;
 }
@@ -276,7 +287,9 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
 
   it('leaves runtime and cron untouched when the closed write fails, then permits an ordinary retry', async () => {
     const fixture = await dispatcherFixture();
-    const errors = vi.spyOn(fixture.log, 'error');
+    const failureMessage =
+      'Team dissolve failed to prepare or commit its closed record';
+    const { calls: errors, observed } = observeError(fixture, failureMessage);
     const created = await fixture.teams.createFromRequest(
       teamRequest('write-failure', 'Start'),
     );
@@ -295,12 +308,8 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
       note: 'Cannot persist yet',
       force: true,
     });
-    await vi.waitFor(() =>
-      expect(errors).toHaveBeenCalledWith(
-        expect.anything(),
-        'Team dissolve failed to prepare or commit its closed record',
-      ),
-    );
+    await observed;
+    expect(errors).toHaveBeenCalledWith(expect.anything(), failureMessage);
     expect(stop).not.toHaveBeenCalled();
     expect(await fixture.teams.summary(created.team_name)).toMatchObject({
       status: 'running',
@@ -323,7 +332,8 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
 
   it('keeps cron deleted after physical reclaim succeeds but the final cleanup record write fails', async () => {
     const fixture = await dispatcherFixture();
-    const errors = vi.spyOn(fixture.log, 'error');
+    const failureMessage = 'Team managed worktree cleanup failed';
+    const { calls: errors, observed } = observeError(fixture, failureMessage);
     const stopping = deferred<void>();
     fixture.releases.push(() => stopping.resolve());
     fixture.provider.planNext({ stopBarrier: stopping.promise });
@@ -350,12 +360,8 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
     await mkdir(path);
     stopping.resolve();
     await service.closed;
-    await vi.waitFor(() =>
-      expect(errors).toHaveBeenCalledWith(
-        expect.anything(),
-        'Team managed worktree cleanup failed',
-      ),
-    );
+    await observed;
+    expect(errors).toHaveBeenCalledWith(expect.anything(), failureMessage);
     await expect(access(created.runtime_cwd)).rejects.toMatchObject({
       code: 'ENOENT',
     });

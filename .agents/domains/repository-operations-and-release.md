@@ -119,6 +119,17 @@ bulk commands that fan out to each package's own npm script. `lint` also ignores
 dependency order, because ESLint is source-local and every package's violations
 should surface in one run.
 
+The same Node-based Rush commands run in native Windows PowerShell. The
+package launcher is an executable Node script; from a Windows source checkout
+use `node packages/dreamux/bin/dreamux <command>`. Git for Windows supplies Bash
+for the repository shell hooks and checks. `install-gitleaks.sh` recognizes
+Git Bash/MSYS, verifies the Windows release archive checksum and installs
+`gitleaks.exe`; it is not a PowerShell script.
+
+Every package test script enters `common/scripts/run-tests.mjs`, which sets
+disposable account/application homes before starting Vitest. Keep targeted
+runs behind that wrapper too; see [unit testing](unit-testing.md).
+
 Source: `/rush.json`, `/common/config/rush/command-line.json`,
 `/common/scripts/install-run-rush.js`, `/packages/dreamux/package.json`.
 
@@ -170,9 +181,9 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan                                                                                                                        |
 | `commit-metadata`    | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file                      |
-| `shellcheck`         | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `packages/dreamux/bin/dreamux`                            |
+| `shellcheck`         | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`                            |
 | `kb`                 | `.agents/scripts/check.sh` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
-| `rush`               | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test                                                                                                                |
+| `rush`               | Linux + macOS + Windows: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test                                                                                                                |
 | `gitleaks`           | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml`                                                                                                                                                  |
 | `internal-content`   | `common/scripts/check-internal-content.sh --tree` over every tracked file                                                                                                                                                  |
 

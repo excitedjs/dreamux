@@ -208,7 +208,14 @@ describe('Feishu inbound resource budgets', () => {
   });
 
   it('escapes a downloaded cache path exactly once and renders no extra facts', async () => {
-    const cache = join(cacheDir(), 'cache-&amp;-"><forged>');
+    // Windows filenames exclude quotes and angle brackets; ampersands and
+    // entity-looking text still exercise exactly-once attribute escaping.
+    const cache = join(
+      cacheDir(),
+      process.platform === 'win32'
+        ? 'cache-&amp;-&quot;'
+        : 'cache-&amp;-"><forged>',
+    );
     const result = await formatFeishuMessageForRuntime(
       event({
         text: 'downloaded-key',

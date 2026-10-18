@@ -92,17 +92,53 @@ by a result adapter cannot prove real multi-submit folding. Remove the dead
 dimension, retain the result projection and point the folding obligation to
 the test that actually submits multiple inputs and observes their native end.
 
+## Disposable homes and native platform behavior
+
+All package `test` and `test:watch` scripts enter
+`/common/scripts/run-tests.mjs`. It creates a unique short `.dt-*` directory
+under `tmpdir()` on Windows or the account home on Unix (to keep Unix
+sockets outside shared temporary directories), then starts Vitest with
+`HOME`, `USERPROFILE`,
+`CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `DREAMUX_ROOT` pointing inside that
+disposable tree. Cleanup removes only the original generated directory after
+validating its parent. Use the package test script or that wrapper for targeted
+runs too; direct Vitest invocation bypasses the boundary.
+
+A test that overrides home resolution still owns its fixture isolation. On
+Windows, changing `HOME` alone does not redirect Node `os.homedir()`, and native
+Codex needs an explicit temporary `CODEX_HOME`. Tests exercising a missing-home
+fallback must mock `homedir()` to a disposable directory. Never derive a
+recursive cleanup target from an ambient or restored user home.
+
+Assert native behavior: current-user DACLs on Windows, POSIX modes on Unix,
+realpath equivalence for junction/symlink targets, complete literal argv
+(including multiline prompts) and termination of descendants after their
+parent exits. A Windows directory junction tests the skill-link contract
+without requiring symlink privileges. Keep meaningful platform-specific
+contracts, such as POSIX SIGTERM escalation, scoped to that platform rather
+than weakening their assertions.
+
+The host suite runs files sequentially to avoid concurrent native process and
+ACL setup overwhelming short race-test waits. Preserve explicit barriers and
+behavior assertions. When a catalog test already has a stateless delegate,
+reuse it instead of rebuilding a filesystem harness for every tool.
+
 ## Real Codex execution boundaries
 
 `/packages/dreamux/tests/codex-live.test.ts` checks the installed version and
 initializes a real app-server/thread in a disposable home without operator
-config or authentication. Missing or unsupported Codex fails this check.
+config or authentication. On Windows it uses the same private stdio transport
+as production; POSIX retains Unix WebSocket transport. Missing or unsupported
+Codex fails this check.
 `DREAMUX_SKIP_LIVE_CODEX=1` is an explicit exclusion for an environment that
 intentionally lacks Codex; it does not certify provider compatibility.
 
 The model cases in `codex-native-contracts-live.test.ts`,
 `codex-activity-live.test.ts` and `codex-inbound-live.test.ts` additionally require
-`DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model authentication. This explicit
+`DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model authentication. Only that
+opt-in makes the wrapper retain the original Codex home in
+`DREAMUX_TEST_AUTH_HOME`; the live fixtures read its auth file into their
+disposable homes rather than creating sessions in the operator home. This explicit
 execution boundary lets normal hosted CI check installed/protocol compatibility
 without model credentials. An excluded model case is reported as excluded;
 installation, protocol startup or a default green run cannot substitute for

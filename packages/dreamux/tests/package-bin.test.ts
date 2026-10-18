@@ -16,13 +16,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 
-import { resolveExecutableOnPath } from '../src/platform/package-bin.js';
+import { resolveExecutableOnPath } from '@excitedjs/dreamux-utils';
 
 function writeExecutable(dir: string, name: string): string {
   mkdirSync(dir, { recursive: true });
-  const path = join(dir, name);
+  const path = join(dir, process.platform === 'win32' ? `${name}.EXE` : name);
   writeFileSync(path, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   chmodSync(path, 0o755);
   return path;
@@ -44,14 +44,14 @@ describe('resolveExecutableOnPath', () => {
     const expected = writeExecutable(binDir, 'mybin');
 
     const resolved = await resolveExecutableOnPath('mybin', {
-      PATH: `/nonexistent-dreamux-dir:${binDir}`,
+      PATH: `/nonexistent-dreamux-dir${delimiter}${binDir}`,
     });
     expect(resolved).toBe(expected);
   });
 
   it('returns null for a bare name that is on no PATH entry', async () => {
     const resolved = await resolveExecutableOnPath('definitely-not-here', {
-      PATH: `/nonexistent-dreamux-dir:${root}`,
+      PATH: `/nonexistent-dreamux-dir${delimiter}${root}`,
     });
     expect(resolved).toBeNull();
   });

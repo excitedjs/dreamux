@@ -9,7 +9,7 @@ import { createCodexAgentRuntimeProvider } from '@excitedjs/agent-runtime-codex'
 // Test-only internal coupling: native RPC ordering/types/version and the Feishu
 // bot IO interception have no public seam. They retain real Codex/MCP evidence
 // while preventing platform sends; provider construction uses public entries.
-import { CodexWsClient } from '../../agent-runtime/codex/dist/rpc.js';
+import { CodexRpcClient } from '../../agent-runtime/codex/dist/rpc.js';
 import { codexVersionSatisfies } from '../../agent-runtime/codex/dist/version.js';
 import type {
   ServerNotification,
@@ -84,14 +84,17 @@ describe('real Codex #63 inbound gate', () => {
       const dir = await mkdtemp(join(tmpdir(), 'dreamux-r63-'));
       const oldRoot = process.env['DREAMUX_ROOT'];
       const oldBin = process.env['DREAMUX_BIN'];
-      const authHome = process.env['CODEX_HOME'] ?? join(homedir(), '.codex');
+      const authHome =
+        process.env['DREAMUX_TEST_AUTH_HOME'] ??
+        process.env['CODEX_HOME'] ??
+        join(homedir(), '.codex');
       const codexHome = join(dir, 'codex');
       const cwd = join(dir, 'cwd');
       const root = join(dir, 'root');
       let server: Server | undefined;
       let routes: FeishuInboundRoutes | undefined;
       let instance: ChannelInstance | undefined;
-      let liveClient: CodexWsClient | undefined;
+      let liveClient: CodexRpcClient | undefined;
       let sequence = 0;
       const requests: Array<{
         method: string;
@@ -159,12 +162,12 @@ describe('real Codex #63 inbound gate', () => {
         resolveWikiNode: unsupported,
         fetchMessageResource: unsupported,
       };
-      const realRequest = CodexWsClient.prototype.request;
-      const observed = new WeakSet<CodexWsClient>();
+      const realRequest = CodexRpcClient.prototype.request;
+      const observed = new WeakSet<CodexRpcClient>();
       const requestSpy = vi
-        .spyOn(CodexWsClient.prototype, 'request')
+        .spyOn(CodexRpcClient.prototype, 'request')
         .mockImplementation(async function <R = unknown>(
-          this: CodexWsClient,
+          this: CodexRpcClient,
           method: string,
           params: unknown,
         ): Promise<R> {
