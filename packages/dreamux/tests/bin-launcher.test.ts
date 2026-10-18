@@ -143,7 +143,9 @@ describe('packages/dreamux/bin/dreamux', () => {
   });
 
   it('loads compiled output without dependencies and preserves literal argv from a path with spaces', () => {
-    const tmp = mkdtempSync(join(tmpdir(), 'dreamux launcher spaces '));
+    const tmp = realpathSync.native(
+      mkdtempSync(join(tmpdir(), 'dreamux launcher spaces ')),
+    );
     try {
       mkdirSync(join(tmp, 'bin'));
       mkdirSync(join(tmp, 'dist', 'cli'), { recursive: true });
