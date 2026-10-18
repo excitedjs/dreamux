@@ -23,6 +23,22 @@ the new 800-case native publication regression's execution budget was raised
 from 15 to 60 seconds for its 1,600 native permission-process invocations; its
 workload and assertions are unchanged. No production code changed after the run.
 
+## Hosted runner follow-up
+
+The first hosted run passed the complete Linux gate and exposed two test
+infrastructure differences: Windows checkout converted source to CRLF, and
+macOS resolved temporary parent symlinks in the launcher path. Root Git
+attributes now retain LF under `core.autocrlf=true` (checked with a disposable
+Git checkout), and the launcher test compares the canonical installed path.
+Argument preservation and exit-code assertions are unchanged. The targeted
+Windows launcher suite and its lint/test type checks pass.
+
+The published alpha was installed globally on the native Windows machine.
+After a first scheduled instance exited with `0xC000013A`, the task was started
+again and remained alive across independent process invocations; the admin
+status command reported the same server PID and increasing uptime. The first
+exit was not reproduced, so no speculative production workaround was added.
+
 ## Review and finding disposition
 
 Independent reviews covered the provider transport and home changes, native
