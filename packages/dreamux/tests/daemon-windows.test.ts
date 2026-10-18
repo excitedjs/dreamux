@@ -45,6 +45,11 @@ class WindowsRunner implements CommandRunner {
     expect(command).toBe('powershell.exe');
     const script = Buffer.from(args.at(-1) ?? '', 'base64').toString('utf16le');
     this.calls.push({ command, script });
+    if (script.includes('$registered.Actions[0].Arguments')) {
+      return JSON.stringify(
+        this.installed ? { taskName: 'Dreamux-fixture', launcher: null } : null,
+      );
+    }
     if (script.includes('$task.Definition.Actions.Item(1).Arguments')) {
       return JSON.stringify(
         this.installed ? { enabled: true, launcher: null } : null,
@@ -107,7 +112,7 @@ describe('Windows managed service', () => {
       unitPath: windowsServiceFile(),
       started: true,
     });
-    expect(runner.calls).toHaveLength(5);
+    expect(runner.calls).toHaveLength(6);
     expect(runner.calls[0]?.command).toBe('powershell.exe');
     expect(runner.calls[0]?.script).toContain(
       '-LogonType Interactive -RunLevel Limited',
@@ -264,7 +269,7 @@ describe('Windows managed service', () => {
     process.platform === 'win32' &&
       process.env['DREAMUX_RUN_WINDOWS_SERVICE_TEST'] === '1',
   )(
-    'repeatedly starts, stops, restarts and unregisters an isolated task without surviving children',
+    'controls and self-restarts an isolated task without surviving children',
     async () => {
       const taskName = `Dreamux-Test-${randomUUID()}`;
       const systemRunner = new ExecaCommandRunner();
@@ -292,15 +297,43 @@ describe('Windows managed service', () => {
           systemRunner.check(command, taskArgs(args), options),
       };
       const pidFile = join(root, 'pids.json');
-      const launcher = join(root, 'launcher.cjs');
+      const restartRequest = join(root, 'restart-request');
+      const restartMarker = join(root, 'restart-marker.json');
+      const launcher = join(root, 'launcher.mjs');
       await writeFile(
         launcher,
-        `const {spawn} = require('node:child_process'); const fs = require('node:fs'); const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], {windowsHide:true, stdio:'ignore'}); fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({parent:process.pid,child:child.pid})); setInterval(()=>{},1000);`,
+        `
+import { spawn } from 'node:child_process';
+import { readFile, writeFile, rm } from 'node:fs/promises';
+import { controlWindowsService } from ${JSON.stringify(new URL('../dist/daemon/windows.js', import.meta.url).href)};
+import { ExecaCommandRunner } from ${JSON.stringify(new URL('../dist/platform/command-runner.js', import.meta.url).href)};
+import { notifyResumedRestart, RestartIntentConsumer } from ${JSON.stringify(new URL('../dist/service/dispatcher-service/restart-intent.js', import.meta.url).href)};
+const child = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { windowsHide: true, stdio: 'ignore' });
+const marker = await RestartIntentConsumer.load({ now: Date.now(), path: ${JSON.stringify(restartMarker)}, log: { warn: console.error } });
+await writeFile(${JSON.stringify(pidFile)}, JSON.stringify({ parent: process.pid, child: child.pid, notice: marker.claim('fixture', Date.now()) }));
+let controlling = false;
+setInterval(async () => {
+  if (controlling) return;
+  let request;
+  try { request = await readFile(${JSON.stringify(restartRequest)}, 'utf8'); } catch { return; }
+  controlling = true;
+  await rm(${JSON.stringify(restartRequest)});
+  if (request === 'restart') {
+    await notifyResumedRestart({
+      targets: ['fixture'], now: Date.now(), path: ${JSON.stringify(restartMarker)},
+      runControl: () => controlWindowsService('restart', new ExecaCommandRunner(), false, ${JSON.stringify(taskName)}),
+    });
+  } else {
+    await controlWindowsService('stop', new ExecaCommandRunner(), false, ${JSON.stringify(taskName)});
+  }
+}, 25);
+`,
       );
       const readPids = async () =>
         JSON.parse(await readFile(pidFile, 'utf8')) as {
           parent: number;
           child: number;
+          notice: string | null;
         };
       const alive = (pid: number) => {
         try {
@@ -316,7 +349,11 @@ describe('Windows managed service', () => {
       };
       try {
         await installUserService({
-          answers: { ...answers, dreamuxBin: launcher },
+          answers: {
+            ...answers,
+            dreamuxBin: launcher,
+            env: { ...answers.env, PATH: process.env['PATH'] },
+          },
           ledger: new TransparentFileLedger(),
           host: createServiceHost({ runner, platform: 'win32' }),
         });
@@ -334,6 +371,44 @@ describe('Windows managed service', () => {
             { timeout: 15000 },
           );
         }
+        const beforeSelfRestart = await readPids();
+        await writeFile(restartRequest, 'restart');
+        try {
+          await vi.waitFor(
+            async () => {
+              const resumed = await readPids();
+              expect(resumed.parent).not.toBe(beforeSelfRestart.parent);
+              expect(resumed.notice).toBe('Restart completed.');
+            },
+            { timeout: 15000 },
+          );
+        } catch (cause) {
+          const stderr = await readFile(
+            join(root, 'logs', 'daemon.stderr.log'),
+            'utf8',
+          );
+          throw new Error(`Self-restart fixture failed: ${stderr}`, { cause });
+        }
+        assertStopped(beforeSelfRestart);
+        await expect(readFile(restartMarker)).rejects.toMatchObject({
+          code: 'ENOENT',
+        });
+        const beforeSelfStop = await readPids();
+        await writeFile(restartRequest, 'stop');
+        await vi.waitFor(
+          async () =>
+            expect(
+              await getServiceStatus({ runner, platform: 'win32' }),
+            ).toMatchObject({ running: false, enabled: true }),
+          { timeout: 15000 },
+        );
+        assertStopped(beforeSelfStop);
+        await controlUserService('start', { runner, platform: 'win32' });
+        await vi.waitFor(
+          async () =>
+            expect((await readPids()).parent).not.toBe(beforeSelfStop.parent),
+          { timeout: 15000 },
+        );
         let previous = await readPids();
         await controlUserService('stop', { runner, platform: 'win32' });
         assertStopped(previous);
@@ -372,6 +447,6 @@ describe('Windows managed service', () => {
         await runDaemonUninstall({ runner, platform: 'win32' });
       }
     },
-    60000,
+    90000,
   );
 });

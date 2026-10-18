@@ -47,14 +47,24 @@ stopping the task action, then releases the Job. A late launcher cannot create
 another Job during this interval. No process tree is reconstructed from PIDs. The
 previous task-enabled state is preserved. Unix service managers remain unchanged.
 
+Dispatcher self-upgrade invokes the restart command from inside that same Job.
+Before mutating the task, service control checks membership against its actual
+registered launcher's Job. A member hands the operation to a short-lived
+same-user WMI-created Node process, which survives the old Job and runs the same
+control path against the registered task name. No extra scheduled task or
+durable operation record is introduced. External callers still await control
+directly; the existing resumed notification confirms an internal restart.
+This uses the documented [WMI process creation behavior for Job membership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+without enabling breakaway for ordinary supervised children.
+
 Shared filesystem utilities enforce Windows ACLs and Unix modes. Startup
 privately prepares the configured log destinations and their directories before
 synchronous file logging; DACL inheritance alone does not override an elevated
 token's Administrators default owner. Attachment-cache files receive current-user
 ownership before writing bytes, and cache hits verify the existing file. Atomic
-writes secure new temporary files before content is written. The WorkflowJournal owner prepares privacy at
-creation or recovery load, then appends only to the existing file through its
-serialized queue. Path containment uses native path operations.
+writes secure new temporary files before content is written. The WorkflowJournal
+owner prepares privacy at creation or recovery load, then appends only to the
+existing file through its serialized queue. Path containment uses native path operations.
 Activity file opens retain Unix O_NOFOLLOW; Windows checks leaf metadata before
 and after each open against the held descriptor before any content is read.
 

@@ -8,9 +8,9 @@ management, the final Windows run passed the following gates:
 | Gate | Result |
 | --- | --- |
 | Rush update, build, source typecheck, lint and test typecheck | Passed across the workspace |
-| Full default suite | 2,866 passed, 36 platform/opt-in skips, zero failures; 95 seconds |
+| Full default suite | 2,867 passed, 36 platform/opt-in skips, zero failures; 93 seconds |
 | Built CLI smoke | Passed |
-| Real Task Scheduler lifecycle | Passed install, repeated restart, stop, start, disabled-state preservation and uninstall using an isolated task |
+| Real Task Scheduler lifecycle | Passed install, repeated restart, internal restart/resumed notice, internal stop, start, disabled-state preservation and uninstall using an isolated task |
 | Generated Node and batch-target service launchers | Passed Unicode paths, arguments, log output and target exit code |
 | Explicit authenticated model gate | Six tests passed across three files in 90 seconds after operator authorization |
 | Node repository tooling | Nine tests passed, including real commit hooks, content scans, author policy, KB checks and archive validation |
@@ -28,7 +28,8 @@ The native permission oracle checks owner-only access for both explicit and
 inherited private ACLs. Explicit permission APIs still assert protected DACLs
 and inheritance flags. The fixture that loosens a directory retains inheritable
 owner access; it no longer removes permissions from existing child files.
-The existing logger and attachment-cache behavioral assertions are unchanged.
+Logger and attachment-cache tests additionally verify ownership before the
+first content write or cache hit can hide a creation-time defect.
 
 Koffi is the only new runtime dependency in the utility package. Independent
 review checked the original layering rationale: utilities must not depend on
@@ -39,6 +40,28 @@ requiring an empty runtime dependency field.
 The local token is not elevated. Administrator-owned adoption and foreign-owner
 refusal require an elevated Windows runner; that coverage is delegated to the
 Windows CI job rather than claimed from this machine.
+
+The ownership and fixture fixes passed the complete Linux, macOS and Windows
+[CI matrix](https://github.com/excitedjs/dreamux/actions/runs/39155120513),
+including the elevated Windows log/cache assertions.
+Independent review confirmed that the fixes retain strict ownership and
+foreign-owner refusal. The later service-control change is checked separately.
+
+Dispatcher self-upgrade is an existing real caller of notification restart.
+The original Windows sequence could terminate that caller before completing
+task restoration and start. An isolated WMI probe verified the controller has
+the same SID and interactive session, is outside the target Job, and continues
+after terminating it. The real Task Scheduler test then exercised compiled
+service code from inside its own Job: a new generation received the existing
+`Restart completed.` notice, consumed its marker, and left no old fixture
+parent or child. All task names and roots were disposable; the operator's
+running service was not used by this regression.
+The final service suite also verifies an internal stop restores the task's
+enabled state, alongside external repeated restarts, ordinary stop/start,
+disabled-state preservation and uninstall. The combined daemon/privacy run
+passed 47 tests, and the native Job suite passed seven tests. Independent
+review checked that external callers retain their wait/error semantics and
+the hidden controller captures native failure details into the existing log.
 
 ## Initial native Windows checks
 
@@ -64,6 +87,20 @@ from 15 to 60 seconds for its 1,600 native permission-process invocations; its
 workload and assertions are unchanged. The later hosted-runner findings and their production fixes are recorded below.
 
 ## Hosted runner follow-up
+
+The elevated Windows runner creates new filesystem objects with the token's
+default Administrators owner, even below a user-owned private directory.
+Synchronous Pino creation therefore left logs that a later limited server
+could not adopt. The existing asynchronous server startup now prepares every
+fixed log destination and its directory before constructing loggers. Cache
+publication similarly establishes ownership before writing attachment bytes,
+and cache hits verify ownership. Strict owner assertions remain in place;
+tests also preserve existing log contents and verify cache misses immediately.
+
+Git fixtures explicitly select LF after initialization, including when the
+operator's global configuration enables `core.autocrlf`. The native launcher
+fixture expands Windows short paths with `realpathSync.native`. The three
+affected suites passed with an isolated global `core.autocrlf=true` config.
 
 The final Node-tooling matrix exposed canonical temporary paths: Git expands
 Windows runner short names and resolves macOS `/var` symlinks. The hook fixture
