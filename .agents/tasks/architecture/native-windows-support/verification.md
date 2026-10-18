@@ -63,6 +63,18 @@ passed 47 tests, and the native Job suite passed seven tests. Independent
 review checked that external callers retain their wait/error semantics and
 the hidden controller captures native failure details into the existing log.
 
+Installing the published alpha into a separate npm prefix exposed a CLI version
+defect: yargs inferred a manifest from its dependency location, returning
+`unknown` for a hoisted install and the workspace's `0.0.0` in the repository.
+The CLI now reads its own packaged manifest explicitly. The built CLI smoke
+compares against that manifest's exact version from a caller directory outside
+the package; notification self-upgrade continues to use the existing version
+and resumed-notice surfaces.
+The strengthened smoke failed before the fix and passed afterward. Build,
+lint, test typechecking and ten related CLI tests passed; two file-symlink
+cases require privileges unavailable locally. Both packaged entry points also
+reported the exact alpha version in the separate npm installation layout.
+
 ## Initial native Windows checks
 
 The initial local run on 2026-10-19 used Node 22.23.3 and Rush 5.140.0.

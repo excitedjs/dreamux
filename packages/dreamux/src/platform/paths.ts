@@ -270,6 +270,10 @@ export function bundledSharedSkillRoot(): string {
   return join(bundledSkillsDir(), 'shared');
 }
 
+export function packagedManifestPath(): string {
+  return join(PACKAGE_ROOT, 'package.json');
+}
+
 /**
  * Packaged changelog files, shipped inside the installed package so that
  * `dreamux changelog` is an offline, deterministic read of the *installed*
