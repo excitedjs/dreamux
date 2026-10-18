@@ -2,7 +2,7 @@
  * Service-manager lifecycle wrappers for the `dreamux daemon` command group.
  *
  * These talk to the native user-level service manager directly (Linux
- * `systemctl --user`, macOS `launchctl`) — not the admin socket — so they work
+ * `systemctl --user`, macOS `launchctl`, Windows Task Scheduler) — not the admin socket — so they work
  * even when the server is down. Each verb maps to the platform's idiom:
  *
  *   verb     | systemd --user                       | launchd (gui/<uid>/<label>)
@@ -23,6 +23,7 @@ import {
   SYSTEMD_UNIT,
   type ServicePlatform,
 } from './unit.js';
+import { controlWindowsService } from './windows.js';
 
 export type DaemonVerb = 'start' | 'stop' | 'restart';
 
@@ -49,6 +50,14 @@ export async function controlUserService(
   const unit = serviceUnitPath(host.platform, host.homeDir);
   const dryRun = options.dryRun ?? false;
   const commands: Array<{ command: string; args: string[] }> = [];
+
+  if (unit.platform === 'windows') {
+    return {
+      platform: 'windows',
+      verb,
+      commands: await controlWindowsService(verb, host.runner, dryRun),
+    };
+  }
 
   if (unit.platform === 'systemd') {
     const args = ['--user', verb, SYSTEMD_UNIT];

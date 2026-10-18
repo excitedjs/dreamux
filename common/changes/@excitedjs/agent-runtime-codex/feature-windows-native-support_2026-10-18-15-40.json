@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Support native Windows Codex app-server sessions over private stdio JSON-RPC, including native home resolution and process cleanup.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

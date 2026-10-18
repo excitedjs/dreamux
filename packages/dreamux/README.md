@@ -8,7 +8,7 @@ TeamMates collaborate in a shared workspace with their own runtime sessions.
 
 ## Install
 
-Requires Node.js **22.7+**, Bash on Linux or macOS, an installed and authenticated
+Requires Node.js **22.7+** on Linux, macOS or Windows, an installed and authenticated
 **Codex 0.137+** or **Claude Code** CLI, and a configured Feishu bot application.
 
 ```bash
@@ -27,6 +27,33 @@ availability first. Complete the pairing approval on your first conversation,
 then resend the request. The full
 [getting-started guide](https://github.com/excitedjs/dreamux/blob/next/docs/getting-started.md)
 covers these steps and explains what `doctor` does and does not verify.
+
+## Native Windows
+
+Windows runs natively with Node.js 22.7 or newer and Windows PowerShell; WSL
+is not required. After building the checkout, use PowerShell from its root:
+
+```powershell
+node .\packages\dreamux\bin\dreamux onboard
+node .\packages\dreamux\bin\dreamux daemon install --start
+node .\packages\dreamux\bin\dreamux daemon status
+node .\packages\dreamux\bin\dreamux doctor
+```
+
+For a foreground server, run `node .\packages\dreamux\bin\dreamux serve`.
+An npm-installed package exposes the equivalent `dreamux` command.
+
+The managed service is one Scheduled Task for the current user, starts at
+user logon, and runs with limited privileges. `daemon start`, `stop`, `restart`
+and `uninstall` manage it. Windows stop/restart forcefully terminate the full
+process tree; they do not drain active turns. The generated
+`<DREAMUX_ROOT>/daemon.ps1` captures the Node command and service environment;
+rerun `daemon install` to refresh it rather than editing the script.
+
+Local administration uses a private named pipe, and Codex uses child stdio.
+Native executables and npm Node shims work without a Unix socket or shell.
+Use explicit `CODEX_HOME` to relocate Codex data; setting `HOME` alone does not
+move native Windows Codex. Claude skill adapters use directory junctions.
 
 ## What this package provides
 

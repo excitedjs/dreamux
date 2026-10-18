@@ -18,7 +18,10 @@ import type { JsonInvoker, JsonValue } from '@excitedjs/dreamux-types';
 import { errorMessage } from '@excitedjs/dreamux-utils';
 
 import { TransportError } from '../platform/errors.js';
-import { adminSocketPath as defaultAdminSocketPath } from '../platform/paths.js';
+import {
+  adminSocketAddress,
+  adminSocketPath as defaultAdminSocketPath,
+} from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
 
 export interface AdminInvokerOptions {
@@ -108,7 +111,7 @@ function sendOne(
     }
 
     try {
-      sock = connect(socketPath);
+      sock = connect(adminSocketAddress(socketPath));
     } catch (err) {
       settle(
         new TransportError(

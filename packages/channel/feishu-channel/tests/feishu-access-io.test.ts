@@ -10,6 +10,7 @@ import {
   type DispatcherAccessStateV3,
 } from '../src/access/state.js';
 import type { GateInbound } from '../src/access/gate.js';
+import { expectOwnerOnlyPermissions } from '../../../../common/scripts/test-permissions.mjs';
 
 const log: DreamuxLogger = {
   error() {},
@@ -137,16 +138,16 @@ describe('FeishuAccess v3 loader and atomic writes', () => {
     });
   });
 
-  it('creates a missing state directory at 0700 and its first secure V3 file at 0600 on pairing commit', async () => {
+  it('creates an owner-only state directory and first secure V3 file on pairing commit', async () => {
     const stateDir = join(dir, 'new-state');
     const access = new FeishuAccess({ stateDir, dispatcherId: 'test', log });
     const action = await access.gate(inbound);
     if (action.action !== 'pair') throw new Error('expected pairing');
     await expect(stat(stateDir)).rejects.toMatchObject({ code: 'ENOENT' });
     await access.recordPairingPrompt(inbound, action, 'prompt');
-    expect((await stat(stateDir)).mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(stateDir, 0o700);
     const file = join(stateDir, 'access.json');
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    await expectOwnerOnlyPermissions(file, 0o600);
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       version: 3,
       dm_policy: 'pairing',
@@ -204,7 +205,7 @@ describe('FeishuAccess v3 loader and atomic writes', () => {
       await owner().decide({ ...inbound, chat_type: 'group' }),
     ).toMatchObject({ action: 'drop' });
   });
-  it('committed pairing round-trips v3 state with 0600 file mode', async () => {
+  it('committed pairing round-trips v3 state in an owner-only file', async () => {
     const access = owner();
     const action = await access.gate(inbound);
     if (action.action !== 'pair') throw new Error('expected pairing');
@@ -220,7 +221,7 @@ describe('FeishuAccess v3 loader and atomic writes', () => {
         },
       },
     });
-    expect((await stat(join(dir, 'access.json'))).mode & 0o777).toBe(0o600);
+    await expectOwnerOnlyPermissions(join(dir, 'access.json'), 0o600);
     expect(await owner().decide(inbound)).toMatchObject({
       action: 'pair',
       token: action.token,
@@ -265,39 +266,45 @@ describe('FeishuAccess v3 loader and atomic writes', () => {
     expect(await owner().decide(inbound)).toMatchObject({ action: 'deliver' });
     expect(await owner().isTrustedDispatcherUser('operator-user')).toBe(true);
   });
-  it('concurrent pairing commits never tear the file or lose another sender', async () => {
-    const access = owner();
-    const entries = await Promise.all(
-      Array.from({ length: 8 }, async (_, i) => {
-        const input = {
-          ...inbound,
-          sender_id: `sender-${i}`,
-          chat_id: `chat-${i}`,
-        };
-        const action = await access.decide(input);
-        if (action.action !== 'pair') throw new Error('expected pairing');
-        return { input, action };
-      }),
-    );
-    await Promise.all(
-      entries.map(async ({ input, action }, i) => {
-        await access.recordPairingPrompt(input, action, `prompt-${i}`);
-        expect((await disk()).version).toBe(3);
-      }),
-    );
-    const state = await disk();
-    expect(Object.keys(state.pending)).toHaveLength(entries.length);
-    expect(
-      Object.values(state.pending)
-        .map((entry) => entry.sender_id)
-        .sort(),
-    ).toEqual(entries.map(({ input }) => input.sender_id).sort());
-    expect((await stat(join(dir, 'access.json'))).mode & 0o777).toBe(0o600);
-    const fresh = owner();
-    for (const { input, action } of entries)
-      expect(await fresh.decide(input)).toMatchObject({
-        action: 'pair',
-        token: action.token,
-      });
-  });
+  // Each serialized commit enforces native directory access; Windows ACL
+  // operations include process startup, so eight real commits need more time.
+  it(
+    'concurrent pairing commits never tear the file or lose another sender',
+    async () => {
+      const access = owner();
+      const entries = await Promise.all(
+        Array.from({ length: 8 }, async (_, i) => {
+          const input = {
+            ...inbound,
+            sender_id: `sender-${i}`,
+            chat_id: `chat-${i}`,
+          };
+          const action = await access.decide(input);
+          if (action.action !== 'pair') throw new Error('expected pairing');
+          return { input, action };
+        }),
+      );
+      await Promise.all(
+        entries.map(async ({ input, action }, i) => {
+          await access.recordPairingPrompt(input, action, `prompt-${i}`);
+          expect((await disk()).version).toBe(3);
+        }),
+      );
+      const state = await disk();
+      expect(Object.keys(state.pending)).toHaveLength(entries.length);
+      expect(
+        Object.values(state.pending)
+          .map((entry) => entry.sender_id)
+          .sort(),
+      ).toEqual(entries.map(({ input }) => input.sender_id).sort());
+      await expectOwnerOnlyPermissions(join(dir, 'access.json'), 0o600);
+      const fresh = owner();
+      for (const { input, action } of entries)
+        expect(await fresh.decide(input)).toMatchObject({
+          action: 'pair',
+          token: action.token,
+        });
+    },
+    process.platform === 'win32' ? 15_000 : undefined,
+  );
 });

@@ -1,5 +1,5 @@
 /**
- * Codex app-server WebSocket JSON-RPC client.
+ * Codex app-server JSON-RPC client over WebSocket or private child stdio.
  *
  * Adapted from claudemux's `plugins/claudemux/core/src/engines/codex/rpc.ts`
  * (excitedjs/dreamux#2 "key code-reuse conclusions"). Two differences:
@@ -13,7 +13,9 @@
  *   - id + result|error    → response
  */
 
-import WebSocket, { type RawData } from 'ws';
+import { createInterface } from 'node:readline';
+import type { Readable, Writable } from 'node:stream';
+import WebSocket from 'ws';
 
 import type {
   ErrResponseEnvelope,
@@ -24,23 +26,22 @@ import type {
   ServerRequest,
 } from './types.js';
 
-export interface CodexWsClientOptions {
-  /** Unix socket path the codex daemon listens on (production). */
-  socketPath?: string;
-  /** `ws://...` URL — used by tests pointing at an in-process WebSocket.Server. */
-  url?: string;
-}
+export type CodexRpcClientOptions =
+  | { socketPath: string }
+  | { url: string }
+  | { stdio: { stdin: Writable; stdout: Readable } };
 
 export type NotificationHandler = (notif: ServerNotification) => void;
 export type ServerRequestHandler = (req: ServerRequest) => Promise<unknown>;
 export type CloseHandler = (reason: Error) => void;
 
 /**
- * A long-running WebSocket connection to one codex app-server daemon.
+ * A long-running connection to one codex app-server daemon.
  * One instance per Dispatcher; lifetime matches the dispatcher runtime.
  */
-export class CodexWsClient {
-  private readonly ws: WebSocket;
+export class CodexRpcClient {
+  private readonly sendFrame: (frame: string) => void;
+  private readonly closeTransport: () => void;
   private readonly pending = new Map<
     number,
     { resolve: (v: unknown) => void; reject: (e: Error) => void }
@@ -60,42 +61,71 @@ export class CodexWsClient {
   private closed = false;
   private closeReason: Error | null = null;
 
-  constructor(opts: CodexWsClientOptions) {
+  constructor(opts: CodexRpcClientOptions) {
+    if ('stdio' in opts) {
+      const { stdin, stdout } = opts.stdio;
+      const lines = createInterface({ input: stdout, crlfDelay: Infinity });
+      this.opened = Promise.resolve();
+      this.sendFrame = (frame) => {
+        stdin.write(`${frame}\n`, (error) => {
+          if (error) this.tearDown(error);
+        });
+      };
+      this.closeTransport = () => {
+        lines.close();
+        stdin.end();
+        stdout.destroy();
+      };
+      lines.on('line', (line) => this.onFrame(line));
+      lines.once('close', () =>
+        this.tearDown(new Error('codex daemon closed the connection')),
+      );
+      lines.on('error', (error) => this.tearDown(error));
+      stdin.on('error', (error) => this.tearDown(error));
+      if (stdin.destroyed || stdout.destroyed || stdout.readableEnded) {
+        this.tearDown(new Error('codex daemon closed the connection'));
+      }
+      return;
+    }
     // `perMessageDeflate: false` is load-bearing — the codex app-server's
     // WebSocket upgrade is strict about Sec-WebSocket-Extensions and would
     // reject the `ws` package's default permessage-deflate proposal.
     // Verified empirically against codex 0.133.0 by claudemux.
     const wsOpts = { perMessageDeflate: false };
-    if (opts.socketPath !== undefined) {
-      this.ws = new WebSocket(`ws+unix://${opts.socketPath}`, wsOpts);
-    } else if (opts.url !== undefined) {
-      this.ws = new WebSocket(opts.url, wsOpts);
-    } else {
-      throw new Error('CodexWsClient: socketPath or url required');
-    }
+    const ws = new WebSocket(
+      'socketPath' in opts ? `ws+unix://${opts.socketPath}` : opts.url,
+      wsOpts,
+    );
+    this.sendFrame = (frame) => ws.send(frame);
+    this.closeTransport = () => ws.terminate();
 
     this.opened = new Promise<void>((res, rej) => {
       this.rejectOpened = rej;
-      this.ws.once('open', () => {
+      ws.once('open', () => {
         this.rejectOpened = null;
         res();
       });
-      this.ws.once('error', (e) =>
+      ws.once('error', (e) =>
         rej(e instanceof Error ? e : new Error(String(e))),
       );
     });
     void this.opened.catch(() => undefined);
 
-    this.ws.on('message', (data) => this.onFrame(data));
-    this.ws.on('close', () =>
+    ws.on('message', (data) => this.onFrame(data.toString('utf8')));
+    ws.on('close', () =>
       this.tearDown(new Error('codex daemon closed the connection')),
     );
-    this.ws.on('error', (e) =>
+    ws.on('error', (e) =>
       this.tearDown(e instanceof Error ? e : new Error(String(e))),
     );
   }
 
   ready(): Promise<void> {
+    if (this.closed) {
+      return Promise.reject(
+        this.closeReason ?? new Error('codex client closed'),
+      );
+    }
     return this.opened;
   }
 
@@ -140,7 +170,7 @@ export class CodexWsClient {
         reject,
       });
       try {
-        this.ws.send(JSON.stringify(envelope));
+        this.sendFrame(JSON.stringify(envelope));
       } catch (e) {
         this.pending.delete(id);
         reject(e instanceof Error ? e : new Error(String(e)));
@@ -157,18 +187,17 @@ export class CodexWsClient {
       throw this.closeReason ?? new Error('codex client closed');
     }
     const envelope = { method, params };
-    this.ws.send(JSON.stringify(envelope));
+    this.sendFrame(JSON.stringify(envelope));
   }
 
   close(): void {
     this.tearDown(new Error('codex client closed by caller'));
-    this.ws.terminate();
+    this.closeTransport();
   }
 
-  private onFrame(data: RawData): void {
+  private onFrame(text: string): void {
     let parsed: unknown;
     try {
-      const text = typeof data === 'string' ? data : data.toString('utf8');
       parsed = JSON.parse(text);
     } catch (e) {
       this.tearDown(
@@ -229,11 +258,11 @@ export class CodexWsClient {
     try {
       const result = await this.serverReqHandler(env);
       const reply: OkResponseEnvelope = { id: env.id, result };
-      this.ws.send(JSON.stringify(reply));
+      this.sendFrame(JSON.stringify(reply));
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       const reply: ErrResponseEnvelope = { id: env.id, error: { message } };
-      this.ws.send(JSON.stringify(reply));
+      this.sendFrame(JSON.stringify(reply));
     }
   }
 

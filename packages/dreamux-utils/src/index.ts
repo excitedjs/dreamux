@@ -3,6 +3,7 @@ export * from './rule-violation.js';
 export * from './json-shape.js';
 export * from './error-info.js';
 export * from './os.js';
+export * from './process-command.js';
 export * from './fs.js';
 export * from './completion-body.js';
 export * from './socket-budget.js';

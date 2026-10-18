@@ -27,6 +27,12 @@ and its own runtime config parsing; it reconstructs no Dreamux host
 layout/path/log contracts. Shared process supervision and state-write fencing
 come from `@excitedjs/dreamux-utils`.
 
+Windows uses the same private stream-json child transport. Skill directories
+are linked into the adapter through native directory junctions, so skill
+materialization does not require symbolic-link privileges or Developer Mode.
+When `HOME` is absent, native history lookup uses the operating system home
+directory; `CLAUDE_CONFIG_DIR` remains the explicit config-home override.
+
 ## Loading
 
 Dreamux always loads this package's plugin, which contributes the provider

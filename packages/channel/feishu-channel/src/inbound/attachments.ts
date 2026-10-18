@@ -3,7 +3,7 @@ import { chmod, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 
-import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
+import { ensureOwnerOnlyDir, isPathWithin } from '@excitedjs/dreamux-utils';
 
 import type {
   FeishuInboundEvent,
@@ -330,7 +330,7 @@ function attachmentPath(cacheRoot: string, resource: InboundResource): string {
     .slice(0, 16);
   const displayName = sanitizeFileName(resource.name ?? `${resource.type}.bin`);
   const path = resolve(cacheRoot, `${resource.type}-${digest}-${displayName}`);
-  if (!isInside(cacheRoot, path)) throw new CachePathError();
+  if (!isPathWithin(cacheRoot, path)) throw new CachePathError();
   return path;
 }
 
@@ -341,10 +341,6 @@ function sanitizeFileName(value: string): string {
     .replace(/^[-.]+/, '')
     .slice(0, 80);
   return safeBase === '' ? 'attachment.bin' : safeBase;
-}
-
-function isInside(root: string, path: string): boolean {
-  return path === root || path.startsWith(`${root}/`);
 }
 
 async function fileSize(path: string): Promise<number | null> {

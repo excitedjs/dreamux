@@ -4,10 +4,10 @@ import type {
 } from '@excitedjs/dreamux-types';
 import { isAbsolute } from 'node:path';
 
-import type { CodexWsClient } from './rpc.js';
+import type { CodexRpcClient } from './rpc.js';
 
 export async function applyCodexSkillExtraRoots(input: {
-  client: CodexWsClient;
+  client: CodexRpcClient;
   sources: readonly AgentRuntimeSkillSource[];
   logger: DreamuxLogger;
 }): Promise<void> {

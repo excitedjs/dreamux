@@ -8,11 +8,12 @@
  * `process.env`), so the spill tests below stub `process.env` directly and
  * restore it in `afterEach`.
  */
-import { mkdtemp, readFile, rm, stat, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, it, expect, afterEach } from 'vitest';
+import { expectOwnerOnlyPermissions } from './permissions.js';
 
 import {
   COMPLETION_INLINE_BUDGET_DEFAULT,
@@ -123,8 +124,7 @@ describe('resolveCompletionBody', () => {
     const content = await readFile(resolved.path, 'utf8');
     expect(content).toBe(overflow);
 
-    const info = await stat(resolved.path);
-    expect(info.mode & 0o777).toBe(0o600);
+    await expectOwnerOnlyPermissions(resolved.path, 0o600);
   });
 
   it('creates the spill directory if it does not exist yet, as owner-only 0700', async () => {
@@ -133,8 +133,7 @@ describe('resolveCompletionBody', () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-cb-'));
     const spillDir = join(root, 'nested', 'spill');
     await resolveCompletionBody({ result: 'overflow-value' }, spillDir);
-    const info = await stat(spillDir);
-    expect(info.mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(spillDir, 0o700);
   });
 
   it('tightens a pre-existing permissive spill directory to 0700', async () => {
@@ -144,8 +143,7 @@ describe('resolveCompletionBody', () => {
     const spillDir = join(root, 'loose-spill');
     await mkdir(spillDir, { mode: 0o755 });
     await resolveCompletionBody({ result: 'overflow-value' }, spillDir);
-    const info = await stat(spillDir);
-    expect(info.mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(spillDir, 0o700);
   });
 
   it('produces distinct spill files (opaque storage key, no business label) across two calls', async () => {

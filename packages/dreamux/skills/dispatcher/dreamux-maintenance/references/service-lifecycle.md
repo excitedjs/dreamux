@@ -8,7 +8,7 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
 ## Server And Service
 
 - `dreamux serve` is the foreground server entry point. The public
-  `dreamux daemon install|uninstall|start|stop|restart` command group manages
+  `dreamux daemon install|uninstall|start|stop|restart|status` command group manages
   the user service; `serve` is not self-daemonizing.
 - `dreamux uninstall` removes the managed user service and recursively removes
   `DREAMUX_ROOT`, including other files and directories inside it. Its
@@ -19,8 +19,15 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   path inside or containing a provider-derived operator runtime home is refused
   before any service mutation. Physical symlink aliases are not resolved.
   `dreamux daemon uninstall` removes only the service.
-- Check launchd or systemd only for service-lifecycle questions. Explain before
-  changing units, linger, environment, or shell startup.
+- Check the native manager only for service-lifecycle questions: launchd on
+  macOS, systemd user services on Linux, and Task Scheduler on Windows. Explain
+  before changing units, task registration, linger, environment, or shell startup.
+- Windows installs one `Dreamux-<current-user-SID>` interactive, limited task per
+  account, which starts at that user's logon. A different `DREAMUX_ROOT` does
+  not create a second managed task. Use `dreamux daemon status` to inspect it.
+  `<DREAMUX_ROOT>/daemon.ps1` is generated and owned by `daemon install`; rerun
+  installation to refresh its pinned Node command and captured environment.
+  Do not hand-edit that launcher.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
   state, and runtime app-server readiness. Use `dreamux status` for current
   Dispatcher and process facts; neither command proves Channel delivery.
@@ -38,17 +45,42 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   subtree. It is that plugin's concern, not something this skill's generic
   inspection/repair procedures cover.
 
-Dispatcher shutdown refuses new work before stopping children, waits for
+Graceful Dispatcher shutdown refuses new work before stopping children, waits for
 already-admitted operations, and releases Channels after runtime cleanup.
 A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
-`dreamux serve` always exits on SIGTERM or SIGINT. It exits 0 once shutdown
+Windows managed `stop` and `restart` forcefully terminate and await the task
+process tree, including native runtime descendants. They do not guarantee
+graceful draining or completion delivery. Inspect persisted state after restart;
+its normal startup rules determine recovery. Task startup runs at user logon,
+not before a user signs in.
+
+For a delivered SIGTERM or SIGINT, `dreamux serve` exits 0 once shutdown
 completes; if shutdown fails, or has not settled within 15 seconds, it logs the
 reason and exits 1. Under systemd a non-zero exit that was not requested through
 `systemctl stop` restarts the service (`Restart=on-failure`). A runtime child
 process can outlive a daemon that was cut off at the 15-second deadline, so
 check for leftover runtime processes after such an exit.
+
+## Native Runtime And Local IPC
+
+- The logical admin endpoint remains `<DREAMUX_ROOT>/run/admin.sock`, with its
+  sibling lock. On Windows it resolves to a named pipe with a protected
+  current-user DACL before Commands are admitted; there is no filesystem socket
+  to remove. POSIX keeps the private Unix socket. Use Dreamux commands to reach
+  the endpoint rather than substituting a TCP listener.
+- Codex app-server uses private child stdio on Windows and Unix WebSocket
+  transport on Linux/macOS. Windows readiness is the initialize handshake,
+  not appearance of a socket file. Stdout carries protocol frames; stderr is
+  the diagnostic stream. An explicit `CODEX_HOME` overrides Codex's native home;
+  `HOME` alone does not relocate native Windows Codex.
+- Native Windows executables and npm Node command shims are supported. The npm
+  Node target launches directly so multiline system prompts remain intact.
+  Arbitrary batch commands cannot carry multiline arguments; configure the
+  executable directly if startup reports that limitation.
+- Claude skill directories use Windows junctions. Its activity reader follows
+  `CLAUDE_CONFIG_DIR`, then `HOME`, then Node's home-directory fallback.
 
 ## Missing Replies And Stuck Turns
 

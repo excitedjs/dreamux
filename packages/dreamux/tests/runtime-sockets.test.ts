@@ -6,7 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { unixSocketPathFitsBudget } from '@excitedjs/dreamux-utils';
@@ -18,11 +18,12 @@ import {
 } from '../src/platform/runtime-sockets.js';
 import { runRoot, stateRoot } from '../src/platform/paths.js';
 
-describe('runtime socket allocation', () => {
+describe.skipIf(process.platform === 'win32')('Unix sockets', () => {
   let root: string;
   let previousHome: string | undefined;
   let previousXdg: string | undefined;
   let previousTmpdir: string | undefined;
+  let previousRoot: string | undefined;
 
   beforeEach(() => {
     // The fixture root must NOT live under /tmp: the shared-tmp guard would
@@ -32,6 +33,7 @@ describe('runtime socket allocation', () => {
     previousHome = process.env['HOME'];
     previousXdg = process.env['XDG_RUNTIME_DIR'];
     previousTmpdir = process.env['TMPDIR'];
+    previousRoot = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     delete process.env['XDG_RUNTIME_DIR'];
@@ -45,7 +47,8 @@ describe('runtime socket allocation', () => {
   afterEach(() => {
     if (previousHome === undefined) delete process.env['HOME'];
     else process.env['HOME'] = previousHome;
-    delete process.env['DREAMUX_ROOT'];
+    if (previousRoot === undefined) delete process.env['DREAMUX_ROOT'];
+    else process.env['DREAMUX_ROOT'] = previousRoot;
     if (previousXdg === undefined) delete process.env['XDG_RUNTIME_DIR'];
     else process.env['XDG_RUNTIME_DIR'] = previousXdg;
     if (previousTmpdir === undefined) delete process.env['TMPDIR'];
@@ -166,3 +169,22 @@ describe('runtime socket allocation', () => {
     ]);
   });
 });
+
+it.runIf(process.platform === 'win32')(
+  'does not sweep Unix runtime candidates on Windows',
+  async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dreamux-no-unix-sweep-'));
+    const candidate = join(root, 'dreamux', 'sockets');
+    const sentinel = join(candidate, 'preserve.txt');
+    try {
+      mkdirSync(candidate, { recursive: true });
+      writeFileSync(sentinel, 'Windows does not own Unix socket endpoints');
+      await expect(
+        sweepRuntimeSocketDirs({ XDG_RUNTIME_DIR: root, TMPDIR: root }),
+      ).resolves.toEqual([]);
+      expect(existsSync(sentinel)).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);

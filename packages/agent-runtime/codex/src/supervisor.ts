@@ -4,13 +4,13 @@
  * Heavily simplified from claudemux's
  * `plugins/claudemux/core/src/engines/codex/supervisor.ts`. Differences:
  *   - one process per Dispatcher, owned in-memory (no /tmp registry)
- *   - no IPC bridge subprocess (the server holds the WS itself)
+ *   - no IPC bridge subprocess (the server owns its transport)
  *   - no spawn lock / borrow lock (Dispatcher is the single owner)
  *   - lifecycle bound to CodexRuntime, not a CLI invocation
  *
  * Issue #2 "implementation pitfalls": codex CLI is a node wrapper that spawns
- * the rust binary as a child; both land in the same process group. Reap must
- * SIGKILL the whole group, not just the leader, or the rust process leaks.
+ * the Rust binary as a child. Reap must terminate the whole process tree,
+ * including the native child, through the shared platform supervisor.
  */
 
 import { mkdir, open, rm, stat } from 'node:fs/promises';
@@ -21,10 +21,11 @@ import {
   removeEmptyLogFile,
   SupervisedChild,
 } from '@excitedjs/dreamux-utils';
+import type { CodexRpcClientOptions } from './rpc.js';
 
 export interface CodexProcessOptions {
-  /** Unix socket path the daemon should listen on. */
-  socketPath: string;
+  /** Unix socket path, or omitted for private stdio transport on Windows. */
+  socketPath?: string;
   /** Working directory for the daemon. */
   cwd: string;
   /** Where to log stdout. */
@@ -33,7 +34,7 @@ export interface CodexProcessOptions {
   stderrLogPath: string;
   /** Codex binary path, already resolved by `bin.ts`'s `resolveCodexBinPath`. */
   binPath: string;
-  /** Extra args after `app-server --listen unix://<socket>`. */
+  /** Extra args after `app-server --listen <transport>`. */
   extraArgs?: string[];
   /** Environment for the daemon. */
   env?: NodeJS.ProcessEnv;
@@ -50,9 +51,10 @@ export type CodexProcessExitHandler = (exit: CodexProcessExit) => void;
 
 /** A handle to one running codex app-server child process. */
 export class CodexProcess {
-  readonly socketPath: string;
+  readonly socketPath: string | undefined;
   readonly cwd: string;
   private supervisor: SupervisedChild | null = null;
+  private connection: CodexRpcClientOptions | null = null;
   private _pid: number | null = null;
   private startTask: Promise<void> | null = null;
   private reapTask: Promise<void> | null = null;
@@ -69,11 +71,18 @@ export class CodexProcess {
     return this._pid;
   }
 
+  get connectionOptions(): CodexRpcClientOptions {
+    if (this.connection === null) {
+      throw new Error('CodexProcess: no running connection');
+    }
+    return this.connection;
+  }
+
   onExit(handler: CodexProcessExitHandler): void {
     this.exitHandlers.push(handler);
   }
 
-  /** Spawn the daemon and resolve once its listen socket is bound. */
+  /** Spawn the daemon and resolve once its transport is available. */
   async start(): Promise<void> {
     if (this.supervisor !== null || this.startTask !== null) {
       throw new Error('CodexProcess.start: already started');
@@ -90,25 +99,30 @@ export class CodexProcess {
 
   private async startProcess(): Promise<void> {
     const binPath = this.opts.binPath;
+    const socketPath = this.opts.socketPath;
     const args = [
       'app-server',
       '--listen',
-      `unix://${this.opts.socketPath}`,
+      socketPath === undefined ? 'stdio://' : `unix://${socketPath}`,
       ...(this.opts.extraArgs ?? []),
     ];
 
     // The socket dir is a private runtime root (issue #182): owner-only, so
     // other local users can never reach the rendezvous endpoint. Enforce it
     // even when the dir already exists with a permissive mode.
-    await ensureOwnerOnlyDir(dirname(this.opts.socketPath));
+    if (socketPath !== undefined) {
+      await ensureOwnerOnlyDir(dirname(socketPath));
+    }
     await mkdir(this.opts.cwd, { recursive: true });
     await mkdir(dirname(this.opts.stdoutLogPath), { recursive: true });
     // Stale socket from a previous crashed run would otherwise prevent
     // the daemon from binding.
-    try {
-      await rm(this.opts.socketPath, { force: true });
-    } catch {
-      /* ignore — bind will fail loudly if it really is busy */
+    if (socketPath !== undefined) {
+      try {
+        await rm(socketPath, { force: true });
+      } catch {
+        /* ignore — bind will fail loudly if it really is busy */
+      }
     }
 
     // Open the log files as FileHandles and hand their fds to the child's
@@ -118,8 +132,12 @@ export class CodexProcess {
     // inherited fds, matching the previous openSync/closeSync timing.
     const logHandles: Array<Awaited<ReturnType<typeof open>>> = [];
     try {
-      const stdoutHandle = await open(this.opts.stdoutLogPath, 'a', 0o600);
-      logHandles.push(stdoutHandle);
+      // With stdio transport stdout carries protocol envelopes, not logs.
+      const stdoutHandle =
+        socketPath === undefined
+          ? null
+          : await open(this.opts.stdoutLogPath, 'a', 0o600);
+      if (stdoutHandle !== null) logHandles.push(stdoutHandle);
       const stderrHandle = await open(this.opts.stderrLogPath, 'a', 0o600);
       logHandles.push(stderrHandle);
       this.assertStartAllowed();
@@ -130,7 +148,10 @@ export class CodexProcess {
         options: {
           cwd: this.opts.cwd,
           env: this.opts.env ?? process.env,
-          stdio: ['ignore', stdoutHandle.fd, stderrHandle.fd],
+          stdio:
+            stdoutHandle === null
+              ? ['pipe', 'pipe', stderrHandle.fd]
+              : ['ignore', stdoutHandle.fd, stderrHandle.fd],
         },
       });
       supervisor.onError(() => {
@@ -155,11 +176,18 @@ export class CodexProcess {
         this.assertStartAllowed();
         const pid = child.pid!;
         this._pid = pid;
-        await waitForSocket(
-          this.opts.socketPath,
-          pid,
-          this.opts.readyTimeoutMs ?? 10000,
-        );
+        if (socketPath === undefined) {
+          this.connection = {
+            stdio: { stdin: child.stdin!, stdout: child.stdout! },
+          };
+        } else {
+          await waitForSocket(
+            socketPath,
+            pid,
+            this.opts.readyTimeoutMs ?? 10000,
+          );
+          this.connection = { socketPath };
+        }
         this.assertStartAllowed();
       } catch (error) {
         try {
@@ -181,7 +209,7 @@ export class CodexProcess {
     }
   }
 
-  /** SIGTERM → 1s wait → SIGKILL group. Idempotent. */
+  /** Terminate the supervised process tree. Idempotent. */
   reap(): Promise<void> {
     if (this.reaped) return Promise.resolve();
     if (this.reapTask !== null) return this.reapTask;
@@ -205,10 +233,12 @@ export class CodexProcess {
   private async terminateSpawnedProcess(): Promise<void> {
     const supervisor = this.supervisor;
     await supervisor?.stop();
-    try {
-      await rm(this.opts.socketPath, { force: true });
-    } catch {
-      /* best effort */
+    if (this.opts.socketPath !== undefined) {
+      try {
+        await rm(this.opts.socketPath, { force: true });
+      } catch {
+        /* best effort */
+      }
     }
     // The child has exited, so its inherited stdout/stderr fds are released.
     // Drop the log files if the child produced no output — normal Codex traffic
@@ -217,6 +247,7 @@ export class CodexProcess {
     await removeEmptyLogFile(this.opts.stderrLogPath);
     if (this.supervisor === supervisor) {
       this.supervisor = null;
+      this.connection = null;
       this._pid = null;
     }
   }

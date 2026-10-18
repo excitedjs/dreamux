@@ -1,4 +1,8 @@
-import { renderLaunchdPlist, renderSystemdUnit } from '../src/daemon/unit.js';
+import {
+  parseSystemdUnit,
+  renderLaunchdPlist,
+  renderSystemdUnit,
+} from '../src/daemon/unit.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import * as filesystem from 'node:fs/promises';
@@ -254,6 +258,7 @@ describe('managed service working directory ownership', () => {
     oldHome = process.env['HOME'];
     oldConfigDir = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
@@ -367,6 +372,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
     oldHome = process.env['HOME'];
     oldConfigDir = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
@@ -383,10 +389,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    const line = unit
-      .split('\n')
-      .find((l) => l.startsWith('Environment=DREAMUX_NODE_BIN='));
-    return line?.slice('Environment=DREAMUX_NODE_BIN='.length) ?? '';
+    return parseSystemdUnit(unit).environment?.['DREAMUX_NODE_BIN'] ?? '';
   }
 
   it('pins a stable system Node even when invoked from a version-manager Node', async () => {
@@ -457,13 +460,18 @@ const SESSION_PATH = SESSION_PATH_PARTS.join(delimiter);
 
 function writeFakeBinary(dir: string, name: string): string {
   mkdirSync(dir, { recursive: true });
-  const binPath = join(dir, name);
+  const binPath = join(
+    dir,
+    process.platform === 'win32' ? `${name}.CMD` : name,
+  );
   writeFileSync(
     binPath,
-    '#!/usr/bin/env node\n' +
-      'const a = process.argv.slice(1);\n' +
-      "if (a.includes('--version')) { console.log('v1.0.0'); process.exit(0); }\n" +
-      'process.exit(0);\n',
+    process.platform === 'win32'
+      ? '@echo off\r\necho v1.0.0\r\n'
+      : '#!/usr/bin/env node\n' +
+          'const a = process.argv.slice(1);\n' +
+          "if (a.includes('--version')) { console.log('v1.0.0'); process.exit(0); }\n" +
+          'process.exit(0);\n',
     { mode: 0o755 },
   );
   chmodSync(binPath, 0o755);
@@ -670,6 +678,7 @@ describe('provider binary resolution from captured session PATH', () => {
     oldHome = process.env['HOME'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
   });
 
@@ -737,11 +746,7 @@ describe('captured session PATH appears in systemd and launchd service config', 
       '/tmp/stdout.log',
       '/tmp/stderr.log',
     );
-    const pathLine =
-      unit
-        .split('\n')
-        .find((l) => l.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
+    const pathLine = parseSystemdUnit(unit).environment?.['PATH'] ?? '';
     const parts = pathLine.split(delimiter);
     // Stable dirs lead.
     expect(parts[0]).toBe('/usr/local/bin'); // dirname(nodeBin)
@@ -788,6 +793,7 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
     oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
@@ -805,10 +811,7 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    const line = unit
-      .split('\n')
-      .find((l) => l.startsWith('Environment=PATH='));
-    return line?.slice('Environment=PATH='.length) ?? '';
+    return parseSystemdUnit(unit).environment?.['PATH'] ?? '';
   }
 
   it('regenerates the unit PATH when the supplied session PATH changes', async () => {
@@ -912,6 +915,7 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
     oldPath = process.env['PATH'];
     oldCodexBin = process.env['CODEX_HOST_CODEX_BIN'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     // Normal CLI use: the host codex binary is in the ambient environment.
@@ -1050,6 +1054,7 @@ describe('daemon install resolves bare provider bins and includes them in the se
     oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
   });
@@ -1097,7 +1102,12 @@ describe('daemon install resolves bare provider bins and includes them in the se
     expect(
       servicePath.split(delimiter).filter((p) => p === localBin(home)),
     ).toHaveLength(1);
-    expect(binPath).toBe(join(localBin(home), 'local-agent'));
+    expect(binPath).toBe(
+      join(
+        localBin(home),
+        process.platform === 'win32' ? 'local-agent.CMD' : 'local-agent',
+      ),
+    );
   });
 });
 
@@ -1106,8 +1116,7 @@ function readUnitPathFrom(root: string): string {
     join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
     'utf8',
   );
-  const line = unit.split('\n').find((l) => l.startsWith('Environment=PATH='));
-  return line?.slice('Environment=PATH='.length) ?? '';
+  return parseSystemdUnit(unit).environment?.['PATH'] ?? '';
 }
 
 function writeInstallConfig(
@@ -1167,4 +1176,7 @@ beforeEach(() => {
     return actualAccess(path, mode);
   });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});

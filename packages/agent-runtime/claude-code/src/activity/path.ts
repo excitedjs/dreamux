@@ -63,19 +63,6 @@ function claudeHistoryRoots(
   env: DreamuxEnvironment = process.env,
   runtimeCwd = process.cwd(),
 ): ClaudeHistoryRoots {
-  // resolveClaudeConfigHomeDir is pure/non-throwing (it falls back to this
-  // process's own home directory when HOME is absent); the guard here
-  // preserves this reader's own typed-error contract for that case instead.
-  if (
-    (env['CLAUDE_CONFIG_DIR'] === undefined ||
-      env['CLAUDE_CONFIG_DIR'] === '') &&
-    (env['HOME'] === undefined || env['HOME'] === '')
-  ) {
-    throw new ActivityError(
-      'not_found',
-      'Claude Code config home is unavailable',
-    );
-  }
   const configHome = resolveClaudeConfigHomeDir(env, runtimeCwd).normalize(
     'NFC',
   );

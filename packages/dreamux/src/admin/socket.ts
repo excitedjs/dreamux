@@ -1,5 +1,5 @@
 /**
- * The admin Unix-socket server: one adapter over the Core Command registry.
+ * The local admin IPC server: one adapter over the Core Command registry.
  *
  * One client gets one line-delimited NDJSON stream of requests; we reply with
  * one line per request. Permissions on the socket are 0600 to keep other local
@@ -35,8 +35,9 @@ import {
   readPidFile,
   releaseInstanceLock,
 } from '../platform/instance-lock.js';
-import { adminSocketLockPath } from '../platform/paths.js';
+import { adminSocketAddress, adminSocketLockPath } from '../platform/paths.js';
 import type { AdminRequest, AdminResponse } from './protocol.js';
+import { restrictWindowsPipe } from './windows-pipe.js';
 
 /**
  * The slice of `Server` this transport actually calls: the admitted Command
@@ -84,6 +85,13 @@ export function createAdminSocketServer(
   const lockPath = adminSocketLockPath(socketPath);
   let netServer: NetServer | null = null;
   let holdLock = false;
+  let secured = false;
+  const pendingConnections = new Set<Socket>();
+
+  function discardPendingConnections(): void {
+    for (const socket of pendingConnections) socket.destroy();
+    pendingConnections.clear();
+  }
 
   return {
     socketPath,
@@ -108,35 +116,57 @@ export function createAdminSocketServer(
 
       try {
         // Lock is held — stale socket cleanup is now race-free.
-        await rm(socketPath, { force: true });
+        if (process.platform !== 'win32') {
+          await rm(socketPath, { force: true });
+        }
 
-        netServer = createServer((sock) => handleConnection(server, sock));
+        netServer = createServer((sock) => {
+          // A client can connect between listen() and permission setup. Never
+          // admit requests from that window, including the Windows ACL helper.
+          if (!secured) {
+            pendingConnections.add(sock);
+            sock.on('error', () => {});
+            sock.once('close', () => pendingConnections.delete(sock));
+            return;
+          }
+          handleConnection(server, sock);
+        });
         await new Promise<void>((res, rej) => {
           netServer!.once('error', rej);
-          netServer!.listen(socketPath, () => res());
+          netServer!.listen(adminSocketAddress(socketPath), () => res());
         });
 
         // PR #3 review #2: chmod is a hard requirement, not best-effort —
         // a 0666 admin socket exposes every admin Command to every local user.
         try {
-          await chmod(socketPath, 0o600);
+          if (process.platform === 'win32') {
+            await restrictWindowsPipe(adminSocketAddress(socketPath));
+          } else {
+            await chmod(socketPath, 0o600);
+          }
         } catch (e) {
           const chmodErr = e instanceof Error ? e.message : String(e);
           throw new Error(
             `admin socket ${socketPath} could not be locked down to 0600 (${chmodErr}); refusing to expose it on a permissive mode`,
           );
         }
+        discardPendingConnections();
+        secured = true;
       } catch (err) {
         // Unwind whatever partial state we set up — bound server, socket
         // file, and the pidfile lock — so a retry doesn't trip over our
         // own leftovers.
+        discardPendingConnections();
+        secured = false;
         if (netServer !== null) {
           const closing = netServer;
           netServer = null;
           await new Promise<void>((res) => closing.close(() => res()));
         }
         try {
-          await rm(socketPath, { force: true });
+          if (process.platform !== 'win32') {
+            await rm(socketPath, { force: true });
+          }
         } catch {
           /* best-effort */
         }
@@ -147,11 +177,15 @@ export function createAdminSocketServer(
     },
 
     async close(): Promise<void> {
+      secured = false;
+      discardPendingConnections();
       if (netServer !== null) {
         await new Promise<void>((res) => netServer!.close(() => res()));
         netServer = null;
         try {
-          await rm(socketPath, { force: true });
+          if (process.platform !== 'win32') {
+            await rm(socketPath, { force: true });
+          }
         } catch {
           /* */
         }
