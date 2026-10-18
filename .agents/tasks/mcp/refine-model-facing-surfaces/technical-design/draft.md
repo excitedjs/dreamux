@@ -380,7 +380,7 @@ line where they match the full text.
   names.
 - `packages/dreamux/README.md`: the bundled-skills paragraph names the new
   skills (the structural test reads it).
-- `.agents/scripts/check.sh` runs green.
+- `.agents/scripts/check.mjs` runs green.
 - `dreamux-maintenance` is untouched: no config or state file changes shape,
   default, ownership, or meaning.
 
@@ -461,7 +461,7 @@ run.
 ## 7. Verification
 
 Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-`.agents/scripts/check.sh`, `rush change --verify`, gitleaks pre-commit.
+`.agents/scripts/check.mjs`, `rush change --verify`, gitleaks pre-commit.
 
 What the gates prove: the texts, names, attribute lists, and prompt order are
 what this design says. What they cannot prove:

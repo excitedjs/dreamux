@@ -1,8 +1,48 @@
 # Verification
 
-## Native Windows checks
+## Final native-capability refactor
 
-The completed local run on 2026-10-19 used Node 22.23.3 and Rush 5.140.0.
+After the operator required Node/native capabilities outside platform-service
+management, the final Windows run passed the following gates:
+
+| Gate | Result |
+| --- | --- |
+| Rush update, build, source typecheck, lint and test typecheck | Passed across the workspace |
+| Full default suite | 2,866 passed, 36 platform/opt-in skips, zero failures; 95 seconds |
+| Built CLI smoke | Passed |
+| Real Task Scheduler lifecycle | Passed install, repeated restart, stop, start, disabled-state preservation and uninstall using an isolated task |
+| Generated Node and batch-target service launchers | Passed Unicode paths, arguments, log output and target exit code |
+| Explicit authenticated model gate | Six tests passed across three files in 90 seconds after operator authorization |
+| Node repository tooling | Nine tests passed, including real commit hooks, content scans, author policy, KB checks and archive validation |
+| Native installer | Pinned Windows gitleaks download, checksum verification, extraction and version check passed |
+| Process-exit regression | 100 native-handle/cwd probes passed; unchanged Claude session tests passed |
+
+The final process owner prohibits new Job members before collecting verified
+member handles, terminates only the retained Job, and waits for the native
+process objects to finish. The regression asserts that an outer service Job's
+host, target and detached grandchild are all signaled before deleting their cwd,
+without waiting for Node's close event or adding cleanup retries. A separate
+backpressure regression preserves a 1.2 MB terminal IPC message before exit.
+
+The native permission oracle checks owner-only access for both explicit and
+inherited private ACLs. Explicit permission APIs still assert protected DACLs
+and inheritance flags. The fixture that loosens a directory retains inheritable
+owner access; it no longer removes permissions from existing child files.
+The existing logger and attachment-cache behavioral assertions are unchanged.
+
+Koffi is the only new runtime dependency in the utility package. Independent
+review checked the original layering rationale: utilities must not depend on
+Dreamux packages, including type-only imports. The guard now tests that boundary
+across dependencies, peerDependencies and optionalDependencies instead of
+requiring an empty runtime dependency field.
+
+The local token is not elevated. Administrator-owned adoption and foreign-owner
+refusal require an elevated Windows runner; that coverage is delegated to the
+Windows CI job rather than claimed from this machine.
+
+## Initial native Windows checks
+
+The initial local run on 2026-10-19 used Node 22.23.3 and Rush 5.140.0.
 
 | Gate | Result |
 | --- | --- |
@@ -67,7 +107,7 @@ change was reviewed against ordering, privacy and recovery behavior.
 
 No accepted blocking finding remains unresolved. Product behavior review is
 recorded in the final design. Knowledge links and task records are checked with
-`.agents/scripts/check.sh` before submission.
+`.agents/scripts/check.mjs` before submission.
 
 ## Authenticated native model checks
 

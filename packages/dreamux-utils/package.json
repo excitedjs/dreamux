@@ -1,7 +1,7 @@
 {
   "name": "@excitedjs/dreamux-utils",
   "version": "0.7.0",
-  "description": "Pure shared utilities for Dreamux providers and host: neutral config-validation primitives, OS/filesystem helpers, and completion-body resolution. Depends on nothing: not on @excitedjs/dreamux core, and not on @excitedjs/dreamux-types, which is the type set external providers compile against.",
+  "description": "Shared utilities for Dreamux providers and host: neutral config validation, native OS/filesystem capabilities, and completion-body resolution. Independent of Dreamux core and provider types.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -33,8 +33,11 @@
     "lint": "eslint . && prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\"",
     "test": "node ../../common/scripts/run-tests.mjs run",
     "test:watch": "node ../../common/scripts/run-tests.mjs",
-    "clean": "rm -rf dist",
+    "clean": "node ../../common/scripts/clean.mjs",
     "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "koffi": "3.3.3"
   },
   "devDependencies": {
     "@excitedjs/eslint-config": "workspace:*",

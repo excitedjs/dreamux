@@ -95,19 +95,7 @@ jobs:
         # version bump must die here, not after change files were applied.
         env:
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${RELEASE_DEPLOY_KEY}" ]; then
-            echo "::error::RELEASE_DEPLOY_KEY secret is missing; the ruleset-protected main/next branches cannot be pushed without the release deploy key."
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          printf '%s\n' "${RELEASE_DEPLOY_KEY}" > ~/.ssh/release_deploy_key
-          chmod 600 ~/.ssh/release_deploy_key
-          # Pin GitHub's SSH host keys from the meta API instead of trusting
-          # first use.
-          curl -fsS https://api.github.com/meta \
-            | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/release_known_hosts
+        run: node common/scripts/prepare-release-ssh.mjs
 
       - name: Apply pending change files (rush)
         id: version
@@ -158,10 +146,7 @@ jobs:
         # pinned, checksum-verified script a developer machine uses.
         env:
           GITLEAKS_INSTALL_DIR: ${{ runner.temp }}/gitleaks
-        run: |
-          set -euo pipefail
-          common/scripts/install-gitleaks.sh
-          echo "$GITLEAKS_INSTALL_DIR" >> "$GITHUB_PATH"
+        run: node common/scripts/install-gitleaks.mjs
 
       - name: Push version bump
         if: steps.version.outputs.changed == 'true'
@@ -340,43 +325,13 @@ jobs:
         # always has artifacts; zero tarballs means pack failed -> fail hard.
         run: |
           set -euo pipefail
-          rm -rf common/temp/prerelease-tarballs
+          node -e "require('node:fs/promises').rm('common/temp/prerelease-tarballs', { recursive: true, force: true })"
           node common/scripts/install-run-rush.js publish \
             --include-all \
             --publish \
             --pack \
             --release-folder common/temp/prerelease-tarballs
-          shopt -s nullglob
-          tarballs=(common/temp/prerelease-tarballs/*.tgz)
-          if [ ${#tarballs[@]} -eq 0 ]; then
-            echo "Expected packed tarballs under common/temp/prerelease-tarballs but found none." >&2
-            echo "A manifest gate that scans nothing is not a gate; aborting before publish." >&2
-            exit 1
-          fi
-          fail=0
-          for tgz in "${tarballs[@]}"; do
-            echo "== $tgz =="
-            listing="$(tar tzf "$tgz")"
-            printf '%s\n' "$listing"
-            # Existence check via a here-string, NOT `tar tzf | grep -q`: under
-            # `set -o pipefail`, grep -q exits on the first match, the upstream
-            # tar takes SIGPIPE and exits 141, and pipefail propagates 141 —
-            # false-failing this check as "missing package.json" purely on pipe
-            # timing. A here-string has no upstream process to signal.
-            if ! grep -qxF 'package/package.json' <<<"$listing"; then
-              echo "Tarball $tgz is missing package.json" >&2
-              fail=1
-            fi
-            # Public-repo red line: a published artifact must not carry internal
-            # Feishu identifiers, the internal mount, or a builder/developer
-            # home path. The patterns and the artifact allow-list have one
-            # owner, common/scripts/check-internal-content.sh, which also
-            # guards the source tree; extend them there, never here.
-            if ! common/scripts/check-internal-content.sh --tarball "$tgz"; then
-              fail=1
-            fi
-          done
-          [ "$fail" -eq 0 ] || { echo "Manifest verification failed; aborting before publish." >&2; exit 1; }
+          node common/scripts/verify-tarballs.mjs
 
       - name: Publish prerelease to npm dist-tag (rush native, OIDC)
         # Same proven stable invocation, plus the selected tag: rush invokes

@@ -114,5 +114,5 @@ boundary of a long task and after every context compaction, not just at kickoff.
 Run before any KB-touching commit:
 
 ```bash
-.agents/scripts/check.sh
+node .agents/scripts/check.mjs
 ```

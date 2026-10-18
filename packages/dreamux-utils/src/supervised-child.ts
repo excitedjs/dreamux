@@ -8,6 +8,7 @@ import { once } from 'node:events';
 
 import { isProcessGroupAlive, killProcessGroup } from './os.js';
 import { spawnCommand } from './process-command.js';
+import type { WindowsJob } from './windows-job.js';
 
 export interface SupervisedChildExit {
   code: number | null;
@@ -47,6 +48,7 @@ export class SupervisedChild {
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
   private startPromise: Promise<ChildProcess> | null = null;
+  private windowsJob: WindowsJob | null = null;
   private readonly exitHandlers = new Set<ExitHandler>();
   private readonly errorHandlers = new Set<ErrorHandler>();
 
@@ -88,7 +90,14 @@ export class SupervisedChild {
   private async doStart(): Promise<ChildProcess> {
     let child: ChildProcess;
     try {
-      child = await launchChild(this.launch);
+      if (process.platform === 'win32') {
+        const { launchWindowsChild } = await import('./windows-child.js');
+        const launched = await launchWindowsChild(this.launch);
+        child = launched.child;
+        this.windowsJob = launched.job;
+      } else {
+        child = await launchChild(this.launch);
+      }
     } catch (error) {
       this.notifyError(
         error instanceof Error ? error : new Error(String(error)),
@@ -129,11 +138,17 @@ export class SupervisedChild {
   private async doStop(): Promise<void> {
     this.stopping = true;
     await this.startPromise?.catch(() => undefined);
+    if (process.platform === 'win32') {
+      await this.windowsJob?.terminate();
+      this.windowsJob?.close();
+      this.windowsJob = null;
+      this.child_ = null;
+      this.pid_ = null;
+      return;
+    }
     const pid = this.pid_;
     if (pid !== null) {
-      if (process.platform === 'win32') {
-        await killProcessGroup(pid, 'SIGKILL');
-      } else if (isProcessGroupAlive(pid)) {
+      if (isProcessGroupAlive(pid)) {
         await killProcessGroup(pid, 'SIGTERM');
         await waitForProcessGroupExit(
           pid,

@@ -116,5 +116,5 @@ the canonical read contract. Add Rush change files for `@excitedjs/dreamux-types
   fixture and prove no follow-up status call after create.
 - Run Rush build, lint, test, and `typecheck:tests`, with the documented live
   Codex skip only if the environment intentionally lacks it.
-- Run task validation, `.agents/scripts/check.sh`, Rush change verification, and
+- Run task validation, `.agents/scripts/check.mjs`, Rush change verification, and
   `git diff --check`.

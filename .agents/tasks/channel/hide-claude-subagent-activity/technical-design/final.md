@@ -59,6 +59,6 @@ request. No proposal agents and no solution-review Issue.
 ## Verification
 
 - `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`, and
-  `.agents/scripts/check.sh`.
+  `.agents/scripts/check.mjs`.
 - Coverage limit: the probe exercised the raw CLI, not a Dreamux-launched
   resident session, and the Feishu card is not observed before merge.

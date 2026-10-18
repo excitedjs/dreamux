@@ -194,7 +194,7 @@ own owner or record a micro-refactor candidate; do not relocate declarations
 to manufacture headroom.
 
 When moving a service class, changing who constructs it, or changing ownership
-scope, update this page in the same change. `.agents/scripts/check.sh`
+scope, update this page in the same change. `.agents/scripts/check.mjs`
 validates every cited package source path on the domains pages, so rows cannot
 drift into dead anchors silently; it does not validate prose, so a row whose
 object was deleted must be removed rather than repointed at a surviving file.

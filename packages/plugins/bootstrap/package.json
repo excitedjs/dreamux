@@ -33,7 +33,7 @@
     "test": "node ../../../common/scripts/run-tests.mjs run --passWithNoTests",
     "test:watch": "node ../../../common/scripts/run-tests.mjs",
     "lint": "eslint . && prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\"",
-    "clean": "rm -rf dist",
+    "clean": "node ../../../common/scripts/clean.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

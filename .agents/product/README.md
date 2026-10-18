@@ -607,7 +607,8 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 ## Local state and upgrades
 
 - **Windows runs natively.** The CLI, foreground server, local admin/MCP
-  communication and provider children run without Bash or WSL. The managed
+  communication and provider children run through shared Node/native capabilities
+  without Bash, PowerShell, or WSL. The managed
   user service uses Task Scheduler at login. Its stop command terminates the
   owned process tree; it does not guarantee Unix signal-based graceful draining.
   (Task: [native Windows support](/.agents/tasks/architecture/native-windows-support/README.md).)

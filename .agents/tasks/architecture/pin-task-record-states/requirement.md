@@ -62,21 +62,21 @@ git and GitHub already record them authoritatively and for free.
 
 - `.agents/skills/dev-workflow/scripts/init_task.py`: the rule and its
   enforcement.
-- `.agents/scripts/check.sh`: run it over the whole tree.
+- `.agents/scripts/check.mjs`: run it over the whole tree.
 - `.agents/skills/dev-workflow/references/`: state the rule where the format is
   owned.
 - All existing task records and domain indexes: bring them into compliance.
 
 ## Non-goals
 
-- No new CI job. The existing `kb` job already runs `.agents/scripts/check.sh`.
+- No new CI job. The existing `kb` job already runs `.agents/scripts/check.mjs`.
 - No change to the set of nine workflow states.
 - No migration of historical records to the current task layout; that exemption
   in `task-records.md` stands.
 
 ## Acceptance criteria
 
-- `.agents/scripts/check.sh` passes on the branch.
+- `.agents/scripts/check.mjs` passes on the branch.
 - It fails, naming the record, when any record is set back to a mid-workflow
   state, when a state line carries trailing prose, and when an index entry
   repeats a state.

@@ -204,7 +204,7 @@ repairs and the retired-record behavior; no generated changelog edits or invente
 BREAKING/Rebuild action.
 
 Pass build, lint, test, typecheck:tests using the repository Rush entry point,
-then `.agents/scripts/check.sh` after the TeamLeader closes the task. Independently
+then `.agents/scripts/check.mjs` after the TeamLeader closes the task. Independently
 review the whole implementation and adapted test assertions. The direct repair
 instruction and R74/R75 answers supply authority; no extra approval card is claimed.
 Final parent coverage is the R43 completion stage. Existing child delivery targets

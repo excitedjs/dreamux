@@ -403,7 +403,7 @@ Focused tests must prove:
     default, applies only requested fields, creates a missing directory at
     `0700`, and atomically creates a `0600` file without calling it a rebuild.
 
-Run the Feishu channel and Dreamux package tests, `.agents/scripts/check.sh`,
+Run the Feishu channel and Dreamux package tests, `.agents/scripts/check.mjs`,
 and the repository Rush lint/build/test gates.
 
 ## Knowledge And Public Artifacts

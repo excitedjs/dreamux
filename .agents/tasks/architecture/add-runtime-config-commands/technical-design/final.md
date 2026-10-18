@@ -409,7 +409,7 @@ written as held.
 
 Operator ruling: one task, infrastructure first ("不拆了，不管怎么样都会是顺着
 做。"). Each pull request passes build, lint, test, and `typecheck:tests`, plus
-`.agents/scripts/check.sh` for its knowledge changes, and carries the
+`.agents/scripts/check.mjs` for its knowledge changes, and carries the
 maintenance-skill and knowledge updates for what it moves.
 
 1. **Store and Feishu.** The primitive and `publishFileExclusive` with their

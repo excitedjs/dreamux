@@ -15,7 +15,7 @@ Dreamux local files split by volatility and ownership:
 ```text
 ~/.dreamux/
   config.json          operator-owned config
-  daemon.ps1           Windows install-owned service launcher (when installed)
+  daemon.mjs           Windows install-owned service launcher (when installed)
   run/                 volatile IPC/control files
   state/               durable server-owned state
   cache/               rebuildable artifacts
@@ -576,7 +576,7 @@ Source:
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/platform/runtime-sockets.ts`
 - `/packages/dreamux/src/admin/socket.ts`
-- `/packages/dreamux/src/admin/windows-pipe.ts`
+- `/packages/dreamux-utils/src/windows-security.ts`
 - `/packages/dreamux-utils/src/os.ts`
 - `/packages/dreamux-utils/src/fs.ts`
 - `/packages/agent-runtime/codex/src/supervisor.ts`
@@ -708,11 +708,16 @@ creation in the transparent file ledger without touching the filesystem.
 
 Windows installs one `Dreamux-<current-user-SID>` Scheduled Task per account,
 independent of `DREAMUX_ROOT`. Its interactive, limited principal starts at user
-logon. The generated `<DREAMUX_ROOT>/daemon.ps1` owns the captured environment,
+logon. Before registering the task, installation assigns the current user's
+ownership and private ACL to the log directory and existing log files, including
+the daemon output logs, so an elevated installation can start a limited task.
+Dry runs leave those permissions unchanged.
+The generated `<DREAMUX_ROOT>/daemon.mjs` owns the captured environment,
 pinned Node command and log paths; rerun `dreamux daemon install` to change it,
 rather than hand-editing it. Task start/restart enables the task. Stop disables
-it while terminating and awaiting the complete native process tree, then
-restores its previous enabled state. Windows managed stop is forced and does
+it while holding or reserving the launcher's named native Job, terminates and
+awaits its member process handles, then stops the task action before releasing
+the Job. It restores the task's previous enabled state. Windows managed stop is forced and does
 not promise graceful draining of admitted work. `daemon uninstall` removes the
 service and generated launcher; `dreamux uninstall` additionally removes the
 Dreamux root under its existing provider-home exclusion rules.

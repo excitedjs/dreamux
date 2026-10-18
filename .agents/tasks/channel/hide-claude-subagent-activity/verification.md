@@ -72,6 +72,6 @@ review for this group's tasks. Verdict: approved, no finding.
   check: with the filter line removed the new test fails (30 passed, 1 failed);
   restored, 31 pass.
 - The only remaining item it named was the in-flight task state failing
-  `.agents/scripts/check.sh`, resolved by setting `done` at closeout.
+  `.agents/scripts/check.mjs`, resolved by setting `done` at closeout.
 
 TeamLeader adjudication: nothing to fix.

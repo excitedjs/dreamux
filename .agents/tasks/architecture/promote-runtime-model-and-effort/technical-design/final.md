@@ -142,7 +142,7 @@ an upgraded daemon starts unchanged.
 
 - `node common/scripts/install-run-rush.js build`, `lint`, `test`,
   `typecheck:tests` — all four, as the repository requires.
-- `.agents/scripts/check.sh` for the knowledge and task-record changes.
+- `.agents/scripts/check.mjs` for the knowledge and task-record changes.
 - The narrowing is checked by the test cases above, not by argument.
 
 ## 7. Task state on landing

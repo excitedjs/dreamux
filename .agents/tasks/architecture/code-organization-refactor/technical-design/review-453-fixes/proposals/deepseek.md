@@ -472,7 +472,7 @@ test counts.
 | 9 final coverage | §10 | ledger contracts restored behaviorally; #63 gate restored; live limits disclosed |
 
 All four Rush gates (`build`, `lint`, `test`, `typecheck:tests`) and
-`.agents/scripts/check.sh` must pass after closeout; no locked assertion is
+`.agents/scripts/check.mjs` must pass after closeout; no locked assertion is
 weakened.
 
 ## 12. Rejected alternatives

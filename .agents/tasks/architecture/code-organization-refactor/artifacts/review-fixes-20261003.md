@@ -122,7 +122,7 @@ locks, expiry/concurrent approval, parent versus exact-topic routes, next-compat
 real #63 behavior; distinguish deterministic internal tests, live provider
 evidence, and unavailable external systems.
 
-All four Rush gates and `.agents/scripts/check.sh` must pass after closeout.
+All four Rush gates and `.agents/scripts/check.mjs` must pass after closeout.
 Do not weaken locked assertions. No green historical run establishes coverage.
 One developer owns implementation; the TeamLeader owns authoritative task/KB
 updates, source adjudication, independent review, and delivery records. Existing

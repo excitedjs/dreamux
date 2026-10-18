@@ -1,170 +1,133 @@
-import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
 import { afterEach, describe, expect, it } from 'vitest';
 
-const TEST_DIR = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(TEST_DIR, '..', '..', '..');
-const SCAN_SCRIPT_PATH = resolve(
+const REPO_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+);
+const SCAN_SCRIPT = join(
   REPO_ROOT,
   'common',
   'scripts',
-  'check-internal-content.sh',
+  'check-internal-content.mjs',
 );
-const SCAN_SCRIPT = readFileSync(SCAN_SCRIPT_PATH, 'utf8');
-// Git for Windows ships the shell and POSIX tools used by the real release
-// gate, but its usr/bin is deliberately not required on the user's PATH.
-const shell =
-  process.platform === 'win32'
-    ? resolve(
-        (await execa('git', ['--exec-path'])).stdout.trim(),
-        '..',
-        '..',
-        '..',
-        'bin',
-        'bash.exe',
-      )
-    : 'sh';
-const shellPath = (path: string): string =>
-  process.platform === 'win32'
-    ? path
-        .replaceAll('\\', '/')
-        .replace(
-          /^([A-Za-z]):/,
-          (_match, drive: string) => `/${drive.toLowerCase()}`,
-        )
-    : path;
-
-function scan(tarball: string) {
-  return execa(
-    shell,
-    [shellPath(SCAN_SCRIPT_PATH), '--tarball', shellPath(tarball)],
-    { reject: false, windowsHide: true },
-  );
-}
-
-// The forbidden tokens are assembled rather than written whole. This file feeds
-// the scanner exactly what it must reject, and a scanner that flagged its own
-// test would need a hole in its allowlist to accommodate it — so it does not
-// get one.
+const dirs: string[] = [];
 const SEP = '/';
 const MOUNT = `${SEP}data00${SEP}`;
 const home = (user: string): string => `${SEP}home${SEP}${user}${SEP}`;
 
-describe('internal-content tree scan', () => {
-  it('allows a reviewed placeholder without allowing a name that starts with it', async () => {
-    // `me` is an allowed placeholder and `meredith` is another. Written as a
-    // bare alternation without the anchoring `-x`, both would also allow the
-    // `mexico` and `meredith2` homes below — real-looking accounts that merely
-    // start with an allowed name. The two-stage `grep -aoE | grep -vxE` shape
-    // is what prevents that, so the real commands are what this exercises.
-    const extractionPattern = SCAN_SCRIPT.match(
-      /^FORBIDDEN_RE='([^']+)'$/m,
-    )?.[1];
-    const allowlistPattern = SCAN_SCRIPT.match(/^ALLOWED_RE='([^']+)'$/m)?.[1];
-    expect(extractionPattern).toContain('/home/[a-z][a-z0-9_-]+/');
-    expect(allowlistPattern).toBeDefined();
+afterEach(async () => {
+  await Promise.all(
+    dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
 
-    const extracted = await execa(
-      shell,
-      ['-c', 'exec grep "$@"', 'grep', '-aoE', extractionPattern ?? ''],
-      {
-        input: [
-          `${home('me')}work`,
-          `${home('meredith')}work`,
-          `${home('mexico')}work`,
-          `${home('meredith2')}work`,
-          `${home('volta')}bin/node`,
-          `${MOUNT}home/someone/work`,
-        ].join('\n'),
-        reject: false,
-      },
-    );
-    const rejected = await execa(
-      shell,
-      ['-c', 'exec grep "$@"', 'grep', '-vxE', allowlistPattern ?? ''],
-      {
-        input: extracted.stdout,
-        reject: false,
-      },
-    );
+async function temporary(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'internal-content-'));
+  dirs.push(dir);
+  return dir;
+}
 
-    expect(rejected.stdout.split('\n').filter(Boolean).sort()).toEqual([
-      MOUNT,
-      home('meredith2'),
-      home('mexico'),
-    ]);
+function scan(args: string[], cwd?: string) {
+  return execa(process.execPath, [SCAN_SCRIPT, ...args], {
+    ...(cwd === undefined ? {} : { cwd }),
+    reject: false,
+    windowsHide: true,
+  });
+}
+
+function reported(stderr: string): string[] {
+  return stderr
+    .split('\n')
+    .filter((line) => line.startsWith('  '))
+    .map((line) => line.trim())
+    .sort();
+}
+
+describe('internal-content index scan', () => {
+  it('keeps exact placeholder matching and reads staged Unicode paths rather than changed working files', async () => {
+    const dir = await temporary();
+    await execa('git', ['init', '--quiet', dir]);
+    const file = join(dir, '用户 notes.txt');
+    await writeFile(
+      file,
+      [
+        `${home('me')}work`,
+        `${home('meredith')}work`,
+        `${home('mexico')}work`,
+        `${home('meredith2')}work`,
+        `${home('volta')}bin/node`,
+        `${MOUNT}home/someone/work`,
+      ].join('\n'),
+    );
+    await execa('git', ['add', '--', '用户 notes.txt'], { cwd: dir });
+    await writeFile(file, 'clean working tree');
+    for (const mode of ['--staged', '--tree']) {
+      const result = await scan([mode], dir);
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('用户 notes.txt');
+      expect(reported(result.stderr)).toEqual([
+        MOUNT,
+        home('meredith2'),
+        home('mexico'),
+      ]);
+    }
+  });
+
+  it('rejects each protected identifier format even in binary file content', async () => {
+    const dir = await temporary();
+    await execa('git', ['init', '--quiet', dir]);
+    const identifiers = [
+      'ou' + '_' + 'A'.repeat(20),
+      'oc' + '_' + 'B'.repeat(20),
+      'cli' + '_' + 'C'.repeat(16),
+    ];
+    await writeFile(join(dir, 'content.bin'), `\0${identifiers.join('\0')}\0`);
+    await execa('git', ['add', 'content.bin'], { cwd: dir });
+    const result = await scan(['--staged'], dir);
+    expect(result.exitCode).toBe(1);
+    expect(reported(result.stderr)).toEqual([...identifiers].sort());
   });
 });
 
 describe('internal-content tarball scan', () => {
-  // The release workflow runs this very mode over every packed tarball before
-  // upload, so what these cases exercise is the release gate's own behavior:
-  // a real `.tgz`, the real script, its exit code and its report.
-  const dirs: string[] = [];
-
-  afterEach(async () => {
-    await Promise.all(
-      dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-    );
-  });
-
-  async function pack(name: string, distSource: string): Promise<string> {
-    const dir = await mkdtemp(join(tmpdir(), 'internal-content-'));
-    dirs.push(dir);
+  async function pack(name: string, content: string): Promise<string> {
+    const dir = await temporary();
     await mkdir(join(dir, 'package', 'dist'), { recursive: true });
     await writeFile(
       join(dir, 'package', 'package.json'),
       '{"name":"fixture"}\n',
     );
-    await writeFile(join(dir, 'package', 'dist', 'index.js'), distSource);
-    const tgz = join(dir, `${name}.tgz`);
-    await execa(
-      shell,
-      [
-        '-c',
-        'exec tar "$@"',
-        'tar',
-        'czf',
-        basename(tgz),
-        '-C',
-        shellPath(dir),
-        'package',
-      ],
-      { cwd: dir, windowsHide: true },
-    );
-    return tgz;
+    await writeFile(join(dir, 'package', 'dist', 'index.js'), content);
+    const archive = join(dir, `${name}.tgz`);
+    await execa('tar', ['-czf', archive, '-C', dir, 'package'], {
+      windowsHide: true,
+    });
+    return archive;
   }
 
-  it('rejects a packed file carrying an internal path and names it, not the public install locations', async () => {
-    // `linuxbrew2` starts with an allowed name: the anchored second stage is
-    // what keeps it out, the same shape the tree scan relies on above. The
-    // source-tree placeholder users are not allowed in an artifact at all.
-    const tgz = await pack(
+  it('rejects source-only placeholders and near matches in packed files', async () => {
+    const archive = await pack(
       'leaky',
       [
-        `const node = '${home('volta')}bin/node';`,
-        `const brew = '${home('linuxbrew')}.linuxbrew/bin';`,
-        `const nearMiss = '${home('linuxbrew2')}private';`,
-        `const placeholder = '${home('example')}project';`,
-        `const leaked = '${home('someone')}work';`,
-        `const mount = '${MOUNT}home/someone/work';`,
+        home('volta'),
+        home('linuxbrew'),
+        home('linuxbrew2'),
+        home('example'),
+        home('someone'),
+        MOUNT,
       ].join('\n'),
     );
-
-    const result = await scan(tgz);
-
+    const result = await scan(['--tarball', archive]);
     expect(result.exitCode).toBe(1);
-    const reported = result.stderr
-      .split('\n')
-      .filter((line) => line.startsWith('  '))
-      .map((line) => line.trim())
-      .sort();
-    expect(reported).toEqual([
+    expect(reported(result.stderr)).toEqual([
       MOUNT,
       home('example'),
       home('linuxbrew2'),
@@ -172,22 +135,17 @@ describe('internal-content tarball scan', () => {
     ]);
   });
 
-  it('passes a tarball carrying only the public install locations, and refuses to scan a missing file', async () => {
-    const tgz = await pack(
+  it('accepts public install locations and rejects missing or invalid archives', async () => {
+    const archive = await pack(
       'clean',
-      [
-        `const node = '${home('volta')}bin/node';`,
-        `const brew = '${home('linuxbrew')}.linuxbrew/bin';`,
-      ].join('\n'),
+      [home('volta'), home('linuxbrew')].join('\n'),
     );
-
-    const clean = await scan(tgz);
-    expect(clean.exitCode).toBe(0);
-
-    // A scanner that quietly ignores what it was asked to scan is the failure
-    // this gate exists to remove: a path that is not a file is a usage error,
-    // never a clean result.
-    const missing = await scan(join(dirname(tgz), 'absent.tgz'));
-    expect(missing.exitCode).toBe(2);
+    expect((await scan(['--tarball', archive])).exitCode).toBe(0);
+    expect(
+      (await scan(['--tarball', join(dirname(archive), 'missing.tgz')]))
+        .exitCode,
+    ).toBe(2);
+    await writeFile(archive, 'not an archive');
+    expect((await scan(['--tarball', archive])).exitCode).toBe(2);
   });
 });

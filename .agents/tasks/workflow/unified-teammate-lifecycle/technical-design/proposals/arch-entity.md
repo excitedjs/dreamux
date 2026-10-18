@@ -669,7 +669,7 @@ emitted after the entity commits. All command arrows point *at* the owner
 | `dispatcher-service/dispatcher-workflows.ts` | Inject `borrowing: { createMember: (r) => admit(() => teammates.createMember(r, claim)) }` instead of `{ spawnOwned, releaseAllOwned }`; drop `releaseAllOwned` from `rollbackStart` (rollback now closes member handles / relies on entity close+event). |
 | `dispatcher-service/index.ts` | `doStop`: drop `_teammates.releaseAllOwned()` (`:279`); shutdown of Workflow members flows through `WorkflowService.stopAllForShutdown` closing handles; `stopAll` sweep unchanged in call site. |
 | `dreamux-utils/src/supervised-child.ts` | Add bounded post-`SIGKILL` liveness re-check + distinct termination error (§4.2). Provider-neutral; the only lower-layer change. |
-| `.agents/reference/service-topology.md`, `current-architecture.md`, `dynamic-workflow-usage.md`; `skills/dispatcher/dreamux-maintenance/` if any close/state semantics description changes | Knowledge-delta updates (requirement §Scope docs). Run `.agents/scripts/check.sh`. |
+| `.agents/reference/service-topology.md`, `current-architecture.md`, `dynamic-workflow-usage.md`; `skills/dispatcher/dreamux-maintenance/` if any close/state semantics description changes | Knowledge-delta updates (requirement §Scope docs). Run `.agents/scripts/check.mjs`. |
 
 ---
 
@@ -749,7 +749,7 @@ inbound, worktree safety, shutdown, persistence — requirement §Constraints):
     `entity.close`/`entity.release` then mutate `entities`).
 
 Plus the standing gate: `node common/scripts/install-run-rush.js build && test`
-and `.agents/scripts/check.sh` for KB anchors.
+and `.agents/scripts/check.mjs` for KB anchors.
 
 ---
 
@@ -778,7 +778,7 @@ and `.agents/scripts/check.sh` for KB anchors.
    which is dispatcher-global by design).
 5. **Doc/maintenance drift.** Close-semantics wording lives in several `.agents/`
    references and the maintenance skill. Mitigation: §11 lists them; run
-   `.agents/scripts/check.sh` in the same PR (requirement §Knowledge Delta).
+   `.agents/scripts/check.mjs` in the same PR (requirement §Knowledge Delta).
 
 ---
 

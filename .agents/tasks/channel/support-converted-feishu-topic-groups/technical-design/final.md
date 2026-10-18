@@ -131,7 +131,7 @@ node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js lint
 node common/scripts/install-run-rush.js test
 node common/scripts/install-run-rush.js typecheck:tests
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 ```
 
 Focused tests may aid development, but they do not substitute for these gates. Review changed assertions against the source and approved requirement: old ordinary-thread collapse assertions may change for the accepted identity rule, while access, parent fallback, conflict, and no-provisioning guarantees remain load-bearing. Passing rewritten tests alone does not prove preservation.

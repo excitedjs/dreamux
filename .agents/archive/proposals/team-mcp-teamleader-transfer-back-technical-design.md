@@ -587,7 +587,7 @@ pnpm --dir packages/dreamux exec vitest run \
 
 pnpm --dir packages/dreamux run typecheck
 pnpm --dir packages/dreamux run typecheck:tests
-.agents/scripts/check.sh
+.agents/scripts/check.mjs
 ```
 
 If package-local tooling is unavailable in the checkout, use the Rush scripts

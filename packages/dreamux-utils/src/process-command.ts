@@ -67,23 +67,24 @@ export function environmentValue(
   return key === undefined ? undefined : env[key];
 }
 
-/** Let Windows PowerShell rebuild its own module paths when launched from pwsh. */
-export function windowsPowerShellEnvironment(
-  env: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  // A pwsh -> Node -> powershell.exe launch otherwise inherits PowerShell 7's
-  // modules, whose shared names shadow incompatible Windows PowerShell modules.
-  return Object.fromEntries(
-    Object.entries(env).filter(([key]) => key.toLowerCase() !== 'psmodulepath'),
-  );
-}
-
 /** Spawn a native executable or a Windows command shim with literal arguments. */
 export async function spawnCommand(
   command: string,
   args: readonly string[] = [],
   options: SpawnOptions = {},
 ): Promise<ChildProcess> {
+  const prepared = await prepareCommand(command, args, options);
+  const child = spawn(prepared.command, prepared.args, prepared.options);
+  await once(child, 'spawn');
+  return child;
+}
+
+/** Resolve launcher shims before handing a command to a process-tree owner. */
+export async function prepareCommand(
+  command: string,
+  args: readonly string[] = [],
+  options: SpawnOptions = {},
+): Promise<{ command: string; args: string[]; options: SpawnOptions }> {
   const resolved =
     process.platform === 'win32' && !options.shell
       ? ((await resolveExecutableOnPath(
@@ -92,31 +93,33 @@ export async function spawnCommand(
           options.cwd instanceof URL ? fileURLToPath(options.cwd) : options.cwd,
         )) ?? command)
       : command;
-  let child: ChildProcess;
   if (
     process.platform !== 'win32' ||
     options.shell ||
     !/\.(?:cmd|bat)$/i.test(resolved)
   ) {
-    child = spawn(resolved, [...args], { ...options, windowsHide: true });
+    return {
+      command: resolved,
+      args: [...args],
+      options: { ...options, windowsHide: true },
+    };
   } else {
     const nodeEntry = await npmNodeEntry(resolved, options);
     if (nodeEntry !== null) {
-      child = spawn(nodeEntry.node, [nodeEntry.script, ...args], {
-        ...options,
-        windowsHide: true,
-      });
+      return {
+        command: nodeEntry.node,
+        args: [nodeEntry.script, ...args],
+        options: { ...options, windowsHide: true },
+      };
     } else {
       if (args.some((arg) => /[\r\n]/.test(arg))) {
         throw new Error(
           'Windows batch commands cannot preserve multiline arguments; configure the executable directly',
         );
       }
-      child = spawnWindowsCommand(resolved, args, options);
+      return prepareWindowsCommand(resolved, args, options);
     }
   }
-  await once(child, 'spawn');
-  return child;
 }
 
 /** npm's Node shim is a launcher description; cmd.exe would truncate multiline prompts. */
@@ -141,11 +144,11 @@ async function npmNodeEntry(
   return { node, script: resolve(dirname(command), target) };
 }
 
-function spawnWindowsCommand(
+function prepareWindowsCommand(
   command: string,
   args: readonly string[],
   options: SpawnOptions,
-): ChildProcess {
+): { command: string; args: string[]; options: SpawnOptions } {
   // npm shims forward %* through a second cmd parse. Escape both passes so
   // model-supplied JSON, paths, and shell metacharacters remain literal argv.
   const meta = /([()\][%!^"`<>&|;, *?])/g;
@@ -157,14 +160,15 @@ function spawnWindowsCommand(
       ),
     );
   const line = [escape(normalize(command)), ...args.map(quote)].join(' ');
-  return spawn(
-    environmentValue(options.env ?? process.env, 'ComSpec') ??
+  return {
+    command:
+      environmentValue(options.env ?? process.env, 'ComSpec') ??
       join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'cmd.exe'),
-    ['/d', '/s', '/c', `"${line}"`],
-    {
+    args: ['/d', '/s', '/c', `"${line}"`],
+    options: {
       ...options,
       windowsHide: true,
       windowsVerbatimArguments: true,
     },
-  );
+  };
 }

@@ -1,15 +1,15 @@
 # @excitedjs/dreamux-utils
 
-Pure shared utilities for the Dreamux host and its provider packages
+Shared utilities for the Dreamux host and its provider packages
 (issue [#209](https://github.com/excitedjs/dreamux/issues/209)). These are the
 byte-identical helpers that were previously vendored separately into the codex,
 claude-code, and feishu-channel packages and the host core; consolidating them
 removes the duplication while keeping the provider packages free of any
 dependency on `@excitedjs/dreamux` core.
 
-This package depends on nothing: not on `@excitedjs/dreamux` core, and not on
-`@excitedjs/dreamux-types`, which is the type set external providers compile
-against.
+This package does not depend on `@excitedjs/dreamux` core or
+`@excitedjs/dreamux-types`. Its Windows adapters use Koffi to call Win32 APIs
+directly; operating-system libraries load only when a Windows operation runs.
 
 ## Exports
 
@@ -27,20 +27,24 @@ against.
 - **os** — platform/filesystem primitives (`isProcessAlive`,
   `isProcessGroupAlive`, `killProcessGroup`, `ensureOwnerOnlyDir`, `ensureOwnerOnlyFile`,
   `removeEmptyLogFile`, `pathExists`). These are generic OS helpers, not
-  Dreamux layout/path contracts. `killProcessGroup` is asynchronous: it signals
-  POSIX groups, or terminates and waits for a Windows process tree. Windows
+  Dreamux layout/path contracts. Group probes and signals apply only to POSIX;
+  Windows termination requires a launch-owned Job through `SupervisedChild`. Windows
   private paths use a protected current-user ACL instead of POSIX mode bits.
-  Permission tightening rejects symlink leaves.
+  Permission tightening rejects symlink leaves and foreign owners; an elevated
+  token may adopt paths owned by Administrators. ACL reads and writes call
+  Win32 directly without starting a command interpreter or utility process.
 - **process-command** — async executable resolution (`resolveExecutableOnPath`)
   and launch (`spawnCommand`) with Windows PATH/PATHEXT handling, hidden child
   windows, and literal argument forwarding through npm command shims. Standard
   npm Node shims launch their script directly, preserving multiline arguments;
   other batch files reject multiline arguments that `cmd.exe` cannot preserve.
-  `windowsPowerShellEnvironment` lets Windows PowerShell rebuild its module
-  paths instead of inheriting incompatible PowerShell 7 modules through Node.
+- **windows-security** — native pipe privacy (`restrictWindowsPipe`), replacing
+  the existing pipe DACL with current-user full access before admitting clients.
 - **fs** — atomic-write primitives, one per publish semantic
   (`publishFileExclusive` for create-only, `writeFileAtomic` for overwrite).
-  Private Windows files receive a current-user ACL before data is written.
+  Private Windows files receive current-user ownership and a protected ACL
+  before data is written, replacing explicit default grants as well as inherited
+  permissions. Completion spill files use this same publication owner.
   Their temporary handle remains open through publication and temporary-link
   cleanup so an exclusively created file stays replaceable on Windows.
   Atomic replacement retries transient Windows sharing locks for at most one
@@ -56,7 +60,21 @@ against.
   `assertUnixSocketPathBudget`).
 - **supervised-child** — spawn or fork a child process and track its exit under
   one shape (`SupervisedChild`, `SupervisedChildLaunch`,
-  `SupervisedChildOptions`, `SupervisedChildExit`).
+  `SupervisedChildOptions`, `SupervisedChildExit`). On Windows a controlled Node
+  bootstrap waits until its held process handle is verified over its original
+  IPC channel and assigned to a native Job. Only then can target code or user
+  preloads run. Stdio and fork IPC retain their ordinary contracts. Stop prevents
+  new Job members, retains and verifies the current members' native process
+  handles, then terminates the Job and waits for those objects to finish exiting,
+  including descendants whose parents already exited. The Job's active count
+  alone can reach zero before process resources are released. Kernel
+  kill-on-close also cleans the tree if its owning host dies. No PID ancestry
+  discovery or command-line termination is used.
+- **windows-job** — native Job ownership for the Windows launch adapter and
+  daemon service boundary. Named service Jobs have a protected current-user ACL;
+  daemon control can acquire an existing Job or reserve its name before startup.
+  Termination waits for its nested trees to exit; the caller retains the Job
+  until `close()` so a concurrent service launch cannot reuse its name.
 - **activity-scan** — neutral scan mechanism shared by provider-owned Activity
   readers: file opening with canonical-root and inode checks, bounded
   positional reads, digests, path containment, and a scan

@@ -103,8 +103,9 @@ package disposable account and application homes.
 
 ## Native Windows
 
-Windows runs natively with Node.js 22.7 or newer and Windows PowerShell; WSL
-is not required. After building the checkout, use PowerShell from its root:
+Windows runs natively with Node.js 22.7 or newer. Normal runtime capabilities
+use Node and native Windows bindings; PowerShell is used only to manage the
+optional Task Scheduler service. After building the checkout, for example:
 
 ```powershell
 node .\packages\dreamux\bin\dreamux onboard
@@ -120,7 +121,7 @@ The managed service is one Scheduled Task for the current user, starts at
 user logon, and runs with limited privileges. `daemon start`, `stop`, `restart`
 and `uninstall` manage it. Windows stop/restart forcefully terminate the full
 process tree; they do not drain active turns. The generated
-`<DREAMUX_ROOT>/daemon.ps1` captures the Node command and service environment;
+`<DREAMUX_ROOT>/daemon.mjs` captures the Node command and service environment;
 rerun `daemon install` to refresh it rather than editing the script.
 
 Local administration uses a private named pipe, and Codex uses child stdio.
@@ -143,7 +144,7 @@ logs:
 |---|---|---|
 | `dreamux config path` (normally `~/.dreamux/config.json`) | User-editable provider config and local channel credentials, created by `dreamux onboard`; edit and restart to apply | the operator |
 | `~/.dreamux/run/admin.sock` | Logical admin endpoint: Unix socket on POSIX, private named pipe on Windows (+ filesystem `admin.sock.lock`) | the server |
-| `~/.dreamux/daemon.ps1` | Generated Windows service launcher; refresh through `daemon install` | the installer |
+| `~/.dreamux/daemon.mjs` | Generated Windows service launcher; refresh through `daemon install` | the installer |
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access state: schema/runtime ledger are Channel-owned; policy fields and quiesced `allow_users` maintenance are operator-authorized | mixed |
