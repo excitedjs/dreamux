@@ -226,6 +226,7 @@ describe('attachment cache owner-only enforcement (issue #182 PR-2)', () => {
     });
     expect(miss.attachments[0]).toMatchObject({ status: 'downloaded' });
     expect(fetcher.calls).toBe(1);
+    await expectOwnerOnlyPermissions(miss.attachments[0]!.path!, 0o600);
 
     // Someone loosens the cache dir behind our back.
     await makeWorldReadable(cache, 0o755);

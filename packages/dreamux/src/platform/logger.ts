@@ -22,10 +22,10 @@
  *     would force a `flushSync()` in a `process.on('exit')` handler — re-adding
  *     unavoidable sync IO in the one truly sync-only context, plus a log-tail
  *     loss risk in the short-lived `channel-mcp` shim.
- *   - File loggers require an awaited `prepareLogDirectory` before use. It
- *     secures the directory and existing files; new files inherit the private
- *     Windows ACL and use `0o600` on POSIX. Pino then writes synchronously,
- *     preserving immediate-exit logs without an asynchronous write buffer.
+ *   - File loggers require awaited file preparation before use. It creates
+ *     private files with current-user ownership, including under elevated
+ *     Windows tokens. Pino then writes synchronously, preserving immediate-exit
+ *     logs without an asynchronous write buffer.
  *   - Credentials are removed by a provider-agnostic recursive key sanitizer.
  *     Message *bodies* are NOT redacted — they are simply never passed to the
  *     logger (callers log ids, never turn `text` / `rawContent` / reply text).
@@ -36,7 +36,7 @@
  */
 
 import { readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import {
@@ -44,6 +44,7 @@ import {
   ensureOwnerOnlyFile,
   errorInfo,
   isSecretKeyName,
+  publishFileExclusive,
 } from '@excitedjs/dreamux-utils';
 import pino, { type DestinationStream, type LoggerOptions } from 'pino';
 
@@ -66,7 +67,7 @@ export interface CreateLoggerOptions {
    */
   name?: string;
   /**
-   * Absolute path under a directory secured by `prepareLogDirectory`.
+   * Absolute path already prepared by `prepareLogFile`.
    * When omitted the logger writes to stderr
    * only — the safe default for tests and any `Server` constructed without an
    * injected file-backed logger (it opens zero files).
@@ -99,8 +100,8 @@ function resolveLevel(level?: pino.Level): pino.Level {
 
 /**
  * Prepare before constructing any file logger. Existing log files are
- * tightened before more data can be appended; new files inherit this private
- * directory's Windows ACL. This keeps actual log writes synchronous.
+ * tightened before more data can be appended. Individual new destinations are
+ * prepared by prepareLogFile; ACL inheritance alone does not set their owner.
  */
 export async function prepareLogDirectory(path: string): Promise<void> {
   await ensureOwnerOnlyDir(path);
@@ -116,10 +117,16 @@ export async function prepareLogDirectory(path: string): Promise<void> {
   }
 }
 
+/** Prepare a private append destination without replacing existing log content. */
+export async function prepareLogFile(path: string): Promise<void> {
+  await ensureOwnerOnlyDir(dirname(path));
+  await publishFileExclusive(path, '');
+  await ensureOwnerOnlyFile(path);
+}
+
 function openLogFileStream(path: string): DestinationStream {
   return pino.destination({
     dest: path,
-    mkdir: true,
     mode: 0o600,
     sync: true,
   });

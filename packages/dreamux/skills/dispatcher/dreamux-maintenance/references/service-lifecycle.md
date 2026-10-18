@@ -29,6 +29,10 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   ACLs for the log directory and existing logs, including daemon stdout/stderr,
   so logs created by an elevated installer remain usable by the limited task.
   Dry runs leave permissions unchanged.
+  `serve` also prepares current-user ownership for the server log and each
+  configured dispatcher's channel/workflow log before logging starts, preserving
+  existing content. Private ACL inheritance alone does not set a new file's owner
+  under an elevated token. These log files and directories are server-owned.
   `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
   installation to refresh its pinned Node command and captured environment.
   Do not hand-edit that launcher.

@@ -47,9 +47,12 @@ stopping the task action, then releases the Job. A late launcher cannot create
 another Job during this interval. No process tree is reconstructed from PIDs. The
 previous task-enabled state is preserved. Unix service managers remain unchanged.
 
-Shared filesystem utilities enforce Windows ACLs and Unix modes. Log directory
-preparation precedes synchronous file logging. Atomic writes secure new temporary
-files before content is written. The WorkflowJournal owner prepares privacy at
+Shared filesystem utilities enforce Windows ACLs and Unix modes. Startup
+privately prepares the configured log destinations and their directories before
+synchronous file logging; DACL inheritance alone does not override an elevated
+token's Administrators default owner. Attachment-cache files receive current-user
+ownership before writing bytes, and cache hits verify the existing file. Atomic
+writes secure new temporary files before content is written. The WorkflowJournal owner prepares privacy at
 creation or recovery load, then appends only to the existing file through its
 serialized queue. Path containment uses native path operations.
 Activity file opens retain Unix O_NOFOLLOW; Windows checks leaf metadata before
