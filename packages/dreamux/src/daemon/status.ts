@@ -19,10 +19,12 @@ import {
   serviceUnitPath,
   SYSTEMD_UNIT,
   systemdDetail,
+  type ServicePlatform,
 } from './unit.js';
+import { windowsServiceStatus } from './windows.js';
 
 export interface ServiceStatus {
-  platform: 'launchd' | 'systemd';
+  platform: ServicePlatform;
   unitPath: string;
   installed: boolean;
   loaded: boolean;
@@ -41,6 +43,9 @@ export async function getServiceStatus(
   const unit = serviceUnitPath(host.platform, host.homeDir);
   if (unit.platform === 'launchd') {
     return launchdStatus(unit.path, host.runner, host.uid);
+  }
+  if (unit.platform === 'windows') {
+    return windowsServiceStatus(unit.path, host.runner);
   }
   return systemdStatus(unit.path, host.runner);
 }

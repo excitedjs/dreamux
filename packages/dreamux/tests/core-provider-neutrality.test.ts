@@ -57,7 +57,7 @@ function stripComments(src: string): string {
 }
 
 function rel(file: string): string {
-  return relative(join(coreSrc, '..'), file);
+  return relative(join(coreSrc, '..'), file).replaceAll('\\', '/');
 }
 
 const allCoreFiles = walkTs(coreSrc);

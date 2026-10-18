@@ -10,12 +10,20 @@
  * child can never survive the test process.
  */
 import { describe, it, expect, afterEach } from 'vitest';
+import { once } from 'node:events';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   SupervisedChild,
   type SupervisedChildExit,
 } from '../src/supervised-child.js';
-import { isProcessGroupAlive, killProcessGroup } from '../src/os.js';
+import {
+  isProcessAlive,
+  isProcessGroupAlive,
+  killProcessGroup,
+} from '../src/os.js';
 
 describe('SupervisedChild', () => {
   const started: SupervisedChild[] = [];
@@ -31,7 +39,7 @@ describe('SupervisedChild', () => {
       // so a runaway child can never outlive the test.
       if (child.pid !== null && isProcessGroupAlive(child.pid)) {
         try {
-          killProcessGroup(child.pid, 'SIGKILL');
+          await killProcessGroup(child.pid, 'SIGKILL');
         } catch {
           /* already gone */
         }
@@ -58,6 +66,31 @@ describe('SupervisedChild', () => {
     expect(child.pid).not.toBeNull();
   });
 
+  it('forks a module in a path with spaces and preserves IPC and arguments', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dreamux fork spaces '));
+    const modulePath = join(root, 'child.cjs');
+    await writeFile(
+      modulePath,
+      'process.send(process.argv.slice(2)); setInterval(() => {}, 1000)',
+    );
+    const args = ['path with spaces', '{"value":"a b"}'];
+    const child = new SupervisedChild({
+      kind: 'fork',
+      modulePath,
+      args,
+      options: { silent: true },
+    });
+    started.push(child);
+    try {
+      const proc = await child.start();
+      const [message] = await once(proc, 'message');
+      expect(message).toEqual(args);
+    } finally {
+      await child.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('calling start() twice on the same instance throws', async () => {
     const child = makeChild('setInterval(() => {}, 1000)');
     await child.start();
@@ -78,6 +111,15 @@ describe('SupervisedChild', () => {
   it('stop() before start() resolves without throwing', async () => {
     const child = makeChild('setInterval(() => {}, 1000)');
     await expect(child.stop()).resolves.toBeUndefined();
+  });
+
+  it('stop() joins a pending launch and reaps the child before returning', async () => {
+    const child = makeChild('setInterval(() => {}, 1000)');
+    const start = child.start();
+    const rejection = expect(start).rejects.toThrow('stopped during start');
+    await child.stop();
+    await rejection;
+    expect(child.pid).toBeNull();
   });
 
   it('stop() is idempotent: a second concurrent call returns the same in-flight promise', async () => {
@@ -139,30 +181,79 @@ describe('SupervisedChild', () => {
     expect(calls).toEqual([]);
   });
 
-  it('stop() escalates from SIGTERM to SIGKILL when the child ignores SIGTERM', async () => {
-    // This child installs a SIGTERM handler that does nothing, forcing the
-    // escalation path. Small timeouts keep the test fast.
-    const child = makeChild(
-      "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)",
-      { stopTimeoutMs: 150, pollIntervalMs: 10 },
-    );
-    await child.start();
-    const pgid = child.pid!;
-    expect(isProcessGroupAlive(pgid)).toBe(true);
+  it.skipIf(process.platform === 'win32')(
+    'stop() escalates from SIGTERM to SIGKILL when the child ignores SIGTERM',
+    async () => {
+      // This child installs a SIGTERM handler that does nothing, forcing the
+      // escalation path. Small timeouts keep the test fast.
+      const child = makeChild(
+        "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)",
+        { stopTimeoutMs: 150, pollIntervalMs: 10 },
+      );
+      await child.start();
+      const pgid = child.pid!;
+      expect(isProcessGroupAlive(pgid)).toBe(true);
 
-    await child.stop();
+      await child.stop();
 
-    expect(isProcessGroupAlive(pgid)).toBe(false);
-    expect(child.pid).toBeNull();
-  }, 10_000);
+      expect(isProcessGroupAlive(pgid)).toBe(false);
+      expect(child.pid).toBeNull();
+    },
+    10_000,
+  );
 
-  it('stop() converges quickly for a child that honors SIGTERM', async () => {
-    const child = makeChild(
-      "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)",
-    );
-    await child.start();
-    const start = Date.now();
-    await child.stop();
-    expect(Date.now() - start).toBeLessThan(1_000);
-  });
+  it.each([false, true])(
+    'stop() terminates the grandchild when parent exited = %s',
+    async (exitParent) => {
+      const child = makeChild(`
+      const { spawn } = require('node:child_process');
+      const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { windowsHide: true });
+      grandchild.once('spawn', () => {
+        console.log(JSON.stringify({ pid: grandchild.pid }));
+        ${exitParent ? 'process.exit(0);' : ''}
+      });
+      setInterval(() => {}, 1000);
+    `);
+      const proc = await child.start();
+      const parentPid = child.pid!;
+      const grandchildPid = await new Promise<number>((resolve, reject) => {
+        let stdout = '';
+        proc.stdout!.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString();
+          if (stdout.includes('\n'))
+            resolve((JSON.parse(stdout) as { pid: number }).pid);
+        });
+        proc.once('error', reject);
+      });
+      try {
+        expect(isProcessAlive(grandchildPid)).toBe(true);
+        if (exitParent) {
+          await new Promise<void>((resolve) => {
+            if (!isProcessAlive(parentPid)) resolve();
+            else proc.once('exit', () => resolve());
+          });
+        }
+        await child.stop();
+        expect(isProcessAlive(parentPid)).toBe(false);
+        expect(isProcessAlive(grandchildPid)).toBe(false);
+      } finally {
+        if (isProcessAlive(grandchildPid))
+          process.kill(grandchildPid, 'SIGKILL');
+      }
+    },
+    10_000,
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'stop() converges quickly for a child that honors SIGTERM',
+    async () => {
+      const child = makeChild(
+        "process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000)",
+      );
+      await child.start();
+      const start = Date.now();
+      await child.stop();
+      expect(Date.now() - start).toBeLessThan(1_000);
+    },
+  );
 });

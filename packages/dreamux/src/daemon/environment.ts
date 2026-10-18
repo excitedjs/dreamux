@@ -13,10 +13,14 @@
 import { constants } from 'node:fs';
 import { access, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 
 import type { ProviderBinCheck } from '@excitedjs/dreamux-types';
-import { errorMessage } from '@excitedjs/dreamux-utils';
+import {
+  environmentValue,
+  errorMessage,
+  resolveExecutableOnPath,
+} from '@excitedjs/dreamux-utils';
 
 import { expandHome, type DreamuxConfig } from '../config/config.js';
 import type { CommandRunner } from '../platform/command-runner.js';
@@ -41,6 +45,7 @@ export interface ServiceInstallAnswers {
   dryRun: boolean;
   /** Home directory the service runs under; resolves user-local bin dirs. Defaults to `homedir()`. */
   homeDir?: string;
+  platform?: NodeJS.Platform;
   /** Environment to read XDG_BIN_HOME from; path builders never read process.env. */
   env?: NodeJS.ProcessEnv;
   /**
@@ -112,7 +117,7 @@ const VERSION_MANAGER_MARKERS: Array<{ manager: string; markers: string[] }> = [
 
 /** Pure marker match on a single path; returns the manager name or null. */
 export function versionManagerOfPath(path: string): string | null {
-  const needle = path.toLowerCase();
+  const needle = path.replaceAll('\\', '/').toLowerCase();
   for (const entry of VERSION_MANAGER_MARKERS) {
     if (entry.markers.some((marker) => needle.includes(marker))) {
       return entry.manager;
@@ -145,7 +150,16 @@ export async function detectServiceNodeVersionManager(
  * Platform-aware stable Node candidates. macOS covers Homebrew (Apple Silicon
  * and Intel prefixes); Linux covers standard system locations.
  */
-export function stableNodeCandidates(platform: NodeJS.Platform): string[] {
+export function stableNodeCandidates(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (platform === 'win32') {
+    const programFiles = environmentValue(env, 'ProgramFiles');
+    return programFiles === undefined
+      ? []
+      : [join(programFiles, 'nodejs', 'node.exe')];
+  }
   if (platform === 'darwin') {
     return [
       '/opt/homebrew/bin/node',
@@ -167,6 +181,7 @@ export interface SelectServiceNodeOptions {
   currentNodeBin: string;
   runner: CommandRunner;
   probe?: ServiceNodeProbe | undefined;
+  env?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -178,7 +193,7 @@ export async function selectServiceNodeBin(
   options: SelectServiceNodeOptions,
 ): Promise<string> {
   const probe = options.probe ?? defaultServiceNodeProbe;
-  for (const candidate of stableNodeCandidates(options.platform)) {
+  for (const candidate of stableNodeCandidates(options.platform, options.env)) {
     if (!(await probe.isExecutable(candidate))) continue;
     if ((await detectServiceNodeVersionManager(candidate, probe)) !== null) {
       continue;
@@ -283,12 +298,42 @@ export function managedServiceEnvironment(
     DREAMUX_NODE_BIN: answers.nodeBin,
     PATH: managedServicePath(answers),
   };
+  if ((answers.platform ?? process.platform) === 'win32') {
+    // Windows runtimes and npm shims use these OS/profile directories even
+    // under the service's otherwise isolated environment.
+    for (const key of [
+      'SystemRoot',
+      'ComSpec',
+      'PATHEXT',
+      'TEMP',
+      'TMP',
+      'APPDATA',
+      'LOCALAPPDATA',
+      'ProgramData',
+      'ProgramFiles',
+    ]) {
+      const value = environmentValue(answers.env ?? {}, key);
+      if (value !== undefined) env[key] = value;
+    }
+    env['USERPROFILE'] = home;
+  }
   return env;
 }
 
 export interface ServiceLaunchValidationResult {
   ok: boolean;
   errors: string[];
+}
+
+/** Persist the executable argv used by both launch preflight and the service. */
+export function managedServiceCommand(
+  answers: ServiceInstallAnswers,
+  verb: string,
+): [string, ...string[]] {
+  const windows = (answers.platform ?? process.platform) === 'win32';
+  return windows && !/\.(?:cmd|bat|exe|com)$/i.test(answers.dreamuxBin)
+    ? [answers.nodeBin, answers.dreamuxBin, verb]
+    : [answers.dreamuxBin, verb];
 }
 
 export async function validateManagedServiceLaunch(
@@ -313,7 +358,8 @@ export async function validateManagedServiceLaunch(
     );
   }
 
-  if (!(await runner.check(answers.dreamuxBin, ['--help'], { env }))) {
+  const [command, ...args] = managedServiceCommand(answers, '--help');
+  if (!(await runner.check(command, args, { env }))) {
     errors.push(
       `managed service cannot execute dreamux launcher at ${answers.dreamuxBin}`,
     );
@@ -341,17 +387,8 @@ export async function resolveServiceExecutable(
   if (trimmed === '') {
     throw new Error('managed service executable path is empty');
   }
-  if (trimmed.includes('/') || trimmed.startsWith('~')) {
-    const candidate = resolve(expandHome(trimmed));
-    await assertExecutable(candidate, command);
-    return candidate;
-  }
-
-  for (const dir of (env['PATH'] ?? '').split(delimiter)) {
-    if (dir === '') continue;
-    const candidate = join(dir, trimmed);
-    if (await isExecutable(candidate)) return candidate;
-  }
+  const candidate = await resolveExecutableOnPath(expandHome(trimmed), env);
+  if (candidate !== null) return candidate;
 
   throw new Error(
     `managed service cannot resolve executable '${command}' from PATH; pass an absolute path and rerun dreamux onboard`,
@@ -370,7 +407,7 @@ export function withUserLocalBinPath(
   env: NodeJS.ProcessEnv,
   fallbackDirs: string[],
 ): NodeJS.ProcessEnv {
-  const sessionPath = env['PATH'] ?? '';
+  const sessionPath = environmentValue(env, 'PATH') ?? '';
   return withServicePath(env, { stableDirs: [], sessionPath, fallbackDirs });
 }
 
@@ -442,6 +479,7 @@ export async function resolveManagedServiceAnswers(
         currentNodeBin: process.execPath,
         runner: input.host.runner,
         probe: input.nodeProbe,
+        env: input.env,
       });
   return {
     dreamuxBin: input.dreamuxBin,
@@ -450,6 +488,7 @@ export async function resolveManagedServiceAnswers(
     startService: input.startService,
     dryRun: input.dryRun,
     homeDir: input.host.homeDir,
+    platform: input.host.platform,
     env: input.env,
     fallbackDirs,
   };
@@ -465,7 +504,7 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
     ...answers.providerBinChecks.flatMap((check) => absoluteDir(check.bin)),
     ...absoluteDir(answers.dreamuxBin),
   ];
-  const sessionPath = answers.env?.['PATH'] ?? '';
+  const sessionPath = environmentValue(answers.env ?? {}, 'PATH') ?? '';
   return buildServicePath({
     stableDirs,
     sessionPath,
@@ -475,9 +514,4 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
 
 function absoluteDir(path: string): string[] {
   return isAbsolute(path) ? [dirname(path)] : [];
-}
-
-async function assertExecutable(path: string, label: string): Promise<void> {
-  if (await isExecutable(path)) return;
-  throw new Error(`managed service executable is not runnable: ${label}`);
 }

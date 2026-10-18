@@ -12,7 +12,7 @@ import type {
   CodexReasoningEffort,
   SubmissionEffort,
 } from './reasoning-effort.js';
-import type { CodexWsClient } from './rpc.js';
+import type { CodexRpcClient } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
 import type { ThreadItem, ThreadTokenUsage } from './types.js';
 import type {
@@ -42,7 +42,7 @@ interface NativeTurnRecord {
 
 export interface TurnManagerOptions {
   threadId: string;
-  client: CodexWsClient;
+  client: CodexRpcClient;
   /**
    * The session-bound output schema codec, compiled once when the runtime was
    * created. It is fixed for the life of the session: no submission can change

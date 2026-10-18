@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { expectOwnerOnlyPermissions } from '../../../common/scripts/test-permissions.mjs';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -60,14 +61,15 @@ describe('resolveCompletionBody', () => {
     const result = 'y'.repeat(COMPLETION_INLINE_BUDGET_DEFAULT + 1);
     const body = await resolveCompletionBody(completion(result), spillDir);
     if (body.kind !== 'spilled') throw new Error('expected spilled');
-    expect(body.path).toMatch(/\/completion-[0-9a-f-]+\.output$/u);
+    expect(dirname(body.path)).toBe(spillDir);
+    expect(basename(body.path)).toMatch(/^completion-[0-9a-f-]+\.output$/u);
     expect(body.path).not.toContain('reviewer');
 
     // Full result on disk — not truncated.
     expect(await readFile(body.path, 'utf8')).toBe(result);
     // Owner-only file in an owner-only spill dir.
-    expect((await stat(body.path)).mode & 0o777).toBe(0o600);
-    expect((await stat(spillDir)).mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(body.path, 0o600);
+    await expectOwnerOnlyPermissions(spillDir, 0o700);
 
     const second = await resolveCompletionBody(completion(result), spillDir);
     if (second.kind !== 'spilled') throw new Error('expected second spill');

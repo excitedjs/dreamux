@@ -71,11 +71,22 @@ describe('openActivityFile', () => {
     });
   });
 
-  it('refuses a leaf symlink without following it', async () => {
+  it('refuses a leaf symlink without following it', async (context) => {
     const path = join(root, 'native');
     await writeFile(path, 'native activity');
     const link = join(root, 'link');
-    await symlink(path, link);
+    try {
+      await symlink(path, link);
+    } catch (error) {
+      if (
+        process.platform === 'win32' &&
+        (error as NodeJS.ErrnoException).code === 'EPERM'
+      ) {
+        context.skip(); // Windows file symlinks require Developer Mode or SeCreateSymbolicLinkPrivilege.
+        return;
+      }
+      throw error;
+    }
     await expect(
       openActivityFile(link, [root], messages),
     ).rejects.toMatchObject({
@@ -91,7 +102,11 @@ describe('openActivityFile', () => {
     await mkdir(allowed);
     await mkdir(outside);
     await writeFile(join(outside, 'native'), 'native activity');
-    await symlink(outside, join(allowed, 'alias'), 'dir');
+    await symlink(
+      outside,
+      join(allowed, 'alias'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
     await expect(
       openActivityFile(join(allowed, 'alias', 'native'), [allowed], messages),
     ).rejects.toMatchObject({

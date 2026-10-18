@@ -14,12 +14,13 @@ if (typeof serverModule.Server !== 'function') {
 }
 
 async function runCli(args) {
-  const child = spawn(bin, args, {
+  const child = spawn(process.execPath, [bin, ...args], {
     env: {
       ...process.env,
       DREAMUX_NODE_BIN: process.execPath,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   let stdout = '';

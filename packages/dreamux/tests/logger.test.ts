@@ -7,19 +7,22 @@
  * honor DREAMUX_CONFIG_DIR, so injection — not an env var — is the seam.)
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
-import { createLogger, loggerToLevelFn } from '../src/platform/logger.js';
+import {
+  createLogger,
+  loggerToLevelFn,
+  prepareLogDirectory,
+} from '../src/platform/logger.js';
+import {
+  expectOwnerOnlyPermissions,
+  makeWorldReadable,
+} from '../../../common/scripts/test-permissions.mjs';
 
 function captureSink(): { sink: Writable; text: () => string } {
   const chunks: string[] = [];
@@ -42,13 +45,13 @@ describe('logger factory', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('creates the log dir and a 0600 file at an injected path', () => {
+  it('creates an owner-only file under a prepared log directory', async () => {
+    await prepareLogDirectory(dir);
     const filePath = join(dir, 'nested', 'server.log');
     const logger = createLogger({ name: 'server', filePath, stderr: false });
     logger.info('hello');
 
-    const mode = statSync(filePath).mode & 0o777;
-    expect(mode).toBe(0o600);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
     const contents = readFileSync(filePath, 'utf8');
     expect(contents).toContain('"msg":"hello"');
     expect(contents).toContain('"name":"server"');
@@ -57,11 +60,35 @@ describe('logger factory', () => {
   it('tightens a pre-existing wider-permission file to 0600', async () => {
     const filePath = join(dir, 'pre.log');
     writeFileSync(filePath, '', { mode: 0o644 });
+    await makeWorldReadable(filePath, 0o644);
+    await prepareLogDirectory(dir);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
     const logger = createLogger({ filePath, stderr: false });
     logger.info('x');
-    // The defensive re-tighten is a fire-and-forget async chmod (createLogger
-    // stays synchronous, the gate bans *Sync), so poll until it lands.
-    await vi.waitFor(() => expect(statSync(filePath).mode & 0o777).toBe(0o600));
+    expect(readFileSync(filePath, 'utf8')).toContain('"msg":"x"');
+  });
+
+  it('rejects linked log entries without tightening the external target', async () => {
+    const logDir = join(dir, 'logs');
+    const external = join(dir, 'external');
+    await mkdir(logDir);
+    await mkdir(external);
+    await makeWorldReadable(external, 0o755);
+    const file = join(external, 'existing.log');
+    writeFileSync(file, 'unrelated data');
+    await makeWorldReadable(file, 0o644);
+    await symlink(
+      external,
+      join(logDir, 'linked'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(prepareLogDirectory(logDir)).rejects.toThrow(
+      /it is a symlink/,
+    );
+    await expect(expectOwnerOnlyPermissions(external, 0o700)).rejects.toThrow();
+    await expect(expectOwnerOnlyPermissions(file, 0o600)).rejects.toThrow();
+    expect(readFileSync(file, 'utf8')).toBe('unrelated data');
   });
 
   it('redacts credential fields by default', () => {
@@ -116,7 +143,8 @@ describe('logger factory', () => {
     }
   });
 
-  it('writes to both the file and stderr when filePath is set (foreground stays visible)', () => {
+  it('writes to both the file and stderr when filePath is set (foreground stays visible)', async () => {
+    await prepareLogDirectory(dir);
     const filePath = join(dir, 'dual.log');
     // We cannot easily capture fd 2 here; assert the file half of the dual
     // stream. The stderr half is exercised by foreground `serve` in practice.

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -13,6 +12,10 @@ import { join } from 'node:path';
 
 import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 import { assertNoLegacyAdminServer } from '../src/admin/socket.js';
+import {
+  expectOwnerOnlyPermissions,
+  makeWorldReadable,
+} from '../../../common/scripts/test-permissions.mjs';
 
 describe('ensureOwnerOnlyDir', () => {
   let root: string;
@@ -28,31 +31,30 @@ describe('ensureOwnerOnlyDir', () => {
   it('creates a missing dir owner-only', async () => {
     const dir = join(root, 'run', 'sockets');
     await ensureOwnerOnlyDir(dir);
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(dir, 0o700);
   });
 
   it('tightens a pre-existing group/world-traversable dir to 0700', async () => {
     const dir = join(root, 'run');
     mkdirSync(dir, { recursive: true });
-    chmodSync(dir, 0o755);
-    expect(statSync(dir).mode & 0o777).toBe(0o755);
+    await makeWorldReadable(dir, 0o755);
 
     await ensureOwnerOnlyDir(dir);
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(dir, 0o700);
   });
 
   it('leaves an already-0700 dir untouched', async () => {
     const dir = join(root, 'run');
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     await ensureOwnerOnlyDir(dir);
-    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(dir, 0o700);
   });
 
   it('refuses a symlinked runtime dir', async () => {
     const real = join(root, 'real');
     mkdirSync(real, { recursive: true });
     const link = join(root, 'linked');
-    symlinkSync(real, link);
+    symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
     await expect(ensureOwnerOnlyDir(link)).rejects.toThrow(/symlink/);
   });
 

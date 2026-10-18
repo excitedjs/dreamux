@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Support native Windows skill junctions and resolve activity homes through the shared provider resolver.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

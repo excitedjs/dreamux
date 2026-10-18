@@ -2,20 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import { CodexRuntime } from '../src/runtime.js';
-import { CodexWsClient } from '../src/rpc.js';
+import { CodexRpcClient } from '../src/rpc.js';
 import { CodexProcess } from '../src/supervisor.js';
 import {
   FAKE_PATHS,
   FakeCodexProcess,
-  FakeCodexWsClient,
+  FakeCodexRpcClient,
   noopStateSink,
   waitFor,
 } from './helpers/codex-runtime-fakes.js';
 
-vi.mock('../src/rpc.js', () => ({ CodexWsClient: vi.fn() }));
+vi.mock('../src/rpc.js', () => ({ CodexRpcClient: vi.fn() }));
 vi.mock('../src/supervisor.js', () => ({ CodexProcess: vi.fn() }));
 beforeEach(() => {
-  vi.mocked(CodexWsClient).mockReset();
+  vi.mocked(CodexRpcClient).mockReset();
   vi.mocked(CodexProcess).mockReset();
 });
 const logger: DreamuxLogger = {
@@ -33,14 +33,14 @@ const HINT =
   'on this turn. Reason as thoroughly as the task warrants.';
 
 function createRuntime(
-  client: FakeCodexWsClient,
+  client: FakeCodexRpcClient,
   sessionId: string | null = null,
 ): CodexRuntime {
   vi.mocked(CodexProcess).mockImplementationOnce(
     () => new FakeCodexProcess() as unknown as CodexProcess,
   );
-  vi.mocked(CodexWsClient).mockImplementationOnce(
-    () => client as unknown as CodexWsClient,
+  vi.mocked(CodexRpcClient).mockImplementationOnce(
+    () => client as unknown as CodexRpcClient,
   );
   return new CodexRuntime(
     { runtimeId: 'effort-test', sessionId },
@@ -61,7 +61,7 @@ function createRuntime(
 
 describe('Codex ultrathink submissions', () => {
   it('requests the model maximum and restores the original effort on an ordinary submission', async () => {
-    const client = new FakeCodexWsClient();
+    const client = new FakeCodexRpcClient();
     const runtime = createRuntime(client);
     await runtime.start();
     try {
@@ -90,7 +90,7 @@ describe('Codex ultrathink submissions', () => {
   it.each(['ULTRATHINK', 'UltraThink', 'quoted: "ultrathink"', '(ultrathink)'])(
     'matches %s and appends the hint without altering the original text',
     async (text) => {
-      const client = new FakeCodexWsClient();
+      const client = new FakeCodexRpcClient();
       const runtime = createRuntime(client);
       await runtime.start();
       try {
@@ -111,7 +111,7 @@ describe('Codex ultrathink submissions', () => {
   it.each(['ultrathinking', 'x_ultrathink_y', 'prefixULTRATHINKsuffix'])(
     'leaves %s to Codex because the keyword is not a whole word',
     async (text) => {
-      const client = new FakeCodexWsClient();
+      const client = new FakeCodexRpcClient();
       const runtime = createRuntime(client);
       await runtime.start();
       try {
@@ -149,7 +149,7 @@ describe('Codex ultrathink submissions', () => {
   ])(
     'uses the model maximum $expected and restores $baseline after repeated triggers',
     async ({ supported, ordinary, expected, baseline }) => {
-      const client = new FakeCodexWsClient({
+      const client = new FakeCodexRpcClient({
         model: 'selected-model',
         reasoningEffort: ordinary,
         models: [
@@ -201,7 +201,7 @@ describe('Codex ultrathink submissions', () => {
   ])(
     'restores configured effort %s after resuming a thread left at a temporary high effort',
     async (configuredEffort, expected) => {
-      const client = new FakeCodexWsClient({
+      const client = new FakeCodexRpcClient({
         reasoningEffort: 'xhigh',
         configuredEffort,
       });
@@ -230,7 +230,7 @@ describe('Codex ultrathink submissions', () => {
   );
 
   it('admits marked and ordinary busy inputs into the same native turn without awaiting completion', async () => {
-    const client = new FakeCodexWsClient({
+    const client = new FakeCodexRpcClient({
       autoComplete: false,
       scriptedTurnIds: ['folded', 'folded', 'folded'],
     });
@@ -270,8 +270,8 @@ describe('Codex ultrathink submissions', () => {
   });
 
   it('does not change another runtime or global settings', async () => {
-    const markedClient = new FakeCodexWsClient();
-    const ordinaryClient = new FakeCodexWsClient({
+    const markedClient = new FakeCodexRpcClient();
+    const ordinaryClient = new FakeCodexRpcClient({
       freshThreadId: 'other-thread',
     });
     const marked = createRuntime(markedClient);
@@ -301,7 +301,7 @@ describe('Codex ultrathink submissions', () => {
   ])(
     'rejects unusable model effort metadata before submitting input',
     async ({ supportedReasoningEfforts }) => {
-      const client = new FakeCodexWsClient({
+      const client = new FakeCodexRpcClient({
         models: [
           {
             model: 'test-model',
@@ -328,7 +328,7 @@ describe('Codex ultrathink submissions', () => {
   );
 
   it('finds the selected model on a later catalog page', async () => {
-    const client = new FakeCodexWsClient();
+    const client = new FakeCodexRpcClient();
     const runtime = createRuntime(client);
     await runtime.start();
     client.block('model/list');
@@ -348,7 +348,7 @@ describe('Codex ultrathink submissions', () => {
   });
 
   it('does not send input when stopped during catalog discovery', async () => {
-    const client = new FakeCodexWsClient();
+    const client = new FakeCodexRpcClient();
     const runtime = createRuntime(client);
     await runtime.start();
     client.block('model/list');
@@ -360,7 +360,7 @@ describe('Codex ultrathink submissions', () => {
   });
 
   it('rejects input when the active native session fails during catalog discovery', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const runtime = createRuntime(client);
     await runtime.start();
     try {

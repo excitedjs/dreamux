@@ -26,6 +26,28 @@ import {
 } from '../src/platform/paths.js';
 import { testSingleDispatcherFileObject } from './helpers/config.js';
 
+// Windows file symlinks require Developer Mode or SeCreateSymbolicLinkPrivilege.
+// Directory junctions do not, so those filesystem cases still run everywhere.
+const supportsFileSymlinks = canCreateFileSymlink();
+const directoryLinkType = process.platform === 'win32' ? 'junction' : 'dir';
+
+function canCreateFileSymlink(): boolean {
+  const probe = mkdtempSync(join(process.cwd(), '.dreamux-symlink-probe-'));
+  try {
+    symlinkSync('missing', join(probe, 'link'));
+    return true;
+  } catch (error) {
+    if (
+      process.platform === 'win32' &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    )
+      return false;
+    throw error;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+}
+
 class FakeRunner implements CommandRunner {
   launchdLoaded = false;
   readonly calls: Array<{ command: string; args: string[] }> = [];
@@ -53,8 +75,14 @@ describe('dreamux uninstall', () => {
   let root: string;
 
   beforeEach(() => {
-    root = mkdtempSync(join(homedir(), '.dreamux-uninstall-'));
-    vi.stubEnv('HOME', join(root, 'home'));
+    // Keep relative-root cases on the same volume as cwd, and never derive a
+    // removal target from the operator's home on either Windows or POSIX.
+    root = mkdtempSync(join(process.cwd(), '.dreamux-uninstall-'));
+    const home = join(root, 'home');
+    mkdirSync(home);
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    expect(homedir()).toBe(home);
     vi.stubEnv('DREAMUX_ROOT', join(root, 'dreamux'));
     vi.stubEnv('CODEX_HOME', undefined);
     vi.stubEnv('CLAUDE_CONFIG_DIR', undefined);
@@ -214,8 +242,8 @@ describe('dreamux uninstall', () => {
     const homeDir = join(root, 'home');
 
     for (const unsafeConfigDir of [
-      join(homedir(), '.codex'),
-      join(homedir(), '.claude'),
+      join(homeDir, '.codex'),
+      join(homeDir, '.claude'),
     ]) {
       process.env['DREAMUX_ROOT'] = unsafeConfigDir;
       await expect(
@@ -227,7 +255,7 @@ describe('dreamux uninstall', () => {
       ).rejects.toThrow(/operator agent runtime state/);
     }
 
-    process.env['DREAMUX_ROOT'] = join(homedir(), '.claude');
+    process.env['DREAMUX_ROOT'] = join(homeDir, '.claude');
     await expect(
       runUninstall({
         runner,
@@ -368,11 +396,15 @@ describe('dreamux uninstall', () => {
     ];
 
     for (const testCase of cases) {
+      // chmod cannot make Windows ACLs world-readable; this case is POSIX-only.
+      if (process.platform === 'win32' && testCase.mode !== undefined) continue;
       const caseRoot = join(root, testCase.name.replaceAll(' ', '-'));
       const configDir = join(caseRoot, 'config');
       const homeDir = join(caseRoot, 'home');
       const previousCaseHome = process.env['HOME'];
+      const previousCaseProfile = process.env['USERPROFILE'];
       process.env['HOME'] = homeDir;
+      process.env['USERPROFILE'] = homeDir;
       process.env['DREAMUX_ROOT'] = configDir;
       const servicePath = join(
         homeDir,
@@ -417,6 +449,7 @@ describe('dreamux uninstall', () => {
         ]);
       } finally {
         process.env['HOME'] = previousCaseHome;
+        process.env['USERPROFILE'] = previousCaseProfile;
       }
     }
   });
@@ -469,7 +502,7 @@ describe('dreamux uninstall', () => {
       expect(existsSync(configDir)).toBe(false);
     },
   );
-  it.each([
+  it.skipIf(!supportsFileSymlinks).each([
     ['config.json', false],
     ['config.toml', false],
     ['config.json', true],
@@ -510,7 +543,7 @@ describe('dreamux uninstall', () => {
       expect(existsSync(missingTarget)).toBe(false);
     },
   );
-  it.each([
+  it.skipIf(!supportsFileSymlinks).each([
     ['file', true],
     ['symlink', true],
     ['symlink', false],
@@ -551,34 +584,37 @@ describe('dreamux uninstall', () => {
         expect(readFileSync(dataPath, 'utf8')).toBe(content);
     },
   );
-  it('removes root links without following a config target containing link-before-parent traversal', async () => {
-    const configDir = join(root, 'dreamux');
-    const profile = join(root, 'external', 'profiles', 'v1');
-    mkdirSync(join(profile, 'subdir'), { recursive: true });
-    mkdirSync(configDir);
-    const content = JSON.stringify(testSingleDispatcherFileObject());
-    const target = join(profile, 'config.json');
-    writeFileSync(target, content, { mode: 0o600 });
-    symlinkSync(join(profile, 'subdir'), join(configDir, 'current'));
-    const configFile = join(configDir, 'config.json');
-    symlinkSync('current/../config.json', configFile);
-    const options = {
-      runner: new FakeRunner(),
-      platform: 'linux' as const,
-      homeDir: join(root, 'home'),
-    };
-    const preview = await runUninstall({ ...options, dryRun: true });
-    expect(readdirSync(configDir).sort()).toEqual(['config.json', 'current']);
-    expect(readlinkSync(configFile)).toBe('current/../config.json');
-    expect(readFileSync(configFile, 'utf8')).toBe(content);
-    const actual = await runUninstall(options);
-    expect(preview.entries).toEqual(actual.entries);
-    expect(
-      actual.entries.find((entry) => entry.path === configDir),
-    ).toMatchObject({ status: 'removed' });
-    expect(existsSync(configDir)).toBe(false);
-    expect(readFileSync(target, 'utf8')).toBe(content);
-  });
+  it.skipIf(process.platform === 'win32')(
+    'removes root links without following a POSIX config target containing link-before-parent traversal',
+    async () => {
+      const configDir = join(root, 'dreamux');
+      const profile = join(root, 'external', 'profiles', 'v1');
+      mkdirSync(join(profile, 'subdir'), { recursive: true });
+      mkdirSync(configDir);
+      const content = JSON.stringify(testSingleDispatcherFileObject());
+      const target = join(profile, 'config.json');
+      writeFileSync(target, content, { mode: 0o600 });
+      symlinkSync(join(profile, 'subdir'), join(configDir, 'current'), 'dir');
+      const configFile = join(configDir, 'config.json');
+      symlinkSync('current/../config.json', configFile);
+      const options = {
+        runner: new FakeRunner(),
+        platform: 'linux' as const,
+        homeDir: join(root, 'home'),
+      };
+      const preview = await runUninstall({ ...options, dryRun: true });
+      expect(readdirSync(configDir).sort()).toEqual(['config.json', 'current']);
+      expect(readlinkSync(configFile)).toBe('current/../config.json');
+      expect(readFileSync(configFile, 'utf8')).toBe(content);
+      const actual = await runUninstall(options);
+      expect(preview.entries).toEqual(actual.entries);
+      expect(
+        actual.entries.find((entry) => entry.path === configDir),
+      ).toMatchObject({ status: 'removed' });
+      expect(existsSync(configDir)).toBe(false);
+      expect(readFileSync(target, 'utf8')).toBe(content);
+    },
+  );
 
   it.each([false, true])(
     'previews current run-link existence but actual removal observes state removed first (state is a link: %s)',
@@ -588,11 +624,15 @@ describe('dreamux uninstall', () => {
       mkdirSync(join(dataDir, 'runtime'), { recursive: true });
       if (stateIsLink) {
         mkdirSync(configDir);
-        symlinkSync(dataDir, stateRoot());
+        symlinkSync(dataDir, stateRoot(), directoryLinkType);
       }
       const dataFile = join(dataDir, 'runtime', 'keep.txt');
       writeFileSync(dataFile, 'runtime data');
-      symlinkSync('state/runtime', runRoot());
+      const runTarget =
+        process.platform === 'win32'
+          ? join(stateRoot(), 'runtime')
+          : join('state', 'runtime');
+      symlinkSync(runTarget, runRoot(), directoryLinkType);
       const options = {
         runner: new FakeRunner(),
         platform: 'linux' as const,
@@ -604,7 +644,7 @@ describe('dreamux uninstall', () => {
       expect(readFileSync(join(runRoot(), 'keep.txt'), 'utf8')).toBe(
         'runtime data',
       );
-      expect(readlinkSync(runRoot())).toBe('state/runtime');
+      expect(readlinkSync(runRoot())).toBe(runTarget);
       const actual = await runUninstall(options);
       expect(preview.entries).toEqual(
         actual.entries.map((entry) =>
@@ -620,7 +660,9 @@ describe('dreamux uninstall', () => {
           },
           {
             path: runRoot(),
-            status: 'missing',
+            // Windows access() sees a dangling junction itself; POSIX access()
+            // follows the symlink and reports its now-missing target.
+            status: directoryLinkType === 'junction' ? 'removed' : 'missing',
             reason: 'dreamux run directory',
           },
           {
@@ -923,7 +965,7 @@ describe('dreamux uninstall', () => {
         writeFileSync(join(target, 'config.json'), config, { mode: 0o600 });
         writeFileSync(join(target, 'keep.txt'), 'target content');
       }
-      symlinkSync(target, configDir);
+      symlinkSync(target, configDir, directoryLinkType);
       const options = {
         runner: new FakeRunner(),
         platform: 'linux' as const,
@@ -938,15 +980,18 @@ describe('dreamux uninstall', () => {
       }
       const actual = await runUninstall(options);
       expect(preview.entries).toEqual(actual.entries);
+      const rootExists = !dangling || directoryLinkType === 'junction';
       expect(actual.entries.find((entry) => entry.path === configDir)).toEqual({
         path: configDir,
-        status: dangling ? 'missing' : 'removed',
+        status: rootExists ? 'removed' : 'missing',
         reason: 'dreamux config directory',
       });
-      if (dangling) {
+      if (!rootExists) {
         expect(readlinkSync(configDir)).toBe(target);
       } else {
         expect(() => lstatSync(configDir)).toThrow(/ENOENT/);
+      }
+      if (!dangling) {
         expect(existsSync(join(target, 'state'))).toBe(false);
         expect(readFileSync(join(target, 'config.json'), 'utf8')).toBe(config);
         expect(readFileSync(join(target, 'keep.txt'), 'utf8')).toBe(

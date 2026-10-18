@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { execa } from 'execa';
@@ -16,6 +16,36 @@ const SCAN_SCRIPT_PATH = resolve(
   'check-internal-content.sh',
 );
 const SCAN_SCRIPT = readFileSync(SCAN_SCRIPT_PATH, 'utf8');
+// Git for Windows ships the shell and POSIX tools used by the real release
+// gate, but its usr/bin is deliberately not required on the user's PATH.
+const shell =
+  process.platform === 'win32'
+    ? resolve(
+        (await execa('git', ['--exec-path'])).stdout.trim(),
+        '..',
+        '..',
+        '..',
+        'bin',
+        'bash.exe',
+      )
+    : 'sh';
+const shellPath = (path: string): string =>
+  process.platform === 'win32'
+    ? path
+        .replaceAll('\\', '/')
+        .replace(
+          /^([A-Za-z]):/,
+          (_match, drive: string) => `/${drive.toLowerCase()}`,
+        )
+    : path;
+
+function scan(tarball: string) {
+  return execa(
+    shell,
+    [shellPath(SCAN_SCRIPT_PATH), '--tarball', shellPath(tarball)],
+    { reject: false, windowsHide: true },
+  );
+}
 
 // The forbidden tokens are assembled rather than written whole. This file feeds
 // the scanner exactly what it must reject, and a scanner that flagged its own
@@ -39,21 +69,29 @@ describe('internal-content tree scan', () => {
     expect(extractionPattern).toContain('/home/[a-z][a-z0-9_-]+/');
     expect(allowlistPattern).toBeDefined();
 
-    const extracted = await execa('grep', ['-aoE', extractionPattern ?? ''], {
-      input: [
-        `${home('me')}work`,
-        `${home('meredith')}work`,
-        `${home('mexico')}work`,
-        `${home('meredith2')}work`,
-        `${home('volta')}bin/node`,
-        `${MOUNT}home/someone/work`,
-      ].join('\n'),
-      reject: false,
-    });
-    const rejected = await execa('grep', ['-vxE', allowlistPattern ?? ''], {
-      input: extracted.stdout,
-      reject: false,
-    });
+    const extracted = await execa(
+      shell,
+      ['-c', 'exec grep "$@"', 'grep', '-aoE', extractionPattern ?? ''],
+      {
+        input: [
+          `${home('me')}work`,
+          `${home('meredith')}work`,
+          `${home('mexico')}work`,
+          `${home('meredith2')}work`,
+          `${home('volta')}bin/node`,
+          `${MOUNT}home/someone/work`,
+        ].join('\n'),
+        reject: false,
+      },
+    );
+    const rejected = await execa(
+      shell,
+      ['-c', 'exec grep "$@"', 'grep', '-vxE', allowlistPattern ?? ''],
+      {
+        input: extracted.stdout,
+        reject: false,
+      },
+    );
 
     expect(rejected.stdout.split('\n').filter(Boolean).sort()).toEqual([
       MOUNT,
@@ -85,7 +123,20 @@ describe('internal-content tarball scan', () => {
     );
     await writeFile(join(dir, 'package', 'dist', 'index.js'), distSource);
     const tgz = join(dir, `${name}.tgz`);
-    await execa('tar', ['czf', tgz, '-C', dir, 'package']);
+    await execa(
+      shell,
+      [
+        '-c',
+        'exec tar "$@"',
+        'tar',
+        'czf',
+        basename(tgz),
+        '-C',
+        shellPath(dir),
+        'package',
+      ],
+      { cwd: dir, windowsHide: true },
+    );
     return tgz;
   }
 
@@ -105,9 +156,7 @@ describe('internal-content tarball scan', () => {
       ].join('\n'),
     );
 
-    const result = await execa(SCAN_SCRIPT_PATH, ['--tarball', tgz], {
-      reject: false,
-    });
+    const result = await scan(tgz);
 
     expect(result.exitCode).toBe(1);
     const reported = result.stderr
@@ -132,19 +181,13 @@ describe('internal-content tarball scan', () => {
       ].join('\n'),
     );
 
-    const clean = await execa(SCAN_SCRIPT_PATH, ['--tarball', tgz], {
-      reject: false,
-    });
+    const clean = await scan(tgz);
     expect(clean.exitCode).toBe(0);
 
     // A scanner that quietly ignores what it was asked to scan is the failure
     // this gate exists to remove: a path that is not a file is a usage error,
     // never a clean result.
-    const missing = await execa(
-      SCAN_SCRIPT_PATH,
-      ['--tarball', join(dirname(tgz), 'absent.tgz')],
-      { reject: false },
-    );
+    const missing = await scan(join(dirname(tgz), 'absent.tgz'));
     expect(missing.exitCode).toBe(2);
   });
 });

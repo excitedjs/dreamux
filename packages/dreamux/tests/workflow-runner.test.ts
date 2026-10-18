@@ -899,8 +899,14 @@ describe('workflow runner', () => {
       );
 
       expect(errors).toEqual([]);
-      expect(exit.code).toBeNull();
-      expect(exit.signal === 'SIGTERM' || exit.signal === 'SIGKILL').toBe(true);
+      if (process.platform === 'win32') {
+        expect(exit).toEqual({ code: 1, signal: null });
+      } else {
+        expect(exit.code).toBeNull();
+        expect(exit.signal === 'SIGTERM' || exit.signal === 'SIGKILL').toBe(
+          true,
+        );
+      }
     } finally {
       await withTimeout(runner.stop(), 2_000, 'workflow runner cleanup').catch(
         () => undefined,

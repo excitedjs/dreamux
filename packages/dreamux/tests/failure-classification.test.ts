@@ -167,7 +167,9 @@ describe('a skill root the caller can fix, and a filesystem failure it cannot', 
     // ENAMETOOLONG is the host answering about itself, not about a field the
     // caller chose wrongly, so nothing re-types it and nothing rewrites it.
     const error = await raised(() =>
-      normalizeSkillSources(source(`/tmp/${'a'.repeat(300)}`) as never),
+      normalizeSkillSources(
+        source(join(tmpdir(), 'a'.repeat(32_768))) as never,
+      ),
     );
     expect(error).not.toBeInstanceOf(DreamuxError);
     expect((error as NodeJS.ErrnoException).code).toBe('ENAMETOOLONG');
