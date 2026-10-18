@@ -64,6 +64,11 @@ graceful draining or completion delivery. Inspect persisted state after restart;
 its normal startup rules determine recovery. Task startup runs at user logon,
 not before a user signs in.
 
+A Windows restart issued from inside the service hands control to a short-lived
+process outside the service Job before stopping it. Command handoff is not
+restart completion: for self-upgrade, wait for the existing resumed Dispatcher
+notice. Controller errors are written to `logs/daemon.stderr.log`.
+
 For a delivered SIGTERM or SIGINT, `dreamux serve` exits 0 once shutdown
 completes; if shutdown fails, or has not settled within 15 seconds, it logs the
 reason and exits 1. Under systemd a non-zero exit that was not requested through

@@ -1,7 +1,8 @@
 /** Windows user services are logon tasks owned by the current user's SID. */
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { dirname } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WindowsJob } from '@excitedjs/dreamux-utils';
 
 import type { CommandRunner } from '../platform/command-runner.js';
@@ -31,7 +32,11 @@ export function windowsPowerShellEnvironment(
 }
 
 /** Encoded commands preserve Unicode paths and bypass shell interpolation. */
-function windowsPowerShellArgs(script: string): string[] {
+function windowsPowerShellArgs(script: string, taskName?: string): string[] {
+  const identity =
+    taskName === undefined
+      ? TASK_IDENTITY
+      : `$taskName = ${psString(taskName)}\n`;
   return [
     '-NoLogo',
     '-NoProfile',
@@ -40,7 +45,7 @@ function windowsPowerShellArgs(script: string): string[] {
     'Hidden',
     '-EncodedCommand',
     Buffer.from(
-      `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n${TASK_IDENTITY}${script}`,
+      `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n${identity}${script}`,
       'utf16le',
     ).toString('base64'),
   ];
@@ -142,14 +147,59 @@ export async function controlWindowsService(
   verb: 'start' | 'stop' | 'restart',
   runner: CommandRunner,
   dryRun: boolean,
+  /** A handed-off controller retains the task identity read from registration. */
+  taskName?: string,
 ): Promise<Array<{ command: string; args: string[] }>> {
-  const commands =
-    verb === 'start' ? [] : await stopWindowsService(runner, dryRun);
+  const commands: Array<{ command: string; args: string[] }> = [];
+  if (verb !== 'start' && !dryRun) {
+    const query = {
+      command: 'powershell.exe',
+      args: windowsPowerShellArgs(
+        `
+$registered = Get-ScheduledTask -TaskPath '\\' | Where-Object TaskName -EQ $taskName
+if ($null -eq $registered) { 'null' } else {
+  @{ taskName = $registered.TaskName; launcher = $registered.Actions[0].Arguments } | ConvertTo-Json -Compress
+}
+`,
+        taskName,
+      ),
+    };
+    const registered = JSON.parse(
+      await runner.capture(query.command, query.args, {
+        env: windowsPowerShellEnvironment(),
+      }),
+    ) as { taskName: string; launcher: string | null } | null;
+    commands.push(query);
+    if (registered !== null) {
+      taskName = registered.taskName;
+      if (registered.launcher) {
+        const definition = parseWindowsService(
+          await readFile(registered.launcher.replace(/^"|"$/g, ''), 'utf8'),
+        );
+        const job = await WindowsJob.open(definition.jobName);
+        let self = false;
+        try {
+          self = (await job?.containsCurrentProcess()) ?? false;
+        } finally {
+          job?.close();
+        }
+        if (self) {
+          commands.push(
+            await handOffWindowsControl(verb, taskName, definition, runner),
+          );
+          return commands;
+        }
+      }
+    }
+  }
+  if (verb !== 'start')
+    commands.push(...(await stopWindowsService(runner, dryRun, taskName)));
   if (verb !== 'stop') {
     const command = {
       command: 'powershell.exe',
       args: windowsPowerShellArgs(
         'Enable-ScheduledTask -TaskName $taskName | Out-Null\nStart-ScheduledTask -TaskName $taskName',
+        taskName,
       ),
     };
     await runner.run(command.command, command.args, {
@@ -161,9 +211,50 @@ export async function controlWindowsService(
   return commands;
 }
 
+async function handOffWindowsControl(
+  verb: 'stop' | 'restart',
+  taskName: string,
+  definition: WindowsServiceDefinition,
+  runner: CommandRunner,
+): Promise<{ command: string; args: string[] }> {
+  // WMI creates the controller outside the caller's Job. The existing control
+  // path can then finish its stop/restore/start sequence after reaping the CLI.
+  // A self-restart is complete only when the resumed dispatcher receives its
+  // existing restart notice; WMI's return value acknowledges process creation.
+  const source = `
+import { appendFile } from 'node:fs/promises';
+try {
+  const { controlWindowsService } = await import(${JSON.stringify(import.meta.url)});
+  const { ExecaCommandRunner } = await import(${JSON.stringify(new URL('../platform/command-runner.js', import.meta.url).href)});
+  const runner = new ExecaCommandRunner();
+  runner.run = async (...args) => { await runner.capture(...args); };
+  await controlWindowsService(${JSON.stringify(verb)}, runner, false, ${JSON.stringify(taskName)});
+} catch (error) {
+  await appendFile(${JSON.stringify(definition.stderrLog)}, new Date().toISOString() + ' Windows daemon ${verb} failed: ' + (error?.stack ?? String(error)) + '\\n');
+  process.exitCode = 1;
+}
+`;
+  const expression = `import('data:text/javascript;base64,${Buffer.from(source).toString('base64')}')`;
+  const commandLine = `"${process.execPath}" --input-type=module --eval "${expression}"`;
+  const command = {
+    command: 'powershell.exe',
+    args: windowsPowerShellArgs(`
+$startup = ([wmiclass]'Win32_ProcessStartup').CreateInstance()
+$startup.ShowWindow = 0
+$created = ([wmiclass]'Win32_Process').Create(${psString(commandLine)}, ${psString(dirname(fileURLToPath(import.meta.url)))}, $startup)
+if ($created.ReturnValue -ne 0) { throw "Windows service controller creation failed ($($created.ReturnValue))" }
+`),
+  };
+  await runner.run(command.command, command.args, {
+    env: windowsPowerShellEnvironment(),
+  });
+  return command;
+}
+
 async function stopWindowsService(
   runner: CommandRunner,
   dryRun: boolean,
+  taskName?: string,
 ): Promise<Array<{ command: string; args: string[] }>> {
   if (dryRun) return [];
   // Acquire the launcher's Job before stopping its owner. If it has not yet
@@ -171,7 +262,8 @@ async function stopWindowsService(
   // Keep the task disabled until the entire kernel-owned group has exited.
   const query = {
     command: 'powershell.exe',
-    args: windowsPowerShellArgs(`
+    args: windowsPowerShellArgs(
+      `
 $registered = Get-ScheduledTask -TaskPath '\\' | Where-Object TaskName -EQ $taskName
 if ($null -eq $registered) { 'null'; exit }
 $scheduler = New-Object -ComObject 'Schedule.Service'
@@ -181,7 +273,9 @@ $enabled = $task.Enabled
 $task.Enabled = $false
 $state = @{ enabled = $enabled; launcher = $task.Definition.Actions.Item(1).Arguments }
 $state | ConvertTo-Json -Compress
-`),
+`,
+      taskName,
+    ),
   };
   const state = JSON.parse(
     await runner.capture(query.command, query.args, {
@@ -194,20 +288,26 @@ $state | ConvertTo-Json -Compress
   if (state === null) return [query];
   const stop = {
     command: 'powershell.exe',
-    args: windowsPowerShellArgs(`
+    args: windowsPowerShellArgs(
+      `
 $scheduler = New-Object -ComObject 'Schedule.Service'
 $scheduler.Connect()
 $task = $scheduler.GetFolder('\\').GetTask($taskName)
 $task.Stop(0)
-`),
+`,
+      taskName,
+    ),
   };
   const restore = {
     command: 'powershell.exe',
-    args: windowsPowerShellArgs(`
+    args: windowsPowerShellArgs(
+      `
 $scheduler = New-Object -ComObject 'Schedule.Service'
 $scheduler.Connect()
 $scheduler.GetFolder('\\').GetTask($taskName).Enabled = $${state.enabled ? 'true' : 'false'}
-`),
+`,
+      taskName,
+    ),
   };
   let job: WindowsJob | null = null;
   try {

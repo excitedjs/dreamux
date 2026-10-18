@@ -194,6 +194,21 @@ export class WindowsJob {
     );
   }
 
+  /** Test membership against this exact Job, without resolving a process ID. */
+  async containsCurrentProcess(): Promise<boolean> {
+    if (this.job === null) throw new Error('Windows Job is closed');
+    const member = [0];
+    checked(
+      await promisify(native().isProcessInJob.async)(
+        native().currentProcess(),
+        this.job,
+        member,
+      ),
+      'IsProcessInJob',
+    );
+    return member[0] !== 0;
+  }
+
   /** Hold the candidate object; the caller must prove identity over its child IPC before assign(). */
   async openRoot(pid: number): Promise<void> {
     this.root = await promisify(native().openProcess.async)(
