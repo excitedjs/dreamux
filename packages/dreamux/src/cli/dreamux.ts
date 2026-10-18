@@ -6,14 +6,21 @@
  * yargs CommandModule from `commands/`.
  */
 
+import { readFile } from 'node:fs/promises';
+
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
+import { packagedManifestPath } from '../platform/paths.js';
 import { createDreamuxCommands } from './commands/index.js';
 
 async function main(): Promise<void> {
+  const { version } = JSON.parse(
+    await readFile(packagedManifestPath(), 'utf8'),
+  ) as { version: string };
   await yargs(hideBin(process.argv))
     .scriptName('dreamux')
+    .version(version)
     .usage('$0 <command> [options]')
     .command(createDreamuxCommands())
     .demandCommand(1, 'Choose a command')
