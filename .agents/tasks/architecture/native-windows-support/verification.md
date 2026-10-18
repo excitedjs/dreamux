@@ -65,6 +65,14 @@ workload and assertions are unchanged. The later hosted-runner findings and thei
 
 ## Hosted runner follow-up
 
+The final Node-tooling matrix exposed canonical temporary paths: Git expands
+Windows runner short names and resolves macOS `/var` symlinks. The hook fixture
+now resolves its temporary root before comparing the complete gitleaks argv.
+Its synthetic KB paths also use path segments, so the real source-reference
+checker does not mistake fixture strings for citations into this repository.
+The actual knowledge and anti-leak gates are unchanged. The nine tooling tests
+and complete KB check pass locally after these fixture corrections.
+
 The first hosted run passed the complete Linux gate and exposed two test
 infrastructure differences: Windows checkout converted source to CRLF, and
 macOS resolved temporary parent symlinks in the launcher path. Root Git
