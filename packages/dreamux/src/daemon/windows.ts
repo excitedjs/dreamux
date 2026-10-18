@@ -1,7 +1,10 @@
 /** Windows user services are logon tasks owned by the current user's SID. */
 import { readFile } from 'node:fs/promises';
 
-import { killProcessGroup } from '@excitedjs/dreamux-utils';
+import {
+  killProcessGroup,
+  windowsPowerShellEnvironment,
+} from '@excitedjs/dreamux-utils';
 
 import type { CommandRunner } from '../platform/command-runner.js';
 import { pathExists } from '../platform/fs-errors.js';
@@ -103,7 +106,7 @@ $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -Ru
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 `),
-    { dryRun: answers.dryRun },
+    { dryRun: answers.dryRun, env: windowsPowerShellEnvironment() },
   );
   if (answers.startService) {
     await controlWindowsService('restart', runner, answers.dryRun);
@@ -124,7 +127,10 @@ export async function controlWindowsService(
         'Enable-ScheduledTask -TaskName $taskName | Out-Null\nStart-ScheduledTask -TaskName $taskName',
       ),
     };
-    await runner.run(command.command, command.args, { dryRun });
+    await runner.run(command.command, command.args, {
+      dryRun,
+      env: windowsPowerShellEnvironment(),
+    });
     commands.push(command);
   }
   return commands;
@@ -151,7 +157,11 @@ $state = @{ enabled = $enabled; pids = @($task.GetInstances(0) | ForEach-Object 
 $state | ConvertTo-Json -Compress
 `),
   };
-  const state = JSON.parse(await runner.capture(query.command, query.args)) as {
+  const state = JSON.parse(
+    await runner.capture(query.command, query.args, {
+      env: windowsPowerShellEnvironment(),
+    }),
+  ) as {
     enabled: boolean;
     pids: number[];
   } | null;
@@ -168,7 +178,9 @@ try { $task.Stop(0) } finally { $task.Enabled = $${state.enabled ? 'true' : 'fal
   try {
     for (const pid of state.pids) await killProcessGroup(pid, 'SIGKILL');
   } finally {
-    await runner.run(finish.command, finish.args);
+    await runner.run(finish.command, finish.args, {
+      env: windowsPowerShellEnvironment(),
+    });
   }
   return [query, finish];
 }
@@ -186,7 +198,7 @@ if ($null -ne $task) {
   Unregister-ScheduledTask -InputObject $task -Confirm:$false
 }
 `),
-    { dryRun },
+    { dryRun, env: windowsPowerShellEnvironment() },
   );
 }
 
@@ -206,6 +218,7 @@ if ($null -eq $task) { 'null' } else {
   @{ state = [string]$task.State; enabled = $task.Settings.Enabled; lastResult = $info.LastTaskResult } | ConvertTo-Json -Compress
 }
 `),
+    { env: windowsPowerShellEnvironment() },
   );
   const task = JSON.parse(raw) as {
     state: string;

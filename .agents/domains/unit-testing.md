@@ -118,7 +118,10 @@ Assert native behavior: current-user DACLs on Windows, POSIX modes on Unix,
 realpath equivalence for junction/symlink targets, complete literal argv
 (including multiline prompts) and termination of descendants after their
 parent exits. A Windows directory junction tests the skill-link contract
-without requiring symlink privileges. Keep meaningful platform-specific
+without requiring symlink privileges. Activity file-opening tests also use
+leaf junctions and scheduled real file replacements around both open calls,
+asserting rejection and closed descriptors. Keep this coverage runnable even
+when privileged file-symlink fixtures must skip. Keep meaningful platform-specific
 contracts, such as POSIX SIGTERM escalation, scoped to that platform rather
 than weakening their assertions.
 

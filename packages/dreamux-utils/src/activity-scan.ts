@@ -1,7 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, realpath, type FileHandle } from 'node:fs/promises';
+import { lstat, open, realpath, type FileHandle } from 'node:fs/promises';
 import { ActivityError } from './activity-error.js';
 import { isAbsolute, relative, sep } from 'node:path';
 
@@ -133,39 +133,25 @@ export async function openActivityFile(
   canonicalRoots: readonly string[],
   messages: ActivityFileMessages,
 ): Promise<OpenedActivityFile> {
-  let handle: FileHandle;
+  const { handle, info: opened } = await openActivityHandle(
+    candidate,
+    messages,
+  );
   try {
-    handle = await open(
-      candidate,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-    );
-  } catch (error) {
-    throw classifyOpenError(error, messages);
-  }
-  try {
-    const [opened, canonicalPath] = await Promise.all([
-      handle.stat(),
-      realpath(candidate),
-    ]);
+    const canonicalPath = await realpath(candidate);
     if (!opened.isFile()) {
       throw new ActivityError('invalid', messages.notRegularFile);
     }
     if (!canonicalRoots.some((root) => isPathWithin(root, canonicalPath))) {
       throw new ActivityError('locator_outside_root', messages.outsideRoot);
     }
-    const current = await open(
-      canonicalPath,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-    ).catch((error: unknown) => {
-      throw classifyOpenError(error, messages);
-    });
+    const current = await openActivityHandle(canonicalPath, messages);
     try {
-      const currentStat = await current.stat();
-      if (opened.dev !== currentStat.dev || opened.ino !== currentStat.ino) {
+      if (opened.dev !== current.info.dev || opened.ino !== current.info.ino) {
         throw new ActivityError('unreadable', messages.changedWhileOpening);
       }
     } finally {
-      await current.close();
+      await current.handle.close();
     }
     return {
       handle,
@@ -174,6 +160,53 @@ export async function openActivityFile(
       dev: opened.dev,
       ino: opened.ino,
     };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    if (error instanceof ActivityError) throw error;
+    throw new ActivityError('unreadable', messages.unreadable, {
+      cause: error,
+    });
+  }
+}
+
+async function openActivityHandle(
+  path: string,
+  messages: ActivityFileMessages,
+) {
+  // Windows has no O_NOFOLLOW. Validate the leaf around each open and match
+  // both observations to the held descriptor before any activity bytes are read.
+  const before =
+    process.platform === 'win32'
+      ? await lstat(path).catch((error: unknown) => {
+          throw classifyOpenError(error, messages);
+        })
+      : null;
+  if (before?.isSymbolicLink()) {
+    throw new ActivityError('locator_outside_root', messages.outsideRoot);
+  }
+  const handle = await open(
+    path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  ).catch((error: unknown) => {
+    throw classifyOpenError(error, messages);
+  });
+  try {
+    const info = await handle.stat();
+    if (before !== null) {
+      const after = await lstat(path);
+      if (after.isSymbolicLink()) {
+        throw new ActivityError('locator_outside_root', messages.outsideRoot);
+      }
+      if (
+        before.dev !== info.dev ||
+        before.ino !== info.ino ||
+        after.dev !== info.dev ||
+        after.ino !== info.ino
+      ) {
+        throw new ActivityError('unreadable', messages.changedWhileOpening);
+      }
+    }
+    return { handle, info };
   } catch (error) {
     await handle.close().catch(() => undefined);
     if (error instanceof ActivityError) throw error;

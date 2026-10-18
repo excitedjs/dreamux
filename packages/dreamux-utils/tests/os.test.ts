@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { expectOwnerOnlyPermissions } from './permissions.js';
 
 import {
@@ -126,8 +126,39 @@ describe('ensureOwnerOnlyDir', () => {
   let root: string;
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (root) await rm(root, { recursive: true, force: true });
   });
+
+  it.skipIf(process.platform !== 'win32')(
+    'enforces native privacy when an inherited module path shadows Windows PowerShell modules',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'dreamux-utils-powershell-'));
+      const modules = join(root, 'PowerShell 7 Modules');
+      const security = join(modules, 'Microsoft.PowerShell.Security');
+      await mkdir(security, { recursive: true });
+      await writeFile(
+        join(security, 'Microsoft.PowerShell.Security.psd1'),
+        "@{ ModuleVersion = '7.0.0'; RootModule = 'Security.psm1'; FunctionsToExport = @('Get-Acl') }",
+      );
+      await writeFile(
+        join(security, 'Security.psm1'),
+        "throw 'This module requires PowerShell 7'",
+      );
+      vi.stubEnv(
+        'PSModulePath',
+        `${modules};${process.env['PSModulePath'] ?? ''}`,
+      );
+      const target = join(root, 'private');
+      await ensureOwnerOnlyDir(target);
+      await expectOwnerOnlyPermissions(target, 0o700);
+      const file = join(target, 'private.json');
+      await writeFile(file, '{}');
+      await ensureOwnerOnlyFile(file);
+      await expectOwnerOnlyPermissions(file, 0o600);
+    },
+    15_000,
+  );
 
   it('creates a fresh directory with owner-only permissions', async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-os-'));

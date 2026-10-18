@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import { execa } from 'execa';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { windowsPowerShellEnvironment } from '@excitedjs/dreamux-utils';
 
 import { controlUserService } from '../src/daemon/control.js';
 import {
@@ -253,7 +254,12 @@ describe('Windows managed service', () => {
           '-File',
           script,
         ],
-        { reject: false, windowsHide: true },
+        {
+          reject: false,
+          windowsHide: true,
+          env: windowsPowerShellEnvironment(),
+          extendEnv: false,
+        },
       );
       expect(result.exitCode).toBe(7);
       expect(
@@ -345,14 +351,18 @@ describe('Windows managed service', () => {
         expect(
           (await getServiceStatus({ runner, platform: 'win32' })).running,
         ).toBe(false);
-        await systemRunner.run('powershell.exe', [
-          '-NoProfile',
-          '-NonInteractive',
-          '-WindowStyle',
-          'Hidden',
-          '-Command',
-          `Disable-ScheduledTask -TaskName '${taskName}' | Out-Null`,
-        ]);
+        await systemRunner.run(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-WindowStyle',
+            'Hidden',
+            '-Command',
+            `Disable-ScheduledTask -TaskName '${taskName}' | Out-Null`,
+          ],
+          { env: windowsPowerShellEnvironment() },
+        );
         await controlUserService('stop', { runner, platform: 'win32' });
         expect(
           (await getServiceStatus({ runner, platform: 'win32' })).enabled,
