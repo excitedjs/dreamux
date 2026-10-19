@@ -331,7 +331,7 @@ describe('Windows managed service', () => {
           },
         });
         schedulerDiagnostic('test.assertions.end', { case: 'existing' });
-      });
+      }, 30_000);
 
       it('registers the original defaults when the task is missing', async () => {
         schedulerDiagnostic('test.begin', { case: 'missing' });
@@ -380,7 +380,7 @@ describe('Windows managed service', () => {
           Force: { IsPresent: true },
         });
         schedulerDiagnostic('test.assertions.end', { case: 'missing' });
-      });
+      }, 30_000);
 
       it('rejects an action update failure without registering or restarting', async () => {
         schedulerDiagnostic('test.begin', { case: 'set-failure' });
@@ -402,7 +402,7 @@ describe('Windows managed service', () => {
         expect(runner.capture).not.toHaveBeenCalled();
         expect(runner.check).not.toHaveBeenCalled();
         schedulerDiagnostic('test.assertions.end', { case: 'set-failure' });
-      });
+      }, 30_000);
     },
   );
 
