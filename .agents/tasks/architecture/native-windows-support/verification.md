@@ -1,5 +1,33 @@
 # Verification
 
+## Native failure-path regressions
+
+The follow-up requested in the [PR review](https://github.com/excitedjs/dreamux/pull/476#pullrequestreview-5568105760)
+adds four native Windows cases without changing production code. They interrupt
+the real bootstrap after `openRoot`, send a mismatched challenge over real IPC,
+and terminate a Job while its unassigned candidate is either alive or already
+exited. Independent native handles check membership and completion; a target
+file marker and the named Job's disappearance check execution and release.
+The wrong-challenge case verifies that launch remains pending, then explicitly
+ends the wrapper. It does not prove that production proactively terminates a
+live wrapper after a mismatched response, or simulate actual PID reuse.
+
+The focused child/Job run passed all 12 tests, including all four additions.
+Isolated temporary copies verified test sensitivity: removing the membership
+gate made the live-candidate test fail because termination waited on it;
+accepting any string challenge made the mismatch test fail because launch
+proceeded. Both mutation runs failed as intended and cleaned up their fixtures;
+the shared production sources were not modified.
+
+Rush build passed. The complete utility package passed lint, test typechecking
+and 214 tests with seven existing platform/privilege skips across 15 test files.
+Other packages' local tests were not repeated for this test-only follow-up;
+the earlier full-workspace results below belong to the prior correction run.
+Independent review of the complete test and documentation diff found no
+remaining blocking issue. It checked that injection-hook assertions cannot be
+mistaken for expected launch errors, that reply waits have a failure deadline,
+and that fixture cleanup joins pending native waits before closing handles.
+
 ## Review corrections
 
 The 2026-10-19 correction run used a limited-token native Windows process and
@@ -26,8 +54,10 @@ Regression evidence:
 - Each provider also has an elevated-Windows-only foreign-owner rejection test:
   it checks unchanged ACLs/content and uses a native sharing lock to prove an
   opened append handle was closed. These two cases were skipped locally because
-  the token was limited. Elevated first-create ownership and these failure paths
-  require the current Windows CI run; Unix log behavior requires its Unix matrix.
+  the token was limited. The subsequent [corrective CI run](https://github.com/excitedjs/dreamux/actions/runs/39205126641)
+  passed both provider packages on Windows, Linux and macOS. Its aggregated Rush
+  logs do not expose individual test or skip counts, so they do not independently
+  confirm execution of the elevated-only cases.
 
 The nine repository-tooling tests passed with a workspace-local Python
 interpreter. The pinned gitleaks installer verified its archive and executable.
