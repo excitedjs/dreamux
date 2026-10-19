@@ -1,12 +1,14 @@
-import koffi from 'koffi';
 import { promisify } from 'node:util';
 
 type Pointer = bigint | null;
 
-function loadSecurityApi() {
+async function loadSecurityApi() {
+  const { default: koffi } = await import('koffi');
   const kernel = koffi.load('kernel32.dll');
   const security = koffi.load('advapi32.dll');
   return {
+    decode: koffi.decode,
+    pointerBits: koffi.sizeof('void *') * 8,
     currentProcess: kernel.func('void * __stdcall GetCurrentProcess()'),
     close: kernel.func('int __stdcall CloseHandle(void *handle)'),
     free: kernel.func('void * __stdcall LocalFree(void *memory)'),
@@ -64,9 +66,8 @@ function securityApi() {
   return (api ??= loadSecurityApi());
 }
 
-function currentIdentity() {
+function currentIdentity(native: Awaited<ReturnType<typeof loadSecurityApi>>) {
   if (identity !== undefined) return identity;
-  const native = securityApi();
   const token: Pointer[] = [null];
   check(
     native.openToken(native.currentProcess(), 0x0008, token),
@@ -80,8 +81,8 @@ function currentIdentity() {
       native.tokenInformation(token[0], 1, buffer, buffer.length, size),
       'GetTokenInformation',
     );
-    const user = koffi.decode(buffer, 'void *') as Pointer;
-    const sid = sidText(user);
+    const user = native.decode(buffer, 'void *') as Pointer;
+    const sid = sidText(native, user);
     const administrators: Pointer[] = [null];
     check(
       native.stringSid('S-1-5-32-544', administrators),
@@ -103,20 +104,24 @@ function currentIdentity() {
   }
 }
 
-function sidText(sid: Pointer): string {
-  const native = securityApi();
+function sidText(
+  native: Awaited<ReturnType<typeof loadSecurityApi>>,
+  sid: Pointer,
+): string {
   const text: Pointer[] = [null];
   check(native.sidString(sid, text), 'ConvertSidToStringSidW');
   try {
-    return koffi.decode(text[0], 'char16_t', -1) as string;
+    return native.decode(text[0], 'char16_t', -1) as string;
   } finally {
     native.free(text[0]);
   }
 }
 
-function ownerOnlyDescriptor(directory: boolean) {
-  const native = securityApi();
-  const { sid } = currentIdentity();
+function ownerOnlyDescriptor(
+  native: Awaited<ReturnType<typeof loadSecurityApi>>,
+  directory: boolean,
+) {
+  const { sid } = currentIdentity(native);
   const descriptor: Pointer[] = [null];
   check(
     native.descriptor(
@@ -149,8 +154,8 @@ function ownerOnlyDescriptor(directory: boolean) {
 export async function withWindowsOwnerOnlySecurityDescriptor<T>(
   use: (descriptor: bigint) => Promise<T>,
 ): Promise<T> {
-  const native = securityApi();
-  const { sid } = currentIdentity();
+  const native = await securityApi();
+  const { sid } = currentIdentity(native);
   const descriptor: Pointer[] = [null];
   check(
     native.descriptor(`O:${sid}D:P(A;;GA;;;${sid})`, 1, descriptor, null),
@@ -168,8 +173,8 @@ export async function setWindowsOwnerOnlyAccess(
   path: string,
   kind: 'file' | 'directory',
 ): Promise<void> {
-  const native = securityApi();
-  const user = currentIdentity();
+  const native = await securityApi();
+  const user = currentIdentity(native);
   const owner: Pointer[] = [null];
   const existing: Pointer[] = [null];
   checkStatus(
@@ -178,7 +183,7 @@ export async function setWindowsOwnerOnlyAccess(
     path,
   );
   try {
-    const sid = sidText(owner[0]!);
+    const sid = sidText(native, owner[0]!);
     if (sid !== user.sid && !(sid === 'S-1-5-32-544' && user.administrator)) {
       throw new Error(
         'refusing to use private Dreamux path: it is owned by a different Windows user',
@@ -187,7 +192,7 @@ export async function setWindowsOwnerOnlyAccess(
   } finally {
     native.free(existing[0]);
   }
-  const desired = ownerOnlyDescriptor(kind === 'directory');
+  const desired = ownerOnlyDescriptor(native, kind === 'directory');
   try {
     checkStatus(
       await native.setNamedSecurity(
@@ -209,7 +214,7 @@ export async function setWindowsOwnerOnlyAccess(
 
 /** Protect the existing pipe before the host admits clients; no transport bytes are exchanged. */
 export async function restrictWindowsPipe(address: string): Promise<void> {
-  const native = securityApi();
+  const native = await securityApi();
   const handle = (await native.openPipe(
     address,
     0x00040000,
@@ -219,16 +224,13 @@ export async function restrictWindowsPipe(address: string): Promise<void> {
     0,
     null,
   )) as Pointer;
-  if (
-    handle === null ||
-    BigInt.asIntN(koffi.sizeof('void *') * 8, handle) === -1n
-  ) {
+  if (handle === null || BigInt.asIntN(native.pointerBits, handle) === -1n) {
     throw new Error(
       `CreateFileW could not open the Windows management pipe ${address}`,
     );
   }
   try {
-    const desired = ownerOnlyDescriptor(false);
+    const desired = ownerOnlyDescriptor(native, false);
     try {
       checkStatus(
         await native.setSecurity(

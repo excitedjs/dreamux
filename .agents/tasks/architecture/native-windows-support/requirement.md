@@ -16,6 +16,7 @@ should replace platform conditionals when they express the same contract.
 
 - Support native Windows without requiring Bash or WSL for normal CLI operation.
 - Preserve Linux/macOS behavior and the existing logical admin path and lock.
+- Importing shared utilities or host entry modules must not load the Windows capabilities' Koffi addon; load it only when a native capability is invoked.
 - Keep provider-specific transport and home rules inside their provider packages.
 - Enforce private native ACLs where Unix uses owner-only permissions.
 - Stop owned Windows descendants and release files before reporting completion.
@@ -35,6 +36,7 @@ should replace platform conditionals when they express the same contract.
 - Provider log directories and files are current-user-owned before child output starts, including when created by an elevated Windows foreground server.
 - Task Scheduler installation, status, start, stop and removal work for the current user.
 - Rush build, lint, test and test typechecking pass, with native Windows included in CI.
+- Fresh-process imports of built utilities, server, daemon, workflow and MCP modules do not load Koffi; concurrent first Windows capability calls initialize successfully.
 - Test homes are disposable; explicit live model runs may copy authentication into a fixture, never modify the original home.
 - PR and branch alpha artifacts identify the reviewed implementation.
 

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Load Koffi only on first Windows capability use, keeping utility and host imports free of unused native addon initialization.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
