@@ -30,6 +30,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { inspect } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -370,10 +372,50 @@ describe('readClaudeRecentActivity: tool filtering as a group', () => {
       query(fixture, { limit: 1, includeTools: true }),
       fixture.context,
     );
+    const secondReadStarted = performance.now();
     await expect(
       readClaudeRecentActivity(
         query(fixture, { cursor: withTools.nextCursor!, includeTools: false }),
         fixture.context,
+      ).then(
+        (page) => {
+          console.error('[PR476_ACTIVITY_CURSOR_SECOND_READ]', {
+            outcome: 'fulfilled',
+            elapsedMs: performance.now() - secondReadStarted,
+            cursorPresent: withTools.nextCursor !== undefined,
+          });
+          return page;
+        },
+        (error: unknown) => {
+          console.error(
+            '[PR476_ACTIVITY_CURSOR_SECOND_READ]',
+            inspect(
+              {
+                outcome: 'rejected',
+                elapsedMs: performance.now() - secondReadStarted,
+                cursorPresent: withTools.nextCursor !== undefined,
+                error:
+                  error instanceof Error
+                    ? {
+                        name: error.name,
+                        reason: Reflect.get(error, 'reason'),
+                        detail: Reflect.get(error, 'detail'),
+                        message: error.message,
+                        cause: error.cause,
+                        stack: error.stack,
+                      }
+                    : error,
+              },
+              {
+                depth: null,
+                colors: false,
+                maxArrayLength: null,
+                maxStringLength: null,
+              },
+            ),
+          );
+          throw error;
+        },
       ),
     ).rejects.toMatchObject({
       name: 'AgentActivityError',

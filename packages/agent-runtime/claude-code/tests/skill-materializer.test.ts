@@ -11,22 +11,39 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { createHook } from 'node:async_hooks';
+import { performance } from 'node:perf_hooks';
 import { basename, dirname, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, onTestFailed } from 'vitest';
 
 import type { AgentRuntimeSkillSource } from '@excitedjs/dreamux-types';
 
 import { readSkillAdapterManifest } from '../src/skill-adapter.js';
 import { materializeClaudeSkillAddDir } from '../src/skill-materializer.js';
 
+let skillPublicationDiagnostic:
+  ReturnType<typeof observeSkillPublication> | undefined;
+
 describe('Claude skill materialization', () => {
   const roots: string[] = [];
 
   afterEach(async () => {
-    await Promise.all(
-      roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-    );
+    const diagnostic = skillPublicationDiagnostic;
+    diagnostic?.stage('cleanup', 'before fixture removal');
+    diagnostic?.dump('afterEach.beforeCleanup');
+    try {
+      await Promise.all(
+        roots
+          .splice(0)
+          .map((root) => rm(root, { recursive: true, force: true })),
+      );
+    } finally {
+      diagnostic?.stage('cleanup', 'fixture removal settled');
+      diagnostic?.dump('afterEach.afterCleanup');
+      diagnostic?.stop();
+      skillPublicationDiagnostic = undefined;
+    }
   });
 
   it('publishes one readable view for simultaneous runtime starts', async () => {
@@ -79,36 +96,56 @@ describe('Claude skill materialization', () => {
   });
 
   it('replaces a malformed target a concurrent writer left behind', async () => {
+    const diagnostic = observeSkillPublication();
+    skillPublicationDiagnostic = diagnostic;
+    onTestFailed(() => diagnostic.dump('onTestFailed'));
+    diagnostic.stage('test', 'createFixture.await');
     const fixture = await createFixture();
+    diagnostic.stage('test', 'adapterRoot.await');
     const target = await adapterRoot(fixture);
     const publishReady = deferred();
     const releasePublish = deferred();
+    diagnostic.stage('test', 'materializing.start');
     const materializing = materializeClaudeSkillAddDir(
       fixture.cacheDir,
       fixture.sources,
       {
         beforePublish: async () => {
+          diagnostic.stage('hook', 'entered; resolving publishReady');
           publishReady.resolve();
+          diagnostic.stage('hook', 'releasePublish.await');
           await releasePublish.promise;
+          diagnostic.stage('hook', 'releasePublish.resolved');
         },
       },
     );
+    diagnostic.stage('test', 'publishReady.await');
     await publishReady.promise;
+    diagnostic.stage('test', 'malformed.mkdir.await');
     await mkdir(target, { recursive: true });
+    diagnostic.stage('test', 'malformed.writeFile.await');
     await writeFile(
       join(target, '.dreamux-skill-adapter.json'),
       '{"version":1}\n',
     );
+    diagnostic.stage('test', 'releasePublish.resolve');
     releasePublish.resolve();
 
+    diagnostic.stage('test', 'materializing.expect.await');
     await expect(materializing).resolves.toBe(target);
+    diagnostic.stage('test', 'manifest.expect.await');
     await expect(
       readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
     ).resolves.toContain('"version": 2');
-    expect(await realpath(join(target, '.claude', 'skills', 'review'))).toBe(
-      await realpath(fixture.skill),
+    diagnostic.stage('test', 'adapter.realpath.await');
+    const adapterRealpath = await realpath(
+      join(target, '.claude', 'skills', 'review'),
     );
+    diagnostic.stage('test', 'source.realpath.await');
+    expect(adapterRealpath).toBe(await realpath(fixture.skill));
+    diagnostic.stage('test', 'expectNoLeftovers.await');
     await expectNoLeftovers(dirname(target));
+    diagnostic.stage('test', 'assertions.complete');
   });
 
   it('refreshes a root left by the previous adapter version in place', async () => {
@@ -240,4 +277,80 @@ function deferred(): {
     resolve = settle;
   });
   return { promise, resolve };
+}
+
+/** Observation only: no promise handlers, error listeners, timers, or gate changes. */
+function observeSkillPublication() {
+  const started = performance.now();
+  const stages: Record<string, string> = {};
+  const pending = new Map<
+    number,
+    {
+      asyncId: number;
+      triggerAsyncId: number;
+      type: string;
+      startedMs: number;
+      callsite: string | undefined;
+    }
+  >();
+  const completed: Array<{ asyncId: number; resourceElapsedMs: number }> = [];
+  const elapsed = () => Number((performance.now() - started).toFixed(3));
+  const print = (event: string, detail: Record<string, unknown>) => {
+    console.error(
+      'PR476_SKILL_DIAG ' +
+        JSON.stringify({
+          event,
+          elapsedMs: elapsed(),
+          pid: process.pid,
+          stages: { ...stages },
+          ...detail,
+        }),
+    );
+  };
+  const hook = createHook({
+    init(asyncId, type, triggerAsyncId) {
+      if (
+        type !== 'FSREQPROMISE' &&
+        type !== 'FSREQCALLBACK' &&
+        type !== 'FILEHANDLECLOSEREQ'
+      )
+        return;
+      pending.set(asyncId, {
+        asyncId,
+        triggerAsyncId,
+        type,
+        startedMs: elapsed(),
+        callsite: new Error('native FS resource creation').stack,
+      });
+    },
+    destroy(asyncId) {
+      const operation = pending.get(asyncId);
+      if (operation === undefined) return;
+      completed.push({
+        asyncId,
+        resourceElapsedMs: Number((elapsed() - operation.startedMs).toFixed(3)),
+      });
+      pending.delete(asyncId);
+    },
+  });
+  hook.enable();
+  return {
+    stage(actor: string, stage: string) {
+      stages[actor] = stage;
+      print('stage', { pendingNativeAsyncIds: [...pending.keys()] });
+    },
+    dump(trigger: string) {
+      print('snapshot', {
+        trigger,
+        pendingNativeFS: [...pending.values()].map((operation) => ({
+          ...operation,
+          resourceAgeMs: Number((elapsed() - operation.startedMs).toFixed(3)),
+        })),
+        completedNativeFS: completed,
+      });
+    },
+    stop() {
+      hook.disable();
+    },
+  };
 }
