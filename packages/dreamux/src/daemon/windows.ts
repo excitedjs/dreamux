@@ -131,10 +131,15 @@ export async function registerWindowsService(
     'powershell.exe',
     windowsPowerShellArgs(`
 $action = New-ScheduledTaskAction -Execute ${psString(answers.nodeBin)} -Argument ${psString(actionArgs)} -WorkingDirectory ${psString(stateRoot())}
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+$registered = Get-ScheduledTask -TaskPath '\\' | Where-Object TaskName -EQ $taskName
+if ($null -ne $registered) {
+  Set-ScheduledTask -TaskName $taskName -TaskPath '\\' -Action $action | Out-Null
+} else {
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+  $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+}
 `),
     { dryRun: answers.dryRun, env: windowsPowerShellEnvironment() },
   );
@@ -386,7 +391,7 @@ if ($null -eq $task) { 'null' } else {
     detail:
       task === null
         ? 'task not registered'
-        : `${task.state}, last result=${task.lastResult}; starts at user logon`,
+        : `${task.state}, last result=${task.lastResult}`,
     environment: definition?.environment ?? null,
     execStart: definition?.execStart ?? null,
   };

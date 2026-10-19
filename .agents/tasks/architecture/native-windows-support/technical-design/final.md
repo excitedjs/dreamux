@@ -59,8 +59,13 @@ The discovery budget and its behavior for valid queries are unchanged.
 
 ## Service and privacy
 
-Windows uses an interactive, limited-token Task Scheduler task for the current
-user. Installation owns `DREAMUX_ROOT/daemon.mjs`, including pinned executable,
+Windows initially registers an interactive, limited-token Task Scheduler task
+for the current user at logon. For an existing task, installation updates only
+its action through `Set-ScheduledTask`; it leaves the principal, triggers and
+settings under the existing registration. An update error propagates without
+falling back to replacement registration. This does not change the first-install
+console behavior or introduce credential collection. Installation owns
+`DREAMUX_ROOT/daemon.mjs`, including pinned executable,
 arguments, environment and append-only log routing. The Node launcher owns a
 named service Job, and ordinary supervised children retain their own nested Jobs.
 Stop disables the task and acquires its named Job, reserving the name if startup
