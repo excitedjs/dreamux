@@ -22,8 +22,11 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
 - Check the native manager only for service-lifecycle questions: launchd on
   macOS, systemd user services on Linux, and Task Scheduler on Windows. Explain
   before changing units, task registration, linger, environment, or shell startup.
-- Windows installs one `Dreamux-<current-user-SID>` interactive, limited task per
-  account, which starts at that user's logon. A different `DREAMUX_ROOT` does
+- Windows initially installs one `Dreamux-<current-user-SID>` interactive,
+  limited task per account, which starts at that user's logon. Reinstallation
+  updates the existing task's action while preserving its principal, triggers
+  and settings. An update error fails installation without replacing the task
+  with the defaults. A different `DREAMUX_ROOT` does
   not create a second managed task. Use `dreamux daemon status` to inspect it.
   Before registration, installation prepares current-user ownership and private
   ACLs for the log directory and existing logs, including daemon stdout/stderr,
@@ -40,6 +43,12 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
   installation to refresh its pinned Node command and captured environment.
   Do not hand-edit that launcher.
+  An interactive task directly launches the console Node executable and can
+  display a console on the desktop. Task Scheduler's `Hidden` setting hides the
+  task entry, not that process window. A manually configured Password task runs
+  noninteractively; its login mode is separate from its trigger, so a logon
+  trigger does not become a boot trigger. Installation does not collect account
+  passwords or switch existing tasks to S4U.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
   state, and runtime app-server readiness. Use `dreamux status` for current
   Dispatcher and process facts; neither command proves Channel delivery.

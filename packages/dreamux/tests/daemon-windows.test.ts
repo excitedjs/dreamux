@@ -4,7 +4,15 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { execa } from 'execa';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 
 import { controlUserService } from '../src/daemon/control.js';
 import {
@@ -19,6 +27,7 @@ import {
 } from '../src/daemon/install.js';
 import { getServiceStatus } from '../src/daemon/status.js';
 import {
+  registerWindowsService,
   renderWindowsService,
   windowsPowerShellEnvironment,
 } from '../src/daemon/windows.js';
@@ -68,6 +77,100 @@ class WindowsRunner implements CommandRunner {
   async check(_command: string, args: string[]) {
     return args.includes('--help');
   }
+}
+
+function scheduledTaskScriptRunner(installed: boolean, failSet = false) {
+  const calls: { command: string; parameters: Record<string, unknown> }[] = [];
+  const run = vi.fn<CommandRunner['run']>(async (command, args, options) => {
+    if (run.mock.calls.length !== 1)
+      throw new Error('Unexpected additional scheduler process');
+    expect(command).toBe('powershell.exe');
+    const script = Buffer.from(args.at(-1) ?? '', 'base64').toString('utf16le');
+    // Only command binding and branching are real here, not Scheduler storage
+    // or the reuse of a Password task's stored credentials.
+    const shadowed = `
+$PSModuleAutoLoadingPreference = 'None'
+Import-Module Microsoft.PowerShell.Utility
+$fixtureCalls = [System.Collections.Generic.List[object]]::new()
+$fixtureTaskName = 'Dreamux-' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+function Record-SchedulerCall($command, $parameters) {
+  $values = @{} + $parameters
+  $fixtureCalls.Add(@{ command = $command; parameters = $values })
+  [pscustomobject]$values
+}
+function Get-ScheduledTask {
+  [CmdletBinding()] param($TaskPath)
+  $null = Record-SchedulerCall 'Get-ScheduledTask' $PSBoundParameters
+  [pscustomobject]@{ TaskName = 'Dreamux-unrelated' }
+  if ($${installed}) {
+    [pscustomobject]@{
+      TaskName = $fixtureTaskName
+      Principal = @{ LogonType = 'Password'; RunLevel = 'Highest' }
+      Triggers = @('operator-trigger')
+      Settings = @{ Description = 'operator-settings' }
+    }
+  }
+}
+function New-ScheduledTaskAction {
+  [CmdletBinding()] param($Execute, $Argument, $WorkingDirectory)
+  Record-SchedulerCall 'New-ScheduledTaskAction' $PSBoundParameters
+}
+function New-ScheduledTaskTrigger {
+  [CmdletBinding()] param([switch]$AtLogOn, $User)
+  Record-SchedulerCall 'New-ScheduledTaskTrigger' $PSBoundParameters
+}
+function New-ScheduledTaskPrincipal {
+  [CmdletBinding()] param($UserId, $LogonType, $RunLevel)
+  Record-SchedulerCall 'New-ScheduledTaskPrincipal' $PSBoundParameters
+}
+function New-ScheduledTaskSettingsSet {
+  [CmdletBinding()] param([TimeSpan]$ExecutionTimeLimit, $RestartCount, [TimeSpan]$RestartInterval, $MultipleInstances, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries)
+  Record-SchedulerCall 'New-ScheduledTaskSettingsSet' $PSBoundParameters
+}
+function Register-ScheduledTask {
+  [CmdletBinding()] param($TaskName, $Action, $Trigger, $Principal, $Settings, [switch]$Force)
+  $null = Record-SchedulerCall 'Register-ScheduledTask' $PSBoundParameters
+}
+function Set-ScheduledTask {
+  [CmdletBinding()] param($TaskName, $TaskPath, $Action, $Principal, $Trigger, $Settings, $User, $Password)
+  $null = Record-SchedulerCall 'Set-ScheduledTask' $PSBoundParameters
+  if ($${failSet}) { Write-Error 'fixture Set-ScheduledTask failed' }
+}
+try {
+  & {
+${script}
+  }
+} finally {
+  ConvertTo-Json -InputObject @($fixtureCalls.ToArray()) -Depth 10 -Compress
+}
+`;
+    const child = execa(
+      command,
+      [
+        ...args.slice(0, -1),
+        Buffer.from(shadowed, 'utf16le').toString('base64'),
+      ],
+      {
+        ...(options?.env ? { env: options.env, extendEnv: false } : {}),
+        windowsHide: true,
+        reject: false,
+      },
+    );
+    onTestFinished(async () => {
+      child.kill();
+      await child;
+    });
+    const result = await child;
+    calls.push(...(JSON.parse(result.stdout) as typeof calls));
+    if (result.exitCode !== 0) throw new Error(result.stderr);
+  });
+  const capture = vi.fn<CommandRunner['capture']>(async () => {
+    throw new Error('Unexpected scheduler capture');
+  });
+  const check = vi.fn<CommandRunner['check']>(async () => {
+    throw new Error('Unexpected scheduler check');
+  });
+  return { runner: { run, capture, check }, calls };
 }
 
 describe('Windows managed service', () => {
@@ -127,6 +230,7 @@ describe('Windows managed service', () => {
       loaded: true,
       running: true,
       enabled: true,
+      detail: 'Running, last result=0',
       execStart: [answers.nodeBin, answers.dreamuxBin, 'serve'],
       environment: managedServiceEnvironment(answers),
     });
@@ -135,6 +239,103 @@ describe('Windows managed service', () => {
       (await getServiceStatus({ runner, platform: 'win32' })).running,
     ).toBe(false);
   });
+
+  describe.skipIf(process.platform !== 'win32')(
+    'scheduled task registration',
+    () => {
+      it('updates only the action of an existing Password task', async () => {
+        const { runner, calls } = scheduledTaskScriptRunner(true);
+        await registerWindowsService(windowsServiceFile(), runner, {
+          ...answers,
+          startService: false,
+        });
+        expect(calls.map((call) => call.command).sort()).toEqual([
+          'Get-ScheduledTask',
+          'New-ScheduledTaskAction',
+          'Set-ScheduledTask',
+        ]);
+        expect(
+          calls.find((call) => call.command === 'Get-ScheduledTask')
+            ?.parameters,
+        ).toEqual({ TaskPath: '\\' });
+        expect(
+          calls.find((call) => call.command === 'Set-ScheduledTask')
+            ?.parameters,
+        ).toEqual({
+          TaskName: expect.stringMatching(/^Dreamux-S-1-/),
+          TaskPath: '\\',
+          Action: {
+            Execute: answers.nodeBin,
+            Argument: `"${windowsServiceFile()}"`,
+            WorkingDirectory: join(root, 'state'),
+          },
+        });
+      });
+
+      it('registers the original defaults when the task is missing', async () => {
+        const { runner, calls } = scheduledTaskScriptRunner(false);
+        await registerWindowsService(windowsServiceFile(), runner, {
+          ...answers,
+          startService: false,
+        });
+        expect(calls.map((call) => call.command).sort()).toEqual([
+          'Get-ScheduledTask',
+          'New-ScheduledTaskAction',
+          'New-ScheduledTaskPrincipal',
+          'New-ScheduledTaskSettingsSet',
+          'New-ScheduledTaskTrigger',
+          'Register-ScheduledTask',
+        ]);
+        const registration = calls.find(
+          (call) => call.command === 'Register-ScheduledTask',
+        )?.parameters;
+        expect(registration).toEqual({
+          TaskName: expect.stringMatching(/^Dreamux-S-1-/),
+          Action: {
+            Execute: answers.nodeBin,
+            Argument: `"${windowsServiceFile()}"`,
+            WorkingDirectory: join(root, 'state'),
+          },
+          Trigger: {
+            AtLogOn: { IsPresent: true },
+            User: expect.stringMatching(/^S-1-/),
+          },
+          Principal: {
+            UserId: expect.stringMatching(/^S-1-/),
+            LogonType: 'Interactive',
+            RunLevel: 'Limited',
+          },
+          Settings: {
+            ExecutionTimeLimit: expect.objectContaining({ TotalSeconds: 0 }),
+            RestartCount: 999,
+            RestartInterval: expect.objectContaining({ TotalSeconds: 60 }),
+            MultipleInstances: 'IgnoreNew',
+            AllowStartIfOnBatteries: { IsPresent: true },
+            DontStopIfGoingOnBatteries: { IsPresent: true },
+          },
+          Force: { IsPresent: true },
+        });
+      });
+
+      it('rejects an action update failure without registering or restarting', async () => {
+        const { runner, calls } = scheduledTaskScriptRunner(true, true);
+        await expect(
+          registerWindowsService(windowsServiceFile(), runner, {
+            ...answers,
+            startService: true,
+          }),
+        ).rejects.toThrow('fixture Set-ScheduledTask failed');
+        expect(calls.map((call) => call.command).sort()).toEqual([
+          'Get-ScheduledTask',
+          'New-ScheduledTaskAction',
+          'Set-ScheduledTask',
+        ]);
+        expect(runner.run).toHaveBeenCalledTimes(1);
+        expect(runner.capture).not.toHaveBeenCalled();
+        expect(runner.check).not.toHaveBeenCalled();
+      });
+    },
+  );
 
   it('reports a missing registration and launch file without inventing a running service', async () => {
     const runner = new WindowsRunner();
