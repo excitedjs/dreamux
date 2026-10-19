@@ -15,8 +15,10 @@ tasks retain the initial interactive registration. This addresses overwriting
 operator settings, not first-install console visibility. Three focused Windows
 cases passed using real PowerShell with every Scheduler command replaced by a
 fixture function. They verify action-only update, unchanged first-install
-defaults, and update failure without registration or restart. The original
-five-second budgets remain. Password credential reuse has not been exercised
+defaults, and update failure without registration or restart. These initial
+runs used the default five-second budgets; the scoped correction below assigns
+an explicit budget to these three real-process fixtures. Password credential
+reuse has not been exercised
 with a real Scheduler task; parameter omission alone is not presented as native
 credential validation.
 
@@ -42,6 +44,63 @@ was used as a cleanup target.
 References: [Set-ScheduledTask](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/set-scheduledtask),
 [login types](https://learn.microsoft.com/en-us/windows/win32/api/taskschd/ne-taskschd-task_logon_type),
 and [the Hidden setting](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-hidden).
+
+### Hosted Scheduler test diagnostics
+
+For the delivered registration correction, the [PR run](https://github.com/excitedjs/dreamux/actions/runs/39285944422)
+passed on Windows, macOS and Ubuntu. The same-head
+[push run](https://github.com/excitedjs/dreamux/actions/runs/39285935243) failed
+on Windows: the existing-task Action update test exceeded its default five-second
+budget. The aggregate log has no internal stage evidence. Successful checks in
+the other run do not negate this failure.
+
+A separate [instrumented run](https://github.com/excitedjs/dreamux/actions/runs/39288179836)
+retained the assertions, process options, Scheduler shadows, cleanup and original
+five-second budgets. One of three Windows samples timed out in all three cases.
+Each child had emitted its parent-observed spawn event, but the parent received
+no stderr or PowerShell marker before timeout cleanup killed and joined it.
+This bounds the observed failure window; it does not establish that PowerShell
+never executed, or distinguish startup, parsing, delivery and scheduling delay.
+The other two samples completed the original assertions.
+
+The subsequent [bounded observation control](https://github.com/excitedjs/dreamux/actions/runs/39290230390)
+changed only those three test deadlines to 30 seconds on the diagnostic branch.
+All nine cases completed their original assertions and process joins. One
+simulated Set failure took 8,771.53 ms. Its first PowerShell marker arrived
+238.80 ms after the test began. Within that PowerShell process, the Set shadow
+record point to the start of finally JSON output took 6,823.46 ms; JSON output
+itself took 18.48 ms. The record point precedes the fixture's Write-Error, so
+this interval does not isolate an internal error-handling operation. The other
+eight cases took 318.77–4,705.60 ms.
+
+This control proves that a case can continue after five seconds and complete
+the expected rejection. It is not a pass under the original deadline, does not
+identify the earlier failures' underlying cause. Timings use differences within
+each process; marker delivery and logging add observation overhead. No real
+Scheduler registration or operator
+task was exercised by these fixture tests.
+
+The resulting test correction assigns a 30-second deadline only to the three
+real-PowerShell registration cases. Their contract covers command binding,
+preserved registration settings and error propagation, not a five-second
+performance target. The explicit deadline gives headroom above the observed
+8.77-second completion while retaining a bounded failure for a hung fixture.
+It is an engineering budget, not a statistical guarantee or a claim that a
+shorter deadline could not work. Assertions, subprocess options and cleanup
+remain unchanged; the suite default, retries and production behavior do not
+change. Diagnostic instrumentation stays off the PR branch.
+
+The non-instrumented change passed the three focused Windows cases first
+(405, 416 and 451 ms); the synthetic account sentinels were unchanged, the
+temporary directory was empty and the captured outer root was removed. Rush
+build (2.81 s), lint (22.90 s), test typechecking (9.65 s), and the complete
+default suite (127.5 s) then returned zero. Within the full run, the three
+registration cases took 388, 402 and 421 ms. Model and real Scheduler gates
+remained disabled. The full run again preserved the synthetic account but
+failed the extra empty-temp assertion on the same five baseline spill-parent
+fixtures described above; the outer finally removed its captured root.
+Knowledge and change-declaration checks passed. Independent review found no
+blocking issue; hosted checks of the resulting delivery remain pending.
 
 ## Vitest-native test isolation
 

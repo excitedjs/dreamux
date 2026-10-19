@@ -8,7 +8,7 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Deliver the existing-task registration correction and verify its hosted CI. Merge remains paused at the operator's request.
+- Next action: Deliver the three real-PowerShell fixtures' explicit deadline and verify hosted CI. Local required gates and independent review passed; the earlier same-head push timeout is recorded separately from that revision's successful PR CI. Merge remains paused at the operator's request.
 - Coverage limit: Historical skill-publication, tarball-scan and managed-reporting timeouts remain unexplained. Later diagnostics observed a 4.16-second tar wait, but do not establish the historical cause. First-install console visibility and native Password credential reuse are not verified by this correction.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
