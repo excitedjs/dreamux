@@ -1,5 +1,91 @@
 # Verification
 
+## Vitest-native test isolation
+
+The operator requested replacing the custom process launcher with Vitest's
+native configuration and lifecycle, then required small-scope isolation checks
+before broader test execution. The host, utils, Codex and Claude configs share
+a global setup; the types, channel and bootstrap suites have no account-home
+dependency and invoke Vitest without that setup. No dependency was added.
+
+Static review confirmed that cleanup captures only the directory returned by
+this setup's `mkdtemp`, including initialization failures. It never derives a
+removal target from a home environment variable. Vitest's `setupFiles` hook
+installs the provided environment before loading test modules. Watch reruns
+reuse the setup directory; fixtures must join their child processes and close
+handles before global teardown.
+
+The initial config-environment design passed five real-Vitest cases but review
+identified Vitest 2.1.9's caching of a failed global setup. A synthetic-account
+probe made TEMP/TMP/TMPDIR point at a regular file, producing a real filesystem
+error before tests imported. After repairing that path, the native watch
+"rerun all" path executed the fixture against the original synthetic homes.
+The existing nonzero exit code did not prevent that execution. Default rerun
+with an empty collected-file list did not exercise the issue and is not counted
+as its reproduction. All account sentinels remained unchanged in the probe.
+
+The final design therefore provides the environment only after initialization
+succeeds. The setup-file hook requires that injected value before importing
+tests. It also removes the need to mutate or restore the runner's environment.
+
+The final implementation passed the normal-run case first, then all six
+real-Vitest regressions on Windows (3.55 seconds): successful and failed CLI
+runs, configured and default synthetic auth opt-in, watch rerun/close, and
+watch rerun after setup failure. The last case observes the missing-environment
+error and absence of the test-import marker, not merely a nonzero exit code.
+All nested and outer synthetic account sentinels were preserved, generated
+homes were removed, and temporary directories were empty. The allocation
+failure is exercised with the real filesystem; cleanup after later `mkdir`
+or `provide` failures is source-reviewed, not separately fault-injected.
+Watch coverage uses native rerun APIs and normal close, not filesystem-triggered
+reruns or forced process termination.
+
+The broader isolated run passed lint and test typechecking, but a Workflow
+lifecycle case failed while awaiting its third controlled runtime. A diagnostic
+copy retained its assertions and one-second wait. Its first attempt was stopped
+earlier by a fixture ACL problem: the workspace inherited Modify access while
+the system temporary directory inherited FullControl. Moving only that
+diagnostic's synthetic root to the system temporary directory reproduced the
+runtime assertion and captured the actual failed agent creation. Node had
+created its identity temporary file, but the native security lookup rejected
+the 279-character path with Windows error 123. The Workflow had already
+terminated before the assertion timed out. This establishes the diagnostic
+failure's immediate cause; the original aggregate log did not capture its
+underlying path or journal. Neither the wait nor its assertion was relaxed.
+
+An independent getter-only control opened and closed one real long file with
+Node, then queried the same object through `GetNamedSecurityInfoW`: the raw
+283-character path returned 123, while Node's namespaced form returned zero.
+Descriptors and the captured temporary root were released. The native owner
+now applies `toNamespacedPath` once to the input for both security lookup and
+update; errors still identify the original path. Pipes and Job names are
+unchanged. Six regressions cover directories and atomic file publication with
+absolute, relative and already-namespaced paths. Before the correction the four
+raw-path cases failed with 123 and both namespaced cases passed; afterward all
+six passed (278 ms). They inspect real ownership/DACLs, preserved content and
+absence of temporary publication files. Synthetic account snapshots were
+unchanged, and all temporary roots were removed.
+
+After rebuilding, the same diagnostic consumer passed with its original setup
+snapshot, assertions, one-second wait and long temporary-root layout. The third
+runtime was created about 51 ms after the Workflow receipt; deliberate dissolve
+stopped the agent and run, and fixture teardown completed. The single case
+passed in 1.686 seconds. Actual child environments, including the Workflow
+runner, used only synthetic homes and temporary directories; the captured root
+was removed afterward. Together with the getter control and regression tests,
+this verifies the long-path correction without changing the test's timing
+contract.
+
+Final local gates passed on Windows: Rush build (4.35 s), lint (15.04 s), test
+typechecking (6.64 s), built CLI smoke (1.04 s), and the complete default test
+suite (98.73 s). The package logs total **2,901 passed and 38 existing platform,
+privilege or opt-in skips**; the original Workflow lifecycle case is included.
+Each gate's outer process used synthetic homes and temporary directories, with
+sentinel preservation and captured-root cleanup verified afterward. No
+authenticated model or real Task Scheduler lifecycle run was enabled.
+Independent whole-diff review found no blocking issue. Cross-platform execution
+of this revision remains subject to the PR's hosted CI matrix.
+
 ## Intermittent Windows CI investigation
 
 The initial Windows attempt in the [push run](https://github.com/excitedjs/dreamux/actions/runs/39223839571)

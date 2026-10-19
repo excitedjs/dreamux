@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Apply Windows private-file permissions to namespaced paths so long state paths work consistently with Node filesystem operations.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}
