@@ -8,8 +8,8 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Deliver the reviewed Vitest-native isolation and Windows long-path corrections to the existing PR and verify its CI. Merge remains paused at the operator's request.
-- Coverage limit: The historical skill-publication timeout did not recur in local or hosted diagnostics; its original log lacks the failing await stage, so this correction does not claim to resolve that timeout.
+- Next action: Deliver the reviewed scoped tarball-test fixture cleanup and verify the updated PR CI. Merge remains paused at the operator's request.
+- Coverage limit: Historical skill-publication and tarball-scan timeout logs lack the failing await stage. The tarball fixture cleanup overlap is corrected, but neither original delay is claimed as resolved.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
 

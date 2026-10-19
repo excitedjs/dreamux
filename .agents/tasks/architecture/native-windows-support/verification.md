@@ -86,6 +86,41 @@ authenticated model or real Task Scheduler lifecycle run was enabled.
 Independent whole-diff review found no blocking issue. Cross-platform execution
 of this revision remains subject to the PR's hosted CI matrix.
 
+### Tarball fixture cleanup follow-up
+
+The [push workflow](https://github.com/excitedjs/dreamux/actions/runs/39269169263)
+passed all three platform suites, while the [PR workflow](https://github.com/excitedjs/dreamux/actions/runs/39269181743)
+failed only its Windows host suite. The tarball content-scan rejection case
+exceeded the default five-second deadline; its `afterEach` then failed to
+unlink `leaky.tgz` with `EBUSY`. The full log has no await-stage timing or lock
+owner, so it does not establish whether packing, scanning or an external delay
+caused the timeout. Passing results from the same head do not answer that.
+
+Source review identified a cleanup lifetime mismatch: Vitest's timeout does
+not cancel the original async test body, but the global `afterEach` immediately
+removed its registered fixture directories. Either the packing tar process or
+the scanner's tar child could still be using the archive. Normal scanner
+completion already waits for both output consumption and child close.
+
+Each content-scan case now owns its directory through a scoped async fixture
+callback. Its `finally` runs after the callback's awaited subprocess work
+settles, instead of an independent `afterEach` removing the directory while
+that work is still pending. The global directory registry is removed, and
+packing receives the case's directory. Assertions, commands and the five-second
+limit are unchanged. This corrects the cleanup overlap; it does not identify
+the historical timeout's slow stage or promise cleanup after forced worker exit.
+Cleanup now runs inside the original five-second test budget. Timeout still
+does not cancel the body; its later settlement reaches the fixture's `finally`.
+The four focused cases passed on Windows (873 ms) inside a synthetic outer
+environment, with unchanged sentinels and complete captured-root cleanup.
+
+After formatting the changed test, Rush build, lint and test typechecking
+passed. The complete default suite passed again in 98.82 seconds with
+2,901 tests passed and 38 existing skips; outer sentinels and temporary-root
+cleanup checks passed. The scanner implementation and production build inputs
+were unchanged. Independent review accepted the fixture lifetime correction;
+its limited claim about the original CI timeout is retained.
+
 ## Intermittent Windows CI investigation
 
 The initial Windows attempt in the [push run](https://github.com/excitedjs/dreamux/actions/runs/39223839571)
