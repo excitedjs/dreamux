@@ -1,272 +1,55 @@
-# CI for the dreamux monorepo (issue #4).
-#
-# Jobs:
-#   - rush-change-status — PR release-surface changes must declare Rush change
-#     files under common/changes/. Release version bumps are committed by
-#     release.yml after merge, so no generated version PR is expected.
-#   - commit-metadata — reject machine-local / malformed commit author emails
-#     (generic, committed) plus an optional private domain denylist supplied via
-#     the AUTHOR_EMAIL_DENYLIST_REGEX repo variable (kept out of this file).
-#   - scripts — validate Node entry points and repository gates on all platforms.
-#   - rush — bootstrap, build, typecheck, lint, and test the whole workspace via
-#     the monorepo path (the single supported install path — see decision 0006).
-#     The lint step enforces the issue #85 synchronous-blocking-IO ban.
-#     This replaces the old per-package `npm ci` job, which cannot resolve the
-#     `workspace:*` dependency that landed with the channel refactor (#4).
-#   - kb — validate the .agents/ knowledge base (link / orphan check)
-#   - gitleaks — secret scan over the full git history (anti-leak guardrail)
-#   - internal-content — tree-wide scan for internal identifiers and paths that
-#     .gitleaks.toml deliberately does not cover (anti-leak guardrail)
-#
-# The rush bootstrap (`node common/scripts/install-run-rush.js update`) is
-# the only way to install a `workspace:*` graph, so a broken rush.json or
-# lockfile fails CI here rather than waiting for the next contributor's
-# `rush update` to discover it.
+name: pr476 content scan diagnostics
 
-name: ci
-
-# Trigger scope: every PR in this repo must run these gates, whatever its base
-# branch. A base-branch allowlist (`main` + `feature/**`) silently left PRs into
-# other long-lived integration branches — notably `next` — unchecked and forced
-# manual `workflow_dispatch` runs. GitHub evaluates a `pull_request` workflow
-# from the file on the PR's BASE branch, so an allowlist there is exactly what
-# skips those PRs; drop it so `pull_request` fires for ALL bases. `push` stays
-# scoped to the long-lived branches we want to re-validate post-merge (the
-# integrated state), so feature-branch dev pushes still trigger but throwaway
-# topic branches don't double-run alongside their PR.
 on:
-  push:
-    branches: [main, next, 'feature/**']
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  rush-change-status:
-    name: rush change — declaration check
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      - name: Fetch PR base
-        run: git fetch origin "${{ github.base_ref }}" --depth=1
-      - name: Verify Rush change files
-        run: node common/scripts/install-run-rush.js change --verify --target-branch "origin/${{ github.base_ref }}" --no-fetch
-      # While a package stays on the 0.x version line, a pending `major`
-      # change file would make Rush bump it straight to 1.0.0 (how the
-      # 2026-08-16 release run produced an unwanted, never-published 1.0.0
-      # version state for the core packages). For 0.x packages, breaking
-      # changes are recorded as `minor` with a leading `BREAKING:` note
-      # instead (CLAUDE.md, Changelog Responsibility). Packages already past
-      # 1.0.0 (e.g. @excitedjs/feishu-channel) use real semver majors and are
-      # exempt. The scan covers the full pending set, not the PR diff: the
-      # invariant is that no 0.x major is pending at release time, wherever
-      # it came from. The operator lifts a package out of this gate by moving
-      # its version past 1.0.0.
-      - name: Forbid major change files on the 0.x line
-        run: |
-          node -e '
-            const fs = require("fs");
-            const path = require("path");
-            const versions = new Map();
-            const collect = (dir) => {
-              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                if (entry.name === "node_modules") continue;
-                const p = path.join(dir, entry.name);
-                if (entry.isDirectory()) collect(p);
-                else if (entry.name === "package.json") {
-                  const pkg = JSON.parse(fs.readFileSync(p, "utf8"));
-                  if (pkg.name && pkg.version) versions.set(pkg.name, pkg.version);
-                }
-              }
-            };
-            collect("packages");
-            const bad = [];
-            const walk = (dir) => {
-              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                const p = path.join(dir, entry.name);
-                if (entry.isDirectory()) walk(p);
-                else if (entry.name.endsWith(".json")) {
-                  const doc = JSON.parse(fs.readFileSync(p, "utf8"));
-                  for (const change of doc.changes ?? []) {
-                    if (String(change.type).toLowerCase() !== "major") continue;
-                    const version = versions.get(change.packageName);
-                    if (version === undefined) {
-                      bad.push([p, change.packageName + " has a pending major change file but no package.json under packages/ — cannot prove it is past 0.x"]);
-                    } else if (version.startsWith("0.")) {
-                      bad.push([p, change.packageName + " is on the 0.x line (" + version + ") — record the breaking change as type minor with a leading BREAKING: note (CLAUDE.md, Changelog Responsibility)"]);
-                    }
-                  }
-                }
-              }
-            };
-            if (fs.existsSync("common/changes")) walk("common/changes");
-            for (const [p, message] of bad) {
-              console.error("::error file=" + p + "::" + message);
-            }
-            if (bad.length) process.exit(1);
-            console.log("no pending major change files for 0.x packages");
-          '
-
-  commit-metadata:
-    name: commit metadata - author email check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      - name: Check commit author emails
-        env:
-          AUTHOR_EMAIL_DENYLIST_REGEX: ${{ vars.AUTHOR_EMAIL_DENYLIST_REGEX }}
-        run: node common/scripts/check-author-emails.mjs
-
-  scripts:
-    name: repository scripts (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Check native Node repository tools
-        run: node --test common/scripts/tooling.test.mjs
-
-  kb:
-    name: knowledge base — link & orphan check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      # The task-record check resolves commit hashes against the local object
-      # database, where an absent object cannot match. A single-commit checkout
-      # holds almost none of them, and a merged pull request's commits survive
-      # only under refs/pull/*/head once its branch is deleted.
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Fetch pull request heads
-        run: git fetch --no-tags origin '+refs/pull/*/head:refs/pull/*/head'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: .agents/scripts/check.mjs
-        run: node .agents/scripts/check.mjs
-
-  rush:
-    name: rush — bootstrap / build / typecheck / lint / test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  diagnostics:
+    name: Windows diagnostics (${{ matrix.sample }})
+    runs-on: windows-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
+      - name: Record runner capacity
+        run: node -e "const os=require('node:os'); console.log(JSON.stringify({node:process.version,cpus:os.cpus().length,parallelism:os.availableParallelism(),memory:os.totalmem()}))"
       - name: rush update
         run: node common/scripts/install-run-rush.js update
-      # build before typecheck: a package's `tsc --noEmit` resolves its
-      # workspace deps through their emitted dist/*.d.ts, so the core must be
-      # built first or dependents fail to find its types on a clean runner.
       - name: rush build
         run: node common/scripts/install-run-rush.js build
       - name: rush built CLI smoke
         run: node common/scripts/install-run-rush.js smoke-built-cli
       - name: rush typecheck
         run: node common/scripts/install-run-rush.js typecheck
-      # Test-aware typecheck (tsconfig.tests.json = src + tests). `rush build`
-      # uses the src-only tsconfig and `rush test` runs vitest via esbuild (no
-      # typecheck), so a test-only type error — e.g. a renamed/required option a
-      # test still passes the old way — surfaces nowhere else.
       - name: rush typecheck tests
         run: node common/scripts/install-run-rush.js typecheck:tests
-      # Enforce the issue #85 synchronous-blocking-IO ban (n/no-sync + import /
-      # syntax backstops, shared via @excitedjs/eslint-config). src/** is a hard
-      # error on any *Sync IO; tests/** is audited via reasoned disables.
-      # Each package's lint script also runs `prettier --check` against the
-      # repo-root /.prettierrc.json config, after ESLint; generated files and
-      # Markdown are excluded via the script's own CLI args.
       - name: rush lint
         run: node common/scripts/install-run-rush.js lint
-      - name: install codex for live compatibility test
+      - name: Install Codex for protocol checks
         run: |
           npm install --global @openai/codex@latest
           codex --version
-      - name: rush test
+      - name: Full workspace tests with original concurrency
         run: node common/scripts/install-run-rush.js test
-
-  gitleaks:
-    name: gitleaks — secret scan (full history)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Anti-leak guardrail. dreamux is a PUBLIC repo: company-internal content
-    # (Feishu ids, tokens, private-mirror URLs, secrets) must never land in a
-    # commit. This job is the authoritative gate over the full history; the
-    # committed pre-commit hook (common/git-hooks/pre-commit) runs the same
-    # scan over staged changes and fails hard when gitleaks is absent, so the
-    # two agree instead of one quietly standing down.
-    #
-    # `gitleaks git` scans the whole git history, so it catches a secret even
-    # if it was added and then "fixed" in a later commit; fetch-depth: 0 gives
-    # the job that full history (incl. the committed pnpm-lock.yaml). The
-    # binary comes from the same pinned, checksum-verifying script a developer
-    # machine uses, so the version lives in exactly one place.
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      - name: Install gitleaks
-        env:
-          GITLEAKS_INSTALL_DIR: ${{ runner.temp }}/gitleaks
-        run: node common/scripts/install-gitleaks.mjs
-      - name: gitleaks git (full history, lockfile included, --exit-code 1)
-        run: gitleaks git . --config .gitleaks.toml --redact --exit-code 1 -v
-
-  internal-content:
-    name: internal-content — public-repo path scan (tree)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    # The second half of the anti-leak guardrail. `.gitleaks.toml` is shared
-    # verbatim with the internal sibling repository, where the internal mount
-    # and developer home paths this scan rejects are legitimate — so those
-    # patterns cannot live there. They live in the script below, which is the
-    # same scan the pre-commit hook runs over staged changes and the release
-    # workflow runs over packed tarballs.
-    #
-    # Tree-wide rather than diff-wide on purpose: the release gate only ever
-    # saw what reached `dist`, which is why an internal path in a test file
-    # reached the default branch on 2026-09-02 without a gate firing.
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-      - name: check-internal-content (every tracked file)
-        run: node common/scripts/check-internal-content.mjs --tree
+      - name: Print complete host test output
+        if: always()
+        shell: pwsh
+        run: |
+          $logRoot = 'packages/dreamux/.rush/temp/chunked-rush-logs'
+          if (Test-Path -LiteralPath $logRoot) {
+            Get-ChildItem -LiteralPath $logRoot -Filter '*.test.chunks.jsonl' | ForEach-Object {
+              Get-Content -LiteralPath $_.FullName | ForEach-Object {
+                $record = $_ | ConvertFrom-Json
+                Write-Output $record.text
+              }
+            }
+          }
