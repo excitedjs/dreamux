@@ -75,6 +75,11 @@ export async function readClaudeRecentActivity(
   const limit = resolveLimit(query.limit);
   const sessionId = query.sessionId;
   const includeTools = query.includeTools ?? true;
+  const fingerprint = activityQueryFingerprint(includeTools);
+  const cursor =
+    query.cursor === undefined
+      ? null
+      : decodeClaudeCursor(query.cursor, fingerprint);
   const env = claudeSpawnEnv(context.config.extra_env);
   const located = await locateClaudeHistory({
     sessionId,
@@ -95,11 +100,6 @@ export async function readClaudeRecentActivity(
   }
   try {
     await validateClaudeSessionEvidence(opened, sessionId);
-    const fingerprint = activityQueryFingerprint(includeTools);
-    const cursor =
-      query.cursor === undefined
-        ? null
-        : decodeClaudeCursor(query.cursor, fingerprint);
     const endOffset = Math.min(cursor?.pos ?? opened.size, opened.size);
     const rewriteEvidence = await verifyRewriteEvidence(opened, cursor);
     if (cursor !== null) {

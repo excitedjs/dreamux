@@ -49,6 +49,14 @@ notification semantics across both transports. Claude skill directories use
 Windows junctions and ordinary Unix symlinks. Existing provider home resolvers
 own configuration overrides and OS home fallback.
 
+Claude activity reads validate the record limit and decode the cursor's query
+fingerprint before discovering history. A malformed or query-mismatched cursor
+therefore returns `cursor_invalid` even when history is missing, has different
+session metadata, or discovery would exhaust its time budget. This corrects the
+previous discovery-first error precedence. File identity, session evidence,
+rewrite evidence and byte-boundary checks still require the opened history.
+The discovery budget and its behavior for valid queries are unchanged.
+
 ## Service and privacy
 
 Windows uses an interactive, limited-token Task Scheduler task for the current

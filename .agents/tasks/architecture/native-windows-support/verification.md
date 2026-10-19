@@ -1,5 +1,63 @@
 # Verification
 
+## Intermittent Windows CI investigation
+
+The initial Windows attempt in the [push run](https://github.com/excitedjs/dreamux/actions/runs/39223839571)
+reported two Claude failures: a query-mismatched cursor returned
+`provider_failure` instead of `cursor_invalid`, and the malformed skill-target
+publication test exceeded its unchanged five-second deadline. The same-head PR
+run and a failed-job rerun passed. Those successes do not establish either cause;
+the original reporter omitted the complete activity error and skill await stage.
+
+For the activity fixture, all five `scan_unsupported` paths were inspected.
+Its six-line history excludes the four pagination/rewrite paths; discovery's
+two-second wall-clock budget is the remaining source of `provider_failure`.
+An isolated real-reader/filesystem/Git comparison returned the expected query
+mismatch in 21.6 ms. Delaying delivery of the real Git completion callback by
+2.2 seconds instead returned `scan_unsupported` after 2,227.9 ms, with a stack
+through discovery's budget check before cursor decoding. Restoring normal
+delivery returned the query mismatch in 23.6 ms. This establishes the ordering
+mechanism, not whether the historical delay was in Git, filesystem work or
+runner scheduling.
+
+Two added real-history regressions first mint a nonempty cursor, then remove
+the history or replace its session metadata. Both failed before the correction
+and passed after moving pure cursor decoding before discovery. Malformed and
+query-mismatched cursors now take precedence over unavailable history; valid
+cursors still report unavailable history, and invalid limits remain first.
+All 13 activity-reader tests passed locally without changing the existing
+assertions or time budgets.
+
+After rebuilding, the same delayed-completion probe rejected each mismatched
+query in under 0.2 ms and observed no Git call for those requests; the delay
+could no longer affect validation. Rush build and the complete Claude lint,
+test typecheck and test gates passed (241 tests, one existing elevated-only
+skip). Independent review found no blocking issue in the source and regression
+changes.
+
+The skill failure did not recur in 16 isolated baseline cases, 128 concurrent
+cases, or the same 128-case comparison without async hooks. A separate
+[three-runner diagnostic run](https://github.com/excitedjs/dreamux/actions/runs/39227974176)
+retains the original warmup, full Rush test load, assertions and deadlines.
+It records full activity errors and skill await stages/native async resources.
+Async resource lifetimes are observations, not proof of kernel I/O latency.
+
+All three hosted samples completed the full test workload. Each runner had four
+CPUs and about 16 GiB RAM; Rush allowed three simultaneous packages. These are
+capacity measurements, not resource-utilization traces. The old activity order
+returned the expected query mismatch in 207.5, 164.1 and 198.6 ms. The skill
+case completed its assertions in 49.4, 52.8 and 43.5 ms, and cleanup finished
+at 168.2, 69.8 and 59.0 ms respectively. Every publication gate entered and
+released; no stage approached five seconds. The diagnostic output's repeated
+Rush summary/dump records were deduplicated rather than counted as more runs.
+
+These observations do not recover the historical skill failure's missing
+stage or establish an OS, scheduling, locking or Koffi cause. No speculative
+production workaround, retry, concurrency reduction or timeout increase was
+applied. The diagnostic branch and run preserve the capture procedure for a
+future recurrence; the cursor correction does not claim to fix the unexplained
+skill-publication timeout.
+
 ## Lazy native initialization
 
 The [follow-up comment](https://github.com/excitedjs/dreamux/pull/476#discussion_r4311329746)
