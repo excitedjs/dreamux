@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add fresh-process regression coverage for native addon loading through host entry modules.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

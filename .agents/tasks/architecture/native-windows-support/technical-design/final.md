@@ -26,6 +26,15 @@ binding with asynchronous calls for blocking work. Business paths do not spawn
 PowerShell, icacls, whoami, or taskkill for filesystem, IPC, or process management.
 Platform command lines remain confined to persistent-service management.
 
+Each native owner dynamically imports Koffi on its first capability call and
+caches the complete initialization Promise. ABI descriptions and DLL bindings
+are created inside that initialization; ordinary utility and host imports do
+not load the native addon, including on Unix. Each Job instance retains the
+resolved API so handle release stays synchronous. Create/OpenJob and GetLastError
+remain adjacent synchronous calls after initialization. Security helpers share
+their initialized API without changing token, descriptor or pipe lifetimes.
+This changes runtime loading, not dependency installation or JS module imports.
+
 ## IPC and providers
 
 The logical `run/admin.sock` path and its filesystem lock remain the identity of

@@ -1,5 +1,29 @@
 # Verification
 
+## Lazy native initialization
+
+The [follow-up comment](https://github.com/excitedjs/dreamux/pull/476#discussion_r4311329746)
+identified eager Koffi addon loading through static Windows-owner imports.
+Fresh Node processes now observe actual `process.dlopen` calls before importing
+the built utils barrel or the server, daemon control/install/status, workflow
+runner and MCP shim modules. All eight new cases failed against the previous
+build because import alone loaded Koffi; all eight passed after rebuilding the
+two native owners. The Windows first-use case concurrently creates four real
+Jobs and prepares four private directories, verifies open/acquire/close and
+Job disappearance, and observes exactly one addon load after first use.
+
+The focused run passed two utility tests and six host tests on native Windows.
+The full workspace passed Rush build, lint, source and test typechecking, built
+CLI smoke and 2,889 tests with 38 existing platform, privilege or opt-in skips
+(99.6 seconds). This includes the actual native Job, ACL and pipe regressions.
+Authenticated model execution and the opt-in real Task Scheduler lifecycle were
+not enabled in this round. Unix execution is left to the hosted CI matrix.
+Independent source/test review found no blocking issue and confirmed that
+GetLastError ordering, synchronous close and native resource lifetimes remain
+unchanged. No startup-time benchmark was performed; this verifies addon loading
+behavior, not the reviewer's timing measurements. Runtime lazy loading does not
+remove the installed dependency.
+
 ## Native failure-path regressions
 
 The follow-up requested in the [PR review](https://github.com/excitedjs/dreamux/pull/476#pullrequestreview-5568105760)

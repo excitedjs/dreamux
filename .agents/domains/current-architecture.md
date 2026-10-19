@@ -37,6 +37,13 @@ the rush path only.
 | `@excitedjs/dreamux-plugin-bootstrap` | `/packages/plugins/bootstrap/` | built-in opt-in bootstrap plugin behind `builtin:bootstrap`: profile files from the Dispatcher cwd's `.workspace/` in the Dispatcher and TeamLeader launch prompts |
 | `@excitedjs/eslint-config` | `/packages/eslint-config/` | private shared ESLint flat config; single source of the sync-IO ban and the 700-line cap |
 
+Windows native capabilities live in `/packages/dreamux-utils/src/windows-job.ts`
+and `/packages/dreamux-utils/src/windows-security.ts`. Each owner loads Koffi
+and its ABI bindings only on the first capability call and shares initialization
+across concurrent callers. Importing utilities or host modules does not load
+the native addon. Job instances retain initialized bindings for synchronous
+handle release; platform-neutral callers keep their ordinary static imports.
+
 Inside `/packages/dreamux/src/`: `admin/` (socket transport), `channel/` and
 `agent-runtime/` (generic provider catalogs/loaders), `command/` (the one
 Command registry), `config/` (`config.ts`'s loader/validator, `service.ts`'s

@@ -1,34 +1,34 @@
-import koffi, { type KoffiFunc } from 'koffi';
+import type { KoffiFunc } from 'koffi';
 import { promisify } from 'node:util';
 import { withWindowsOwnerOnlySecurityDescriptor } from './windows-security.js';
 
-// Anonymous ABI descriptions keep this native owner independent of other DLL users.
-const basicLimits = koffi.struct({
-  PerProcessUserTimeLimit: 'int64_t',
-  PerJobUserTimeLimit: 'int64_t',
-  LimitFlags: 'uint32_t',
-  MinimumWorkingSetSize: 'size_t',
-  MaximumWorkingSetSize: 'size_t',
-  ActiveProcessLimit: 'uint32_t',
-  Affinity: 'uintptr_t',
-  PriorityClass: 'uint32_t',
-  SchedulingClass: 'uint32_t',
-});
-const extendedLimits = koffi.struct({
-  BasicLimitInformation: basicLimits,
-  IoInfo: koffi.array('uint64_t', 6),
-  ProcessMemoryLimit: 'size_t',
-  JobMemoryLimit: 'size_t',
-  PeakProcessMemoryUsed: 'size_t',
-  PeakJobMemoryUsed: 'size_t',
-});
-const securityAttributes = koffi.struct({
-  nLength: 'uint32_t',
-  lpSecurityDescriptor: 'void *',
-  bInheritHandle: 'int',
-});
-
-function loadApi() {
+async function loadApi() {
+  const { default: koffi } = await import('koffi');
+  // Anonymous ABI descriptions keep this native owner independent of other DLL users.
+  const basicLimits = koffi.struct({
+    PerProcessUserTimeLimit: 'int64_t',
+    PerJobUserTimeLimit: 'int64_t',
+    LimitFlags: 'uint32_t',
+    MinimumWorkingSetSize: 'size_t',
+    MaximumWorkingSetSize: 'size_t',
+    ActiveProcessLimit: 'uint32_t',
+    Affinity: 'uintptr_t',
+    PriorityClass: 'uint32_t',
+    SchedulingClass: 'uint32_t',
+  });
+  const extendedLimits = koffi.struct({
+    BasicLimitInformation: basicLimits,
+    IoInfo: koffi.array('uint64_t', 6),
+    ProcessMemoryLimit: 'size_t',
+    JobMemoryLimit: 'size_t',
+    PeakProcessMemoryUsed: 'size_t',
+    PeakJobMemoryUsed: 'size_t',
+  });
+  const securityAttributes = koffi.struct({
+    nLength: 'uint32_t',
+    lpSecurityDescriptor: 'void *',
+    bInheritHandle: 'int',
+  });
   const kernel = koffi.load('kernel32.dll');
   const createJob = kernel.func('__stdcall', 'CreateJobObjectW', 'void *', [
     koffi.pointer(securityAttributes),
@@ -85,6 +85,9 @@ function loadApi() {
     'uint32_t __stdcall GetLastError()',
   ) as KoffiFunc<() => number>;
   return {
+    securityAttributesSize: koffi.sizeof(securityAttributes),
+    extendedLimitsSize: koffi.sizeof(extendedLimits),
+    pointerSize: koffi.sizeof('uintptr_t'),
     createJob,
     openJob,
     currentProcess,
@@ -120,7 +123,10 @@ function checked(
 export class WindowsJob {
   private root: bigint | null = null;
 
-  private constructor(private job: bigint | null) {}
+  private constructor(
+    private job: bigint | null,
+    private readonly api: Awaited<ReturnType<typeof loadApi>>,
+  ) {}
 
   static async create(name?: string): Promise<WindowsJob> {
     return WindowsJob.createHandle(name, false);
@@ -135,10 +141,11 @@ export class WindowsJob {
     name: string | undefined,
     acceptExisting: boolean,
   ): Promise<WindowsJob> {
+    const api = await native();
     return withWindowsOwnerOnlySecurityDescriptor(async (descriptor) => {
-      const handle = native().createJob(
+      const handle = api.createJob(
         {
-          nLength: koffi.sizeof(securityAttributes),
+          nLength: api.securityAttributesSize,
           lpSecurityDescriptor: descriptor,
           bInheritHandle: 0,
         },
@@ -146,23 +153,23 @@ export class WindowsJob {
       );
       // Non-waiting handle acquisition keeps GetLastError on the same thread.
       // Assignment, mutation, queries and waiting use async native calls.
-      const code = native().lastError();
+      const code = api.lastError();
       const existed = code === 183;
       checked(handle, 'CreateJobObjectW', code);
       if (name !== undefined && existed) {
         // Opening an existing Job must not alter its limits or security.
-        if (acceptExisting) return new WindowsJob(handle);
-        native().closeHandle(handle!);
+        if (acceptExisting) return new WindowsJob(handle, api);
+        api.closeHandle(handle!);
         throw new Error(`Windows Job already exists: ${name}`);
       }
-      const job = new WindowsJob(handle);
+      const job = new WindowsJob(handle, api);
       try {
         checked(
-          await promisify(native().setInformation.async)(
+          await promisify(api.setInformation.async)(
             handle!,
             9,
             { BasicLimitInformation: { LimitFlags: 0x2000 } },
-            koffi.sizeof(extendedLimits),
+            api.extendedLimitsSize,
           ),
           'SetInformationJobObject',
         );
@@ -175,20 +182,21 @@ export class WindowsJob {
   }
 
   static async open(name: string): Promise<WindowsJob | null> {
-    const handle = native().openJob(0x0002 | 0x0004 | 0x0008, 0, name);
-    const code = native().lastError();
+    const api = await native();
+    const handle = api.openJob(0x0002 | 0x0004 | 0x0008, 0, name);
+    const code = api.lastError();
     if (handle === null && code === 2) return null;
     checked(handle, 'OpenJobObjectW', code);
-    return new WindowsJob(handle);
+    return new WindowsJob(handle, api);
   }
 
   /** Service entrypoints call this before launching any application work. */
   async assignCurrentProcess(): Promise<void> {
     if (this.job === null) throw new Error('Windows Job is closed');
     checked(
-      await promisify(native().assignProcess.async)(
+      await promisify(this.api.assignProcess.async)(
         this.job,
-        native().currentProcess(),
+        this.api.currentProcess(),
       ),
       'AssignProcessToJobObject',
     );
@@ -199,8 +207,8 @@ export class WindowsJob {
     if (this.job === null) throw new Error('Windows Job is closed');
     const member = [0];
     checked(
-      await promisify(native().isProcessInJob.async)(
-        native().currentProcess(),
+      await promisify(this.api.isProcessInJob.async)(
+        this.api.currentProcess(),
         this.job,
         member,
       ),
@@ -211,7 +219,7 @@ export class WindowsJob {
 
   /** Hold the candidate object; the caller must prove identity over its child IPC before assign(). */
   async openRoot(pid: number): Promise<void> {
-    this.root = await promisify(native().openProcess.async)(
+    this.root = await promisify(this.api.openProcess.async)(
       0x0100 | 0x0001 | 0x1000 | 0x00100000,
       0,
       pid,
@@ -223,7 +231,7 @@ export class WindowsJob {
     if (this.job === null || this.root === null)
       throw new Error('Windows Job has no held root');
     checked(
-      await promisify(native().assignProcess.async)(this.job, this.root),
+      await promisify(this.api.assignProcess.async)(this.job, this.root),
       'AssignProcessToJobObject',
     );
   }
@@ -233,13 +241,13 @@ export class WindowsJob {
     // Prevent new members before capturing wait handles. TerminateJobObject
     // clears the active count/list before those processes have actually exited.
     checked(
-      await promisify(native().setInformation.async)(
+      await promisify(this.api.setInformation.async)(
         this.job,
         9,
         {
           BasicLimitInformation: { LimitFlags: 0x2008, ActiveProcessLimit: 0 },
         },
-        koffi.sizeof(extendedLimits),
+        this.api.extendedLimitsSize,
       ),
       'SetInformationJobObject',
     );
@@ -248,7 +256,7 @@ export class WindowsJob {
       const rootMember = [0];
       if (this.root !== null) {
         checked(
-          await promisify(native().isProcessInJob.async)(
+          await promisify(this.api.isProcessInJob.async)(
             this.root,
             this.job,
             rootMember,
@@ -257,7 +265,7 @@ export class WindowsJob {
         );
       }
       for (const pid of await this.memberIds()) {
-        const handle = await promisify(native().openProcess.async)(
+        const handle = await promisify(this.api.openProcess.async)(
           0x00100000 | 0x1000,
           0,
           pid,
@@ -273,7 +281,7 @@ export class WindowsJob {
         const member = [0];
         try {
           checked(
-            await promisify(native().isProcessInJob.async)(
+            await promisify(this.api.isProcessInJob.async)(
               handle,
               this.job,
               member,
@@ -281,14 +289,14 @@ export class WindowsJob {
             'IsProcessInJob',
           );
           if (member[0] !== 0) members.push(handle);
-          else native().closeHandle(handle);
+          else this.api.closeHandle(handle);
         } catch (error) {
-          native().closeHandle(handle);
+          this.api.closeHandle(handle);
           throw error;
         }
       }
       checked(
-        await promisify(native().terminateJob.async)(this.job, 1),
+        await promisify(this.api.terminateJob.async)(this.job, 1),
         'TerminateJobObject',
       );
       // Failed bootstrap identity/assignment leaves only a candidate handle;
@@ -300,21 +308,21 @@ export class WindowsJob {
       // The whole tree is already terminating. Await each held object without
       // filling Koffi's async call queue when the Job has many members.
       for (const handle of waits) {
-        const result = await promisify(native().wait.async)(handle, 0xffffffff);
+        const result = await promisify(this.api.wait.async)(handle, 0xffffffff);
         if (result !== 0)
           throw new Error(`WaitForSingleObject failed (${result})`);
       }
     } finally {
-      for (const handle of members) native().closeHandle(handle);
+      for (const handle of members) this.api.closeHandle(handle);
     }
   }
 
   private async memberIds(): Promise<number[]> {
     if (this.job === null) return [];
-    const pointerSize = koffi.sizeof('uintptr_t');
+    const pointerSize = this.api.pointerSize;
     let buffer = Buffer.alloc(8 + pointerSize);
     for (;;) {
-      const result = await promisify(native().queryInformation.async)(
+      const result = await promisify(this.api.queryInformation.async)(
         this.job,
         3,
         buffer,
@@ -337,8 +345,8 @@ export class WindowsJob {
   }
 
   close(): void {
-    if (this.root !== null) native().closeHandle(this.root);
-    if (this.job !== null) native().closeHandle(this.job);
+    if (this.root !== null) this.api.closeHandle(this.root);
+    if (this.job !== null) this.api.closeHandle(this.job);
     this.root = null;
     this.job = null;
   }
