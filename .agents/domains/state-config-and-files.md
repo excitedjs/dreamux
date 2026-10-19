@@ -674,6 +674,12 @@ are also explicitly owned by the current user, so a later limited service can
 reopen them. Linked log entries are rejected without changing their targets;
 synchronous Pino writes retain immediate-exit logs.
 
+Codex and Claude Code prepare their provider-owned log directories and append
+files before passing descriptors to their children. They enforce current-user
+ownership even when the foreground server is elevated; this keeps later limited
+startup's recursive log check compatible with newly created provider logs.
+Preparation preserves existing contents and closes opened handles on failure.
+
 Attachment cache publication likewise sets temporary-file ownership before
 writing bytes and verifies existing files before returning a cache hit.
 
@@ -690,6 +696,8 @@ Source:
 - `/packages/dreamux/src/platform/logger.ts`
 - `/packages/dreamux/src/service/workflow-service/journal.ts`
 - `/packages/dreamux/src/cli/server.ts`
+- `/packages/agent-runtime/codex/src/supervisor.ts`
+- `/packages/agent-runtime/claude-code/src/supervisor.ts`
 
 ### Managed Service PATH And Working Directory
 

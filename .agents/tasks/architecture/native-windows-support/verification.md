@@ -1,6 +1,44 @@
 # Verification
 
-## Final native-capability refactor
+## Review corrections
+
+The 2026-10-19 correction run used a limited-token native Windows process and
+the disposable-home test wrapper. Rush build, lint, source typecheck, test
+typecheck and built CLI smoke passed. The full suite passed 2,878 tests with
+37 platform, privilege or model-opt-in skips and no failures. It enabled
+`DREAMUX_RUN_WINDOWS_SERVICE_TEST=1`, including the isolated Scheduled Task's
+external and internal restart/stop, descendant cleanup and uninstall. The task
+was removed after the run. Model execution was not enabled in this correction run.
+
+Regression evidence:
+
+- Duplicate `Path`/`PATH` keys selected the ambient executable before the fix;
+  afterward a real executable probe agrees with native Node and selects the
+  configured override. Four native environment comparisons also exercise
+  insertion order and undefined-value key selection at the lookup helper.
+- A real Job with 256 members required 257 retained-handle waits and previously
+  threw `Too many asynchronous calls are running`. Serial waiting passes, with
+  every retained process handle signaled immediately when termination returns.
+- Both real provider factories run a synthetic child which observes ownership
+  and ACLs before writing inherited logs. Existing permissive logs failed the
+  oracle before the fix; fresh and existing log cases now pass and retain
+  contents across two starts. Focused provider runs passed two tests each.
+- Each provider also has an elevated-Windows-only foreign-owner rejection test:
+  it checks unchanged ACLs/content and uses a native sharing lock to prove an
+  opened append handle was closed. These two cases were skipped locally because
+  the token was limited. Elevated first-create ownership and these failure paths
+  require the current Windows CI run; Unix log behavior requires its Unix matrix.
+
+The nine repository-tooling tests passed with a workspace-local Python
+interpreter. The pinned gitleaks installer verified its archive and executable.
+Independent review covered the complete corrective diff, native fixture
+cleanup, cross-platform test paths and file-handle ownership; no blocking
+in-scope finding remained. Review also observed that JSON bootstrap IPC drops
+undefined environment values. Current callers provide string-valued overrides,
+so no production producer of that generic API edge case was found; the patch
+does not change serialization or claim complete supervised-env equivalence.
+
+## Historical native-capability refactor
 
 After the operator required Node/native capabilities outside platform-service
 management, the final Windows run passed the following gates:
@@ -159,6 +197,9 @@ change was reviewed against ordering, privacy and recovery behavior.
 | Unix socket, process, path and permission assumptions block Windows | Fixed at their owning boundaries; native named-pipe, ACL, process-tree, argument and junction tests pass |
 | Worktree removal can run with its own target as the Git subprocess cwd | Run removal from the shared Git directory; real managed-worktree lifecycle tests pass |
 | Journal appends launched repeated native permission preparation | Move preparation to the journal owner's creation/load boundary; ordered writes, existing-file tightening and missing-file refusal tests pass |
+| Elevated provider sessions leave Administrators-owned log directories or files | Providers prepare their own directories and open append files before output; native child observations and content-preservation regressions pass locally, with elevated cases assigned to Windows CI |
+| Case-insensitive PATH lookup disagrees with Node when duplicate key spellings exist | Apply Node's lexicographic key precedence; real executable and child-environment regressions pass |
+| A large Job queues more native waits than Koffi permits | Wait for the existing retained handles sequentially; a 256-member native tree is fully signaled when termination returns |
 | Closing a temporary file before hardlink publication can leave the Windows target refusing replacement | Keep its handle through publication and temporary-link cleanup; 800 concurrent fresh create/replace cases and the unchanged lifecycle suite pass |
 | Polling timeouts can race slower native I/O | Wait for actual submission, completion, settlement or error events; retain all behavioral assertions |
 

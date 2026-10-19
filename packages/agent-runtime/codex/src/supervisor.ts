@@ -17,6 +17,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   ensureOwnerOnlyDir,
+  ensureOwnerOnlyFile,
   isProcessAlive,
   removeEmptyLogFile,
   SupervisedChild,
@@ -114,7 +115,7 @@ export class CodexProcess {
       await ensureOwnerOnlyDir(dirname(socketPath));
     }
     await mkdir(this.opts.cwd, { recursive: true });
-    await mkdir(dirname(this.opts.stdoutLogPath), { recursive: true });
+    await ensureOwnerOnlyDir(dirname(this.opts.stdoutLogPath));
     // Stale socket from a previous crashed run would otherwise prevent
     // the daemon from binding.
     if (socketPath !== undefined) {
@@ -137,9 +138,13 @@ export class CodexProcess {
         socketPath === undefined
           ? null
           : await open(this.opts.stdoutLogPath, 'a', 0o600);
-      if (stdoutHandle !== null) logHandles.push(stdoutHandle);
+      if (stdoutHandle !== null) {
+        logHandles.push(stdoutHandle);
+        await ensureOwnerOnlyFile(this.opts.stdoutLogPath);
+      }
       const stderrHandle = await open(this.opts.stderrLogPath, 'a', 0o600);
       logHandles.push(stderrHandle);
+      await ensureOwnerOnlyFile(this.opts.stderrLogPath);
       this.assertStartAllowed();
       const supervisor = new SupervisedChild({
         kind: 'spawn',

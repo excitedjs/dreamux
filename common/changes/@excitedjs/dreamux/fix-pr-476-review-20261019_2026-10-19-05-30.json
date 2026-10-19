@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Document provider-owned log preparation for elevated Windows foreground startup and later limited service startup.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

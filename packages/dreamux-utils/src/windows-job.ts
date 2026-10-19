@@ -297,16 +297,13 @@ export class WindowsJob {
         this.root !== null && rootMember[0] !== 0
           ? [...members, this.root]
           : members;
-      await Promise.all(
-        waits.map(async (handle) => {
-          const result = await promisify(native().wait.async)(
-            handle,
-            0xffffffff,
-          );
-          if (result !== 0)
-            throw new Error(`WaitForSingleObject failed (${result})`);
-        }),
-      );
+      // The whole tree is already terminating. Await each held object without
+      // filling Koffi's async call queue when the Job has many members.
+      for (const handle of waits) {
+        const result = await promisify(native().wait.async)(handle, 0xffffffff);
+        if (result !== 0)
+          throw new Error(`WaitForSingleObject failed (${result})`);
+      }
     } finally {
       for (const handle of members) native().closeHandle(handle);
     }

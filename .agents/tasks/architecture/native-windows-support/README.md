@@ -8,7 +8,8 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Update the authorized PR, verify hosted gates, publish the branch alpha, and install and start that artifact locally. Merging remains unauthorized.
+- Next action: Submit the reviewed corrections to the existing PR and verify its hosted gates. Merging remains unauthorized.
+- Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
 
 ## Development approval
@@ -19,6 +20,7 @@
 - The operator prioritized completing this repository after a test-isolation incident. Recovery of unrelated operator state is outside this public change; regression prevention belongs here.
 - On 2026-10-19 the operator required Dreamux-provided capabilities to be independent of the platform, explicitly allowing platform command lines for installing and controlling the persistent platform service. The implementation uses Node APIs where available and native bindings behind shared capability boundaries otherwise; this instruction also covers avoidable Bash usage in development and test tools.
 - On 2026-10-19 the operator explicitly approved six authenticated model tests through the interactive card. Those tests passed against the final native implementation using disposable homes and locally intercepted channel IO.
+- On 2026-10-19 at 13:18 (UTC+08:00), after re-review, the operator explicitly instructed correction of the three reported findings: provider log ownership, Windows PATH precedence, and large Job termination. This authorizes their implementation and regression verification within the existing PR; it does not authorize a merge or another release/install operation.
 
 ## Delivery
 

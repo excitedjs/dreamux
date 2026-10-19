@@ -12,7 +12,12 @@ import { mkdir, open } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
-import { removeEmptyLogFile, SupervisedChild } from '@excitedjs/dreamux-utils';
+import {
+  ensureOwnerOnlyDir,
+  ensureOwnerOnlyFile,
+  removeEmptyLogFile,
+  SupervisedChild,
+} from '@excitedjs/dreamux-utils';
 import { ClaudeCodeStreamRpc } from './rpc.js';
 import type { ClaudeCodeSession, ClaudeCodeSessionSpec } from './types.js';
 
@@ -60,37 +65,35 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     this.assertStartAllowed();
     await mkdir(this.spec.cwd, { recursive: true });
     this.assertStartAllowed();
-    await mkdir(dirname(this.spec.stderrLogPath), { recursive: true });
+    await ensureOwnerOnlyDir(dirname(this.spec.stderrLogPath));
     this.assertStartAllowed();
     // Open the stderr log as a FileHandle and hand its fd to the child. The
     // handle is closed once the child owns the inherited fd (the finally),
     // matching the timing discipline in codex/supervisor.ts.
     const stderrHandle = await open(this.spec.stderrLogPath, 'a', 0o600);
-    if (this.stopRequested) {
-      await stderrHandle.close();
-      this.assertStartAllowed();
-    }
-    const supervisor = new SupervisedChild({
-      kind: 'spawn',
-      command: this.spec.bin,
-      args: this.spec.args,
-      options: {
-        cwd: this.spec.cwd,
-        env: this.spec.env,
-        stdio: ['pipe', 'pipe', stderrHandle.fd],
-      },
-    });
-    supervisor.onError((error) => {
-      this.spec.logger?.warn({ err: error }, 'claude resident child error');
-    });
-    supervisor.onExit(() =>
-      this.onChildExit(new Error('claude resident child exited')),
-    );
-    // Publish group-termination authority before spawn resolves. If a later
-    // setup step fails, runtime cleanup can still prove that no child remains.
-    this.supervisor = supervisor;
     let child: ChildProcess;
     try {
+      await ensureOwnerOnlyFile(this.spec.stderrLogPath);
+      this.assertStartAllowed();
+      const supervisor = new SupervisedChild({
+        kind: 'spawn',
+        command: this.spec.bin,
+        args: this.spec.args,
+        options: {
+          cwd: this.spec.cwd,
+          env: this.spec.env,
+          stdio: ['pipe', 'pipe', stderrHandle.fd],
+        },
+      });
+      supervisor.onError((error) => {
+        this.spec.logger?.warn({ err: error }, 'claude resident child error');
+      });
+      supervisor.onExit(() =>
+        this.onChildExit(new Error('claude resident child exited')),
+      );
+      // Publish group-termination authority before spawn resolves. If a later
+      // setup step fails, runtime cleanup can still prove that no child remains.
+      this.supervisor = supervisor;
       child = await supervisor.start();
     } finally {
       await stderrHandle.close();
