@@ -129,9 +129,10 @@ selects the native release archive, verifies its checksum, and installs
 `gitleaks.exe` on Windows. The KB checker retains Python as the task-record
 owner; set `PYTHON` to select an explicit interpreter.
 
-Every package test script enters `common/scripts/run-tests.mjs`, which sets
-disposable account/application homes before starting Vitest. Keep targeted
-runs behind that wrapper too; see [unit testing](unit-testing.md).
+Package test scripts invoke Vitest directly. Packages that resolve user homes
+configure disposable account/application homes through Vitest's native global
+setup and environment configuration. Run focused tests from their package
+directory to load the same configuration; see [unit testing](unit-testing.md).
 
 Source: `/rush.json`, `/common/config/rush/command-line.json`,
 `/common/scripts/install-run-rush.js`, `/packages/dreamux/package.json`.

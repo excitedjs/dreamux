@@ -8,7 +8,7 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Submit the reviewed cursor-validation correction and verify its hosted gates. Merging remains unauthorized.
+- Next action: Deliver the reviewed Vitest-native isolation and Windows long-path corrections to the existing PR and verify its CI. Merge remains paused at the operator's request.
 - Coverage limit: The historical skill-publication timeout did not recur in local or hosted diagnostics; its original log lacks the failing await stage, so this correction does not claim to resolve that timeout.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
@@ -25,8 +25,11 @@
 - On 2026-10-19 at 15:33 (UTC+08:00), the operator explicitly requested the non-blocking failure-injection tests suggested in the [PR review](https://github.com/excitedjs/dreamux/pull/476#pullrequestreview-5568105760): interrupted or mismatched bootstrap identity verification and candidate-process exit before Job termination. This extends test coverage within the existing PR without authorizing a merge or release.
 - On 2026-10-19 at 16:24 (UTC+08:00), the operator explicitly instructed correction of the [eager Koffi loading comment](https://github.com/excitedjs/dreamux/pull/476#discussion_r4311329746). This authorizes lazy initialization within the native owners, behavioral regressions and delivery to the existing PR.
 - On 2026-10-19 at 16:56 (UTC+08:00), the operator required investigation of the actual CI failure causes before reporting completion. A successful rerun alone is not causal evidence. This follow-up remains within the previously authorized Windows failure corrections.
+- On 2026-10-19 at 20:18 (UTC+08:00), the operator paused the previously requested merge to review the test-script changes.
+- On 2026-10-19 at 21:45 (UTC+08:00), the operator explicitly instructed using Vitest's native capabilities after reviewing the proposed replacement of the custom launcher. This authorizes configuration, lifecycle setup, regression verification and delivery to the existing PR; it does not resume the paused merge.
+- On 2026-10-19 at 21:49 (UTC+08:00), the operator required small-scope isolation verification before broader test execution to protect existing Dreamux and Codex configuration. The initial verification must itself use disposable account/application homes and sentinel files, with cleanup targets reviewed before execution.
 
 ## Delivery
 
-- Submit this implementation as a PR to `next`, then publish alpha from that branch. GitHub owns delivery status; merging is not authorized.
+- Deliver the approved corrections to the existing PR targeting `next`. GitHub owns delivery status; merging remains paused by the operator.
 - Knowledge closeout: Native platform boundaries, service maintenance, test isolation, publication lifetime and product behavior are documented in the owning references.

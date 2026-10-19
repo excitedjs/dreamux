@@ -19,8 +19,9 @@ should replace platform conditionals when they express the same contract.
 - Importing shared utilities or host entry modules must not load the Windows capabilities' Koffi addon; load it only when a native capability is invoked.
 - Keep provider-specific transport and home rules inside their provider packages.
 - Enforce private native ACLs where Unix uses owner-only permissions.
+- Accept long Windows file paths consistently at the Node filesystem and native ACL boundaries.
 - Stop owned Windows descendants and release files before reporting completion.
-- Isolate every package test process from operator account/application homes.
+- Isolate tests that resolve account/application homes through Vitest-native environment configuration and lifecycle hooks, including focused and watch invocations. Keep ordinary Vitest commands and avoid a separate test-process launcher; packages that do not use these homes need no isolation setup.
 - Retain behavioral assertions; specialize only genuinely platform-specific OS contracts.
 - Publish a PR before dispatching the branch alpha release. Do not merge the PR.
 

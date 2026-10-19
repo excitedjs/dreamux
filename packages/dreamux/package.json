@@ -31,8 +31,8 @@
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "lint": "eslint . && prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\" && depcruise --config .dependency-cruiser.cjs src && knip --tsConfig tsconfig.tests.json --use-tsconfig-files --exports",
     "smoke-built-cli": "node ./scripts/smoke-built-cli.mjs",
-    "test": "node ../../common/scripts/run-tests.mjs run --fileParallelism=false",
-    "test:watch": "node ../../common/scripts/run-tests.mjs",
+    "test": "vitest run --fileParallelism=false",
+    "test:watch": "vitest",
     "clean": "node ../../common/scripts/clean.mjs",
     "prepublishOnly": "npm run build"
   },

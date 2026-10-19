@@ -93,20 +93,40 @@ dimension, retain the result projection and point the folding obligation to
 the test that actually submits multiple inputs and observes their native end.
 
 ## Disposable homes and native platform behavior
+
 The root `.gitattributes` pins detected text files to LF on checkout, including
 Windows hosts with `core.autocrlf=true`, so the same Prettier gate runs everywhere.
 Launcher path assertions compare canonical installed paths with `realpathSync`:
 macOS temporary directories can resolve through `/var` to `/private/var`.
 
-All package `test` and `test:watch` scripts enter
-`/common/scripts/run-tests.mjs`. It creates a unique short `.dt-*` directory
-under `tmpdir()` on Windows or the account home on Unix (to keep Unix
-sockets outside shared temporary directories), then starts Vitest with
-`HOME`, `USERPROFILE`,
-`CODEX_HOME`, `CLAUDE_CONFIG_DIR` and `DREAMUX_ROOT` pointing inside that
-disposable tree. Cleanup removes only the original generated directory after
-validating its parent. Use the package test script or that wrapper for targeted
-runs too; direct Vitest invocation bypasses the boundary.
+Package `test` and `test:watch` scripts invoke Vitest directly. The host,
+utils, Codex and Claude packages load `/common/testing/isolated-home.mjs`
+through `globalSetup` in their `vitest.config.mjs`. It creates a unique short
+`.dt-*` directory under `tmpdir()` on Windows or the account home on Unix
+(to keep Unix sockets outside shared temporary directories). After creating
+the application directories, `provide` passes their environment to the shared
+`/common/testing/apply-isolated-home.mjs` setup-file hook. It uses `inject` to set
+`HOME`, `USERPROFILE`, `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `DREAMUX_ROOT` before test modules load; children inherit
+the resulting environment. If initialization failed, no environment is
+provided and the hook refuses to import tests, including watch reruns.
+Run focused tests from the package directory so Vitest discovers its config.
+Watch reruns reuse the same directory; normal shutdown and failed test runs
+invoke global teardown. Setup failures clean up before rethrowing. Cleanup
+uses only the captured `mkdtemp` result, never an environment variable.
+Tests still own joining their children and closing handles before teardown.
+
+Types, channel and bootstrap tests use explicit fixtures or repository files
+and need no account-home setup. Config/global-setup imports execute before
+the test environment is applied and must not read application state. Explicit
+live-model opt-in preserves the original auth source for fixture copies; ordinary runs
+remove it from the inherited test environment.
+
+When changing this boundary, first run the focused isolation regressions with
+the outer Vitest process also pointed at synthetic account/application homes.
+Verify sentinel preservation and generated-directory cleanup before broader
+tests. Do not reintroduce a process launcher to implement lifecycle hooks
+already provided by the test framework.
 
 A test that overrides home resolution still owns its fixture isolation. On
 Windows, changing `HOME` alone does not redirect Node `os.homedir()`, and native

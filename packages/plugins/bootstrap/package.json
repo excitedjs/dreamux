@@ -30,8 +30,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
-    "test": "node ../../../common/scripts/run-tests.mjs run --passWithNoTests",
-    "test:watch": "node ../../../common/scripts/run-tests.mjs",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
     "lint": "eslint . && prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\"",
     "clean": "node ../../../common/scripts/clean.mjs",
     "prepublishOnly": "npm run build"

@@ -1,3 +1,4 @@
+import { toNamespacedPath } from 'node:path';
 import { promisify } from 'node:util';
 
 type Pointer = bigint | null;
@@ -173,12 +174,22 @@ export async function setWindowsOwnerOnlyAccess(
   path: string,
   kind: 'file' | 'directory',
 ): Promise<void> {
+  const nativePath = toNamespacedPath(path);
   const native = await securityApi();
   const user = currentIdentity(native);
   const owner: Pointer[] = [null];
   const existing: Pointer[] = [null];
   checkStatus(
-    await native.namedSecurity(path, 1, 1, owner, null, null, null, existing),
+    await native.namedSecurity(
+      nativePath,
+      1,
+      1,
+      owner,
+      null,
+      null,
+      null,
+      existing,
+    ),
     'GetNamedSecurityInfoW',
     path,
   );
@@ -196,7 +207,7 @@ export async function setWindowsOwnerOnlyAccess(
   try {
     checkStatus(
       await native.setNamedSecurity(
-        path,
+        nativePath,
         1,
         0x80000005,
         desired.owner,
