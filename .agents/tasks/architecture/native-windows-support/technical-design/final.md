@@ -83,6 +83,13 @@ The wrapper allocates a short disposable home, sets HOME, USERPROFILE, CODEX_HOM
 CLAUDE_CONFIG_DIR and DREAMUX_ROOT, and removes only that generated directory.
 Live model opt-in passes the original auth source separately for fixture copies.
 Native ACL assertions use real Windows permissions instead of synthetic mode bits.
+Bootstrap failure regressions interrupt the real child between retaining its
+process handle and Job assignment, and send a mismatched challenge over its
+actual IPC channel. Observations cover target execution, native membership,
+process completion and Job release. Separate live and exited candidate cases
+verify that retaining a handle alone does not grant termination or wait authority.
+Fault scheduling stays in tests; production launch and native ownership APIs
+retain their existing behavior.
 Repository-owned file cleanup, content scanning, download verification, and
 knowledge checks use Node rather than Bash/PowerShell orchestration. Git,
 gitleaks, build tools, and mature archive tools remain direct executable calls.

@@ -30,6 +30,8 @@ should replace platform conditionals when they express the same contract.
 - Native process tests preserve literal arguments, including multiline prompts, and reap descendants.
 - Windows executable lookup selects the same case-insensitive environment key as Node when a provider overrides `PATH` alongside an ambient `Path`.
 - Terminating a Job with more than 256 wait handles completes without exhausting the native binding's asynchronous-call queue.
+- Interrupted or mismatched bootstrap identity verification must not start target work; failed launch releases its owned native resources.
+- Job termination remains safe when a held candidate exits before assignment or termination, and does not wait for or terminate a live candidate outside that Job.
 - Provider log directories and files are current-user-owned before child output starts, including when created by an elevated Windows foreground server.
 - Task Scheduler installation, status, start, stop and removal work for the current user.
 - Rush build, lint, test and test typechecking pass, with native Windows included in CI.
