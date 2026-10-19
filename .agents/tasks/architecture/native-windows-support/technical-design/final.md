@@ -5,11 +5,16 @@
 The published executable is a plain Node ESM launcher that resolves its own
 symlink and compiled entrypoint independently of the caller working directory.
 Shared async process utilities own PATH/PATHEXT lookup, npm Node shim execution,
-Windows argument preservation and descendant termination. Unix process groups
+Windows argument preservation and descendant termination. Windows executable
+lookup follows Node's lexicographic key selection for duplicate names, so a
+provider's string-valued `PATH` override beside an ambient `Path` resolves the
+same executable that Node selects. Unix process groups
 retain their existing behavior. Windows uses native Job Object ownership from
 before the target starts, including descendants whose ancestors already exited.
 Termination first closes the Job to new members, holds and verifies its member
-process handles, then waits for those objects to finish exiting. The Job's active
+process handles, then waits for those objects to finish exiting one at a time.
+Serial waits avoid filling Koffi's asynchronous-call queue on large process trees;
+all retained handles remain owned until waiting completes. The Job's active
 count alone can reach zero before Windows releases a process's working directory.
 Numeric PID ancestry is not process ownership: Windows can reuse a parent's PID
 while an older child still records it. The previous snapshot/taskkill traversal
@@ -60,7 +65,10 @@ without enabling breakaway for ordinary supervised children.
 Shared filesystem utilities enforce Windows ACLs and Unix modes. Startup
 privately prepares the configured log destinations and their directories before
 synchronous file logging; DACL inheritance alone does not override an elevated
-token's Administrators default owner. Attachment-cache files receive current-user
+token's Administrators default owner. Each provider prepares its own log directory
+and each opened append file with the same private ownership primitives before
+passing descriptors to its child. Existing log content is preserved, and failed
+preparation closes the opened descriptor. Attachment-cache files receive current-user
 ownership before writing bytes, and cache hits verify the existing file. Atomic
 writes secure new temporary files before content is written. The WorkflowJournal
 owner prepares privacy at creation or recovery load, then appends only to the

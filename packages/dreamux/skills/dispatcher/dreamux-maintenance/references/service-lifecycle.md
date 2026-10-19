@@ -33,6 +33,10 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   configured dispatcher's channel/workflow log before logging starts, preserving
   existing content. Private ACL inheritance alone does not set a new file's owner
   under an elevated token. These log files and directories are server-owned.
+  Codex and Claude Code similarly prepare their own log directories and append
+  files before child output begins, including during elevated foreground runs.
+  Existing contents are preserved; provider logs remain private and owned by
+  the current user for later limited service startup.
   `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
   installation to refresh its pinned Node command and captured environment.
   Do not hand-edit that launcher.

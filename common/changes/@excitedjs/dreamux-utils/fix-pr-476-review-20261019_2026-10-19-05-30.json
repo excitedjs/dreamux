@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Match Node's Windows duplicate environment-key precedence during executable lookup and wait for large Job process trees without exceeding the native asynchronous-call limit.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

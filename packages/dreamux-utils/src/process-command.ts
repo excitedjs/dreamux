@@ -55,14 +55,16 @@ export async function resolveExecutableOnPath(
   return null;
 }
 
-/** Windows environment variable names are case-insensitive. */
+/** Match Node's Windows duplicate-key precedence, including undefined values. */
 export function environmentValue(
   env: NodeJS.ProcessEnv,
   name: string,
 ): string | undefined {
   const key =
     process.platform === 'win32'
-      ? Object.keys(env).find((key) => key.toUpperCase() === name.toUpperCase())
+      ? Object.keys(env)
+          .sort()
+          .find((key) => key.toUpperCase() === name.toUpperCase())
       : name;
   return key === undefined ? undefined : env[key];
 }

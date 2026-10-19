@@ -9,6 +9,7 @@ import koffi, { type KoffiFunc } from 'koffi';
 import { describe, expect, it, vi } from 'vitest';
 
 import { WindowsJob } from '../src/windows-job.js';
+import { launchWindowsChild } from '../src/windows-child.js';
 import { SupervisedChild } from '../src/supervised-child.js';
 import { isProcessAlive, killProcessGroup } from '../src/os.js';
 
@@ -88,9 +89,8 @@ function retainProcesses(pids: number[]) {
     states: () => handles.map((handle) => wait(handle, 0)),
     dispose: async () => {
       try {
-        await Promise.all(
-          handles.map((handle) => promisify(wait.async)(handle, 0xffffffff)),
-        );
+        for (const handle of handles)
+          await promisify(wait.async)(handle, 0xffffffff);
       } finally {
         for (const handle of handles) close(handle);
       }
@@ -101,6 +101,50 @@ function retainProcesses(pids: number[]) {
 describe.skipIf(process.platform !== 'win32')(
   'native Windows Job ownership',
   () => {
+    it('waits for all 256 native members without overflowing the async call queue', async () => {
+      const { child, job } = await launchWindowsChild({
+        kind: 'spawn',
+        command: process.execPath,
+        args: [
+          '--input-type=module',
+          '-e',
+          `
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+const children = [];
+for (let index = 0; index < 254; index++) {
+  const child = spawn(process.env.ComSpec, ['/d', '/c', 'set /p input='], {
+    windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  children.push(child);
+  await once(child, 'spawn');
+}
+console.log(JSON.stringify([process.pid, ...children.map(child => child.pid)]));
+setInterval(() => {}, 1000);
+`,
+        ],
+      });
+      const closed = once(child, 'close');
+      let held: ReturnType<typeof retainProcesses> | undefined;
+      try {
+        const [output] = await once(child.stdout!, 'data', {
+          signal: AbortSignal.timeout(20_000),
+        });
+        const pids = [child.pid!, ...(JSON.parse(String(output)) as number[])];
+        expect(pids).toHaveLength(256);
+        held = retainProcesses(pids);
+        expect(held.states()).toEqual(Array<number>(256).fill(258));
+        await job.terminate();
+        // Check exact retained objects immediately, before any extra event wait.
+        expect(held.states()).toEqual(Array<number>(256).fill(0));
+      } finally {
+        // Closing this isolated Job also kills the tree if readiness or stop fails.
+        job.close();
+        await closed;
+        await held?.dispose();
+      }
+    }, 30_000);
+
     it('distinguishes the current process from a child assigned to the exact Job', async () => {
       const name = `Local\\Dreamux-membership-${randomUUID()}`;
       const job = await WindowsJob.create(name);

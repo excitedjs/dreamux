@@ -1,11 +1,14 @@
+import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  environmentValue,
   resolveExecutableOnPath,
   spawnCommand,
 } from '../src/process-command.js';
@@ -31,6 +34,58 @@ describe('native command launch', () => {
     const [code] = await once(child, 'close');
     expect(code).toBe(0);
     expect(JSON.parse(stdout)).toEqual(args);
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'selects the same executable as Node with merged Path and PATH overrides',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'dreamux path override '));
+      const ambient = join(root, 'ambient');
+      const override = join(root, 'override');
+      const command = 'fixture-provider.exe';
+      for (const directory of [ambient, override]) {
+        await mkdir(directory);
+        await copyFile(process.execPath, join(directory, command));
+      }
+      const env = { Path: ambient, ...{ PATH: override } };
+      const args = [
+        '-e',
+        'console.log(JSON.stringify({ exe: process.execPath, path: process.env.PATH }))',
+      ];
+      const native = await promisify(execFile)(command, args, {
+        env,
+        windowsHide: true,
+      });
+      const expected = { exe: join(override, command), path: override };
+      expect(JSON.parse(native.stdout)).toEqual(expected);
+      const child = await spawnCommand(command, args, { env });
+      let stdout = '';
+      child.stdout!.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString();
+      });
+      const [code] = await once(child, 'close');
+      expect(code).toBe(0);
+      expect(JSON.parse(stdout)).toEqual(expected);
+    },
+  );
+
+  it.skipIf(process.platform !== 'win32').each([
+    { Dreamux_Test_Env: 'ambient', DREAMUX_TEST_ENV: 'override' },
+    { DREAMUX_TEST_ENV: 'override', Dreamux_Test_Env: 'ambient' },
+    { Dreamux_Test_Env: 'ambient', DREAMUX_TEST_ENV: undefined },
+    { Dreamux_Test_Env: undefined, DREAMUX_TEST_ENV: 'override' },
+  ])('matches Node environment selection for %j', async (env) => {
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      [
+        '-e',
+        'console.log(JSON.stringify(process.env.DREAMUX_TEST_ENV ?? null))',
+      ],
+      { env, windowsHide: true },
+    );
+    expect(environmentValue(env, 'DREAMUX_TEST_ENV') ?? null).toEqual(
+      JSON.parse(stdout),
+    );
   });
 
   it.skipIf(process.platform !== 'win32')(
