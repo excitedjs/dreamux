@@ -8,7 +8,7 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Submit the reviewed native launch/Job failure regressions to the existing PR and verify its hosted gates. Merging remains unauthorized.
+- Next action: Submit the reviewed lazy native initialization correction and verify the existing PR's hosted gates. Merging remains unauthorized.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
 
@@ -22,6 +22,7 @@
 - On 2026-10-19 the operator explicitly approved six authenticated model tests through the interactive card. Those tests passed against the final native implementation using disposable homes and locally intercepted channel IO.
 - On 2026-10-19 at 13:18 (UTC+08:00), after re-review, the operator explicitly instructed correction of the three reported findings: provider log ownership, Windows PATH precedence, and large Job termination. This authorizes their implementation and regression verification within the existing PR; it does not authorize a merge or another release/install operation.
 - On 2026-10-19 at 15:33 (UTC+08:00), the operator explicitly requested the non-blocking failure-injection tests suggested in the [PR review](https://github.com/excitedjs/dreamux/pull/476#pullrequestreview-5568105760): interrupted or mismatched bootstrap identity verification and candidate-process exit before Job termination. This extends test coverage within the existing PR without authorizing a merge or release.
+- On 2026-10-19 at 16:24 (UTC+08:00), the operator explicitly instructed correction of the [eager Koffi loading comment](https://github.com/excitedjs/dreamux/pull/476#discussion_r4311329746). This authorizes lazy initialization within the native owners, behavioral regressions and delivery to the existing PR.
 
 ## Delivery
 
