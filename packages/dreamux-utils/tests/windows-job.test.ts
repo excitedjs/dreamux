@@ -101,6 +101,67 @@ function retainProcesses(pids: number[]) {
 describe.skipIf(process.platform !== 'win32')(
   'native Windows Job ownership',
   () => {
+    it.each(['alive', 'exited'] as const)(
+      'does not wait on or terminate an unassigned %s candidate',
+      async (state) => {
+        const job = await WindowsJob.create();
+        let candidate: ChildProcess | undefined;
+        let closed: Promise<unknown> | undefined;
+        let held: ReturnType<typeof retainProcesses> | undefined;
+        let terminating: Promise<void> | undefined;
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          candidate = spawn(
+            process.execPath,
+            ['-e', 'process.stdin.resume()'],
+            {
+              windowsHide: true,
+              stdio: ['pipe', 'ignore', 'ignore'],
+            },
+          );
+          // Unlike events.once(), this fence still waits for close after error.
+          closed = new Promise<void>((resolve) => {
+            candidate!.once('close', () => resolve());
+          });
+          await once(candidate, 'spawn');
+          held = retainProcesses([candidate.pid!]);
+          await job.openRoot(candidate.pid!);
+          // openRoot holds a candidate object; only assign grants authority.
+          expect(held.states()).toEqual([258]);
+          if (state === 'exited') {
+            candidate.kill();
+            await closed;
+            expect(held.states()).toEqual([0]);
+          }
+          terminating = job.terminate();
+          const outcome = await Promise.race([
+            terminating.then(() => 'terminated'),
+            new Promise<string>((resolve) => {
+              deadline = setTimeout(
+                () => resolve('waited on candidate'),
+                2_000,
+              );
+            }),
+          ]);
+          expect(outcome).toBe('terminated');
+          job.close();
+          expect(held.states()).toEqual([state === 'alive' ? 258 : 0]);
+        } finally {
+          clearTimeout(deadline);
+          // Even a broken gate must finish its native wait before handles close.
+          if (candidate?.exitCode === null && candidate.signalCode === null)
+            candidate.kill();
+          await closed;
+          try {
+            await terminating;
+          } finally {
+            job.close();
+            await held?.dispose();
+          }
+        }
+      },
+    );
+
     it('waits for all 256 native members without overflowing the async call queue', async () => {
       const { child, job } = await launchWindowsChild({
         kind: 'spawn',
