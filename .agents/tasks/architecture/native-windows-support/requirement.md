@@ -28,6 +28,9 @@ should replace platform conditionals when they express the same contract.
 - The compiled launcher, foreground server and admin/MCP traffic work on Windows.
 - A real installed Codex initializes over its Windows transport in a disposable home.
 - Native process tests preserve literal arguments, including multiline prompts, and reap descendants.
+- Windows executable lookup selects the same case-insensitive environment key as Node when a provider overrides `PATH` alongside an ambient `Path`.
+- Terminating a Job with more than 256 wait handles completes without exhausting the native binding's asynchronous-call queue.
+- Provider log directories and files are current-user-owned before child output starts, including when created by an elevated Windows foreground server.
 - Task Scheduler installation, status, start, stop and removal work for the current user.
 - Rush build, lint, test and test typechecking pass, with native Windows included in CI.
 - Test homes are disposable; explicit live model runs may copy authentication into a fixture, never modify the original home.
