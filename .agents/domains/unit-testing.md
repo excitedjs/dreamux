@@ -116,6 +116,11 @@ invoke global teardown. Setup failures clean up before rethrowing. Cleanup
 uses only the captured `mkdtemp` result, never an environment variable.
 Tests still own joining their children and closing handles before teardown.
 
+Vitest timeouts do not cancel an async test body. For CLI fixtures, keep the
+directory's `try/finally` around the callback that awaits subprocess completion;
+an independent `afterEach` can otherwise delete files while packing or scanning
+still holds them. A passing rerun does not explain the original timeout.
+
 Types, channel and bootstrap tests use explicit fixtures or repository files
 and need no account-home setup. Config/global-setup imports execute before
 the test environment is applied and must not read application state. Explicit
