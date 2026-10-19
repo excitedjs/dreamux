@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 import { execa } from 'execa';
 import {
@@ -79,21 +80,46 @@ class WindowsRunner implements CommandRunner {
   }
 }
 
+function schedulerDiagnostic(
+  stage: string,
+  details: Record<string, unknown> = {},
+) {
+  console.error(
+    `PR476_SCHEDULER_DIAG ${JSON.stringify({
+      pid: process.pid,
+      monotonicMs: performance.now(),
+      stage,
+      ...details,
+    })}`,
+  );
+}
+
 function scheduledTaskScriptRunner(installed: boolean, failSet = false) {
+  schedulerDiagnostic('helper.enter', { installed, failSet });
   const calls: { command: string; parameters: Record<string, unknown> }[] = [];
   const run = vi.fn<CommandRunner['run']>(async (command, args, options) => {
+    schedulerDiagnostic('runner.enter');
     if (run.mock.calls.length !== 1)
       throw new Error('Unexpected additional scheduler process');
     expect(command).toBe('powershell.exe');
+    schedulerDiagnostic('runner.command.assert.end');
     const script = Buffer.from(args.at(-1) ?? '', 'base64').toString('utf16le');
     // Only command binding and branching are real here, not Scheduler storage
     // or the reuse of a Password task's stored credentials.
     const shadowed = `
+$fixtureClock = [System.Diagnostics.Stopwatch]::StartNew()
+function Write-SchedulerDiagnostic($stage) {
+  [Console]::Error.WriteLine(('PR476_SCHEDULER_PS_DIAG {{"pid":{0},"monotonicMs":{1},"stage":"{2}"}}' -f $PID, $fixtureClock.Elapsed.TotalMilliseconds.ToString([System.Globalization.CultureInfo]::InvariantCulture), $stage))
+}
+Write-SchedulerDiagnostic 'script.enter'
 $PSModuleAutoLoadingPreference = 'None'
+Write-SchedulerDiagnostic 'utility.import.begin'
 Import-Module Microsoft.PowerShell.Utility
+Write-SchedulerDiagnostic 'utility.import.end'
 $fixtureCalls = [System.Collections.Generic.List[object]]::new()
 $fixtureTaskName = 'Dreamux-' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 function Record-SchedulerCall($command, $parameters) {
+  Write-SchedulerDiagnostic ('cmdlet.' + $command)
   $values = @{} + $parameters
   $fixtureCalls.Add(@{ command = $command; parameters = $values })
   [pscustomobject]$values
@@ -136,14 +162,20 @@ function Set-ScheduledTask {
   $null = Record-SchedulerCall 'Set-ScheduledTask' $PSBoundParameters
   if ($${failSet}) { Write-Error 'fixture Set-ScheduledTask failed' }
 }
+Write-SchedulerDiagnostic 'shadows.ready'
 try {
+  Write-SchedulerDiagnostic 'generated.begin'
   & {
 ${script}
   }
+  Write-SchedulerDiagnostic 'generated.end'
 } finally {
+  Write-SchedulerDiagnostic 'finally.json.begin'
   ConvertTo-Json -InputObject @($fixtureCalls.ToArray()) -Depth 10 -Compress
+  Write-SchedulerDiagnostic 'finally.json.end'
 }
 `;
+    schedulerDiagnostic('execa.call.begin');
     const child = execa(
       command,
       [
@@ -156,13 +188,38 @@ ${script}
         reject: false,
       },
     );
-    onTestFinished(async () => {
-      child.kill();
-      await child;
+    schedulerDiagnostic('execa.call.end', { childPid: child.pid });
+    child.on('spawn', () => {
+      schedulerDiagnostic('child.spawn', { childPid: child.pid });
     });
+    child.on('exit', (code, signal) => {
+      schedulerDiagnostic('child.exit', { childPid: child.pid, code, signal });
+    });
+    child.on('close', (code, signal) => {
+      schedulerDiagnostic('child.close', { childPid: child.pid, code, signal });
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      schedulerDiagnostic('child.stderr', {
+        childPid: child.pid,
+        chunk: chunk.toString(),
+      });
+    });
+    onTestFinished(async () => {
+      schedulerDiagnostic('finished.kill.begin', { childPid: child.pid });
+      child.kill();
+      schedulerDiagnostic('finished.kill.end', { childPid: child.pid });
+      schedulerDiagnostic('finished.join.begin', { childPid: child.pid });
+      await child;
+      schedulerDiagnostic('finished.join.end', { childPid: child.pid });
+    });
+    schedulerDiagnostic('runner.await.begin');
     const result = await child;
+    schedulerDiagnostic('runner.await.end', { exitCode: result.exitCode });
+    schedulerDiagnostic('runner.json.begin');
     calls.push(...(JSON.parse(result.stdout) as typeof calls));
+    schedulerDiagnostic('runner.json.end');
     if (result.exitCode !== 0) throw new Error(result.stderr);
+    schedulerDiagnostic('runner.return');
   });
   const capture = vi.fn<CommandRunner['capture']>(async () => {
     throw new Error('Unexpected scheduler capture');
@@ -244,11 +301,14 @@ describe('Windows managed service', () => {
     'scheduled task registration',
     () => {
       it('updates only the action of an existing Password task', async () => {
+        schedulerDiagnostic('test.begin', { case: 'existing' });
         const { runner, calls } = scheduledTaskScriptRunner(true);
+        schedulerDiagnostic('test.register.begin');
         await registerWindowsService(windowsServiceFile(), runner, {
           ...answers,
           startService: false,
         });
+        schedulerDiagnostic('test.register.end');
         expect(calls.map((call) => call.command).sort()).toEqual([
           'Get-ScheduledTask',
           'New-ScheduledTaskAction',
@@ -270,14 +330,18 @@ describe('Windows managed service', () => {
             WorkingDirectory: join(root, 'state'),
           },
         });
+        schedulerDiagnostic('test.assertions.end', { case: 'existing' });
       });
 
       it('registers the original defaults when the task is missing', async () => {
+        schedulerDiagnostic('test.begin', { case: 'missing' });
         const { runner, calls } = scheduledTaskScriptRunner(false);
+        schedulerDiagnostic('test.register.begin');
         await registerWindowsService(windowsServiceFile(), runner, {
           ...answers,
           startService: false,
         });
+        schedulerDiagnostic('test.register.end');
         expect(calls.map((call) => call.command).sort()).toEqual([
           'Get-ScheduledTask',
           'New-ScheduledTaskAction',
@@ -315,16 +379,20 @@ describe('Windows managed service', () => {
           },
           Force: { IsPresent: true },
         });
+        schedulerDiagnostic('test.assertions.end', { case: 'missing' });
       });
 
       it('rejects an action update failure without registering or restarting', async () => {
+        schedulerDiagnostic('test.begin', { case: 'set-failure' });
         const { runner, calls } = scheduledTaskScriptRunner(true, true);
+        schedulerDiagnostic('test.register.begin');
         await expect(
           registerWindowsService(windowsServiceFile(), runner, {
             ...answers,
             startService: true,
           }),
         ).rejects.toThrow('fixture Set-ScheduledTask failed');
+        schedulerDiagnostic('test.rejection.assert.end');
         expect(calls.map((call) => call.command).sort()).toEqual([
           'Get-ScheduledTask',
           'New-ScheduledTaskAction',
@@ -333,6 +401,7 @@ describe('Windows managed service', () => {
         expect(runner.run).toHaveBeenCalledTimes(1);
         expect(runner.capture).not.toHaveBeenCalled();
         expect(runner.check).not.toHaveBeenCalled();
+        schedulerDiagnostic('test.assertions.end', { case: 'set-failure' });
       });
     },
   );
