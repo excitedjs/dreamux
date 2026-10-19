@@ -657,7 +657,10 @@ Source:
 
 Shared filesystem utilities enforce owner-only Unix modes or a protected
 current-user Windows ACL. Atomic publication secures the temporary file before
-writing private content. On Windows the prepared handle stays open through
+writing private content. The Windows ACL owner converts filesystem paths with
+Node's `toNamespacedPath` before passing them to native named-security APIs;
+this preserves long-path support across Node file creation and ACL preparation.
+On Windows the prepared handle stays open through
 publication and temporary-link cleanup; closing before hardlink publication can
 leave the resulting file refusing later replacement. The native regression
 creates and immediately replaces fresh files concurrently. Windows retries a

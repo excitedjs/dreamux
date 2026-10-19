@@ -6,9 +6,18 @@
  * these use a per-test mkdtemp directory cleaned up in afterEach — never the
  * operator's real ~/.dreamux state.
  */
-import { mkdtemp, rm, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
+import {
+  mkdtemp,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+  mkdir,
+  readFile,
+  readdir,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, toNamespacedPath } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
@@ -17,6 +26,7 @@ import { expectOwnerOnlyPermissions } from './permissions.js';
 import {
   currentWindowsUserSid,
   isWindowsAdministrator,
+  makeWorldReadable,
   readWindowsPermissions,
   setWindowsFixturePermissions,
   withWindowsRestorePrivilege,
@@ -31,6 +41,7 @@ import {
   removeEmptyLogFile,
   pathExists,
 } from '../src/os.js';
+import { writeFileAtomic } from '../src/fs.js';
 
 /**
  * Spawn a detached child that exits immediately and await its exit, returning
@@ -249,6 +260,67 @@ describe('ensureOwnerOnlyDir', () => {
     },
   );
 });
+
+describe.skipIf(process.platform !== 'win32')(
+  'Windows paths beyond MAX_PATH',
+  () => {
+    it.each([
+      ['directory', 'absolute'],
+      ['directory', 'relative'],
+      ['directory', 'namespaced'],
+      ['file', 'absolute'],
+      ['file', 'relative'],
+      ['file', 'namespaced'],
+    ] as const)('protects a %s using a %s path', async (kind, form) => {
+      const originalCwd = process.cwd();
+      const root = await mkdtemp(join(tmpdir(), 'dreamux-long-path-'));
+      try {
+        // Every component remains below 255 UTF-16 units; the full path exceeds 260.
+        const directory = join(
+          root,
+          ...Array.from(
+            { length: 6 },
+            (_, index) => `level-${index}-${'x'.repeat(40)}`,
+          ),
+        );
+        const file = join(directory, 'identity.json');
+        const target = kind === 'directory' ? directory : file;
+        await mkdir(directory, { recursive: true });
+        if (form === 'relative') process.chdir(root);
+        const suppliedPath =
+          form === 'relative'
+            ? relative(root, target)
+            : form === 'namespaced'
+              ? toNamespacedPath(target)
+              : target;
+        expect(suppliedPath.length).toBeGreaterThan(260);
+        const nativePath = toNamespacedPath(target);
+        if (kind === 'directory') {
+          await writeFile(file, 'private content');
+          await makeWorldReadable(nativePath, 0o755);
+          await ensureOwnerOnlyDir(suppliedPath);
+        } else {
+          // Exercise the same private temporary-file publication used for identities.
+          await writeFileAtomic(suppliedPath, 'private content');
+          await ensureOwnerOnlyFile(suppliedPath);
+        }
+        await expectOwnerOnlyPermissions(
+          nativePath,
+          kind === 'directory' ? 0o700 : 0o600,
+        );
+        expect(readWindowsPermissions(nativePath)).toMatchObject({
+          protected: true,
+          rules: [{ flags: kind === 'directory' ? 3 : 0 }],
+        });
+        expect(await readFile(file, 'utf8')).toBe('private content');
+        expect(await readdir(directory)).toEqual(['identity.json']);
+      } finally {
+        process.chdir(originalCwd);
+        await rm(root, { recursive: true, force: true, maxRetries: 3 });
+      }
+    });
+  },
+);
 
 describe('ensureOwnerOnlyFile', () => {
   let root: string;

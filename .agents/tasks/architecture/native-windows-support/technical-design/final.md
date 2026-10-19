@@ -79,7 +79,10 @@ directly; the existing resumed notification confirms an internal restart.
 This uses the documented [WMI process creation behavior for Job membership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
 without enabling breakaway for ordinary supervised children.
 
-Shared filesystem utilities enforce Windows ACLs and Unix modes. Startup
+Shared filesystem utilities enforce Windows ACLs and Unix modes. The Windows
+owner converts filesystem paths with Node's `toNamespacedPath` before native
+security lookup and update, matching Node's support for long paths. Pipe
+addresses and Job names remain in their own native namespaces. Startup
 privately prepares the configured log destinations and their directories before
 synchronous file logging; DACL inheritance alone does not override an elevated
 token's Administrators default owner. Each provider prepares its own log directory
@@ -95,10 +98,22 @@ and after each open against the held descriptor before any content is read.
 
 ## Tests and delivery
 
-Every package test command launches Vitest through `common/scripts/run-tests.mjs`.
-The wrapper allocates a short disposable home, sets HOME, USERPROFILE, CODEX_HOME,
-CLAUDE_CONFIG_DIR and DREAMUX_ROOT, and removes only that generated directory.
-Live model opt-in passes the original auth source separately for fixture copies.
+Package test commands invoke Vitest directly. The host, utils, Codex and Claude
+packages reference `common/testing/isolated-home.mjs` from their Vitest configs.
+This native global setup allocates a short disposable home and sets HOME,
+USERPROFILE, CODEX_HOME, CLAUDE_CONFIG_DIR and DREAMUX_ROOT through Vitest's
+`provide`/`inject` and `setupFiles` hooks before test modules load. An absent
+injected environment blocks test imports if initialization failed, including
+subsequent watch runs. Its returned teardown removes only the captured
+generated directory; setup failure also releases that directory. Watch reruns
+reuse the directory until Vitest closes. Tests must finish their own child
+processes and close file descriptors before global teardown.
+The types, channel and bootstrap tests do not resolve account/application homes
+and need no such setup. Live model opt-in passes the original auth source
+separately for fixture copies; ordinary runs remove the inherited auth-source
+variable in workers without modifying the runner's environment. Config and
+global-setup imports themselves run before the test environment is installed
+and must not access application state.
 Native ACL assertions use real Windows permissions instead of synthetic mode bits.
 Bootstrap failure regressions interrupt the real child between retaining its
 process handle and Job assignment, and send a mismatched challenge over its
