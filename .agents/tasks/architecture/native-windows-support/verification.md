@@ -1,5 +1,48 @@
 # Verification
 
+## Existing Windows task registration
+
+The operator reported a persistent console and manually changed the installed
+task's login mode. Read-only inspection found Password, Limited, Running and a
+logon trigger. Scheduler Running is not a service health check. Source review
+identified an interactive task action that directly launches Node; the hidden
+PowerShell arguments apply only to management commands, not to that action.
+The old window's PID was not captured, so its specific process identity is not
+an observed fact. No running task was modified or restarted during this review.
+
+The installation correction updates only an existing task's action; missing
+tasks retain the initial interactive registration. This addresses overwriting
+operator settings, not first-install console visibility. Three focused Windows
+cases passed using real PowerShell with every Scheduler command replaced by a
+fixture function. They verify action-only update, unchanged first-install
+defaults, and update failure without registration or restart. The original
+five-second budgets remain. Password credential reuse has not been exercised
+with a real Scheduler task; parameter omission alone is not presented as native
+credential validation.
+
+Rush build (3.87 s), lint (39.81 s), test typechecking (8.89 s), built CLI smoke
+(4.55 s), and the complete default suite (102.2 s) all returned zero on Windows.
+The eight package logs total **2,917 passed and 25 skipped**. These are this run's
+observed counts, not the previous limited-token run's counts. Authenticated
+models and the real Scheduler lifecycle gate were not enabled. Independent
+whole-diff review found no blocking issue.
+
+Each command ran beneath an outer synthetic account/application environment;
+its sentinel snapshot remained unchanged. The outer verification did not fully
+pass: the build check initially counted Node's compile cache as a fixture
+leftover, so subsequent commands placed that cache separately under the same
+captured root. After the successful full test, the empty-temp assertion found
+five `dx-spill-*` directories. The unchanged baseline `completion-body.test.ts`
+creates five parent directories but removes only each `spill` child. Their
+contents were not retained for inspection. The outer `finally` removed the
+captured root, including these leftovers. This distinguishes successful Rush
+gates from the failed extra cleanup assertion; no real account configuration
+was used as a cleanup target.
+
+References: [Set-ScheduledTask](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/set-scheduledtask),
+[login types](https://learn.microsoft.com/en-us/windows/win32/api/taskschd/ne-taskschd-task_logon_type),
+and [the Hidden setting](https://learn.microsoft.com/en-us/windows/win32/taskschd/tasksettings-hidden).
+
 ## Vitest-native test isolation
 
 The operator requested replacing the custom process launcher with Vitest's
@@ -120,6 +163,34 @@ passed. The complete default suite passed again in 98.82 seconds with
 cleanup checks passed. The scanner implementation and production build inputs
 were unchanged. Independent review accepted the fixture lifetime correction;
 its limited claim about the original CI timeout is retained.
+
+### Hosted tarball and managed-reporting diagnostics
+
+The next [PR run](https://github.com/excitedjs/dreamux/actions/runs/39272036480)
+still timed out in two Windows tarball cases, without an `EBUSY` report or an
+await-stage trace. A diagnostic branch retained the original assertions, time
+budgets, subprocess arguments, streams and cleanup while adding phase markers.
+Its [first three-sample run](https://github.com/excitedjs/dreamux/actions/runs/39274771416)
+passed all tarball cases but timed out in one managed-reporting case. These
+markers have observation overhead; repeated Rush log blocks are not additional
+samples.
+
+The [second diagnostic run](https://github.com/excitedjs/dreamux/actions/runs/39278900052)
+completed all three Windows jobs successfully. One tarball case nevertheless
+took 4,914.58 ms including cleanup: the packing subprocess await took 4,156.08 ms,
+while directory removal took 2.87 ms. Within its parent PID, spawn to the exit
+callback was 4,155.33 ms, exit to close was 0.14 ms, and close to await settlement
+was 0.49 ms. This locates an observed slow interval before the exit callback;
+it includes child execution and scheduling, not just tar CPU or filesystem time.
+The requested executable remained the bare name `tar`, so its actual image was
+not identified. The other five tarball cases took 177.84 to 396.60 ms.
+
+All three managed-reporting bodies completed in 969.37 to 1,060.00 ms; each
+observed await was below 100 ms, and all begin/end pairs completed. Cleanup had
+no separate marker there and cannot be inferred by subtracting the body time
+from Vitest's reported duration. These later results do not determine the
+historical timeout causes. No assertion or timeout was relaxed, and diagnostic
+instrumentation remains outside the PR branch.
 
 ## Intermittent Windows CI investigation
 

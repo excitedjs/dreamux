@@ -36,6 +36,7 @@ should replace platform conditionals when they express the same contract.
 - Job termination remains safe when a held candidate exits before assignment or termination, and does not wait for or terminate a live candidate outside that Job.
 - Provider log directories and files are current-user-owned before child output starts, including when created by an elevated Windows foreground server.
 - Task Scheduler installation, status, start, stop and removal work for the current user.
+- Reinstalling the Windows service updates its action while retaining the existing task's principal, triggers and settings. An update failure propagates without recreating the task under the installation defaults.
 - Rush build, lint, test and test typechecking pass, with native Windows included in CI.
 - Fresh-process imports of built utilities, server, daemon, workflow and MCP modules do not load Koffi; concurrent first Windows capability calls initialize successfully.
 - Test homes are disposable; explicit live model runs may copy authentication into a fixture, never modify the original home.

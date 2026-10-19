@@ -8,8 +8,8 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Deliver the reviewed scoped tarball-test fixture cleanup and verify the updated PR CI. Merge remains paused at the operator's request.
-- Coverage limit: Historical skill-publication and tarball-scan timeout logs lack the failing await stage. The tarball fixture cleanup overlap is corrected, but neither original delay is claimed as resolved.
+- Next action: Deliver the existing-task registration correction and verify its hosted CI. Merge remains paused at the operator's request.
+- Coverage limit: Historical skill-publication, tarball-scan and managed-reporting timeouts remain unexplained. Later diagnostics observed a 4.16-second tar wait, but do not establish the historical cause. First-install console visibility and native Password credential reuse are not verified by this correction.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
 
@@ -28,6 +28,7 @@
 - On 2026-10-19 at 20:18 (UTC+08:00), the operator paused the previously requested merge to review the test-script changes.
 - On 2026-10-19 at 21:45 (UTC+08:00), the operator explicitly instructed using Vitest's native capabilities after reviewing the proposed replacement of the custom launcher. This authorizes configuration, lifecycle setup, regression verification and delivery to the existing PR; it does not resume the paused merge.
 - On 2026-10-19 at 21:49 (UTC+08:00), the operator required small-scope isolation verification before broader test execution to protect existing Dreamux and Codex configuration. The initial verification must itself use disposable account/application homes and sentinel files, with cleanup targets reviewed before execution.
+- On 2026-10-19 at 23:30 (UTC+08:00), the operator reported a persistent console window from the installed logon task and said they had changed it to run whether logged on or not. Read-only inspection found a Password principal with the existing logon trigger. The in-scope correction preserves an existing task's principal, triggers and settings when refreshing its action. This report does not establish a new first-install login mode or boot trigger; the operator's running task must not be changed for verification.
 
 ## Delivery
 

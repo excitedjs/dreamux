@@ -726,8 +726,11 @@ when onboarding never created server state. A dry run records the planned
 creation in the transparent file ledger without touching the filesystem.
 
 Windows installs one `Dreamux-<current-user-SID>` Scheduled Task per account,
-independent of `DREAMUX_ROOT`. Its interactive, limited principal starts at user
-logon. Before registering the task, installation assigns the current user's
+independent of `DREAMUX_ROOT`. A new task has an interactive, limited principal
+and starts at user logon. Reinstallation updates only an existing task's action,
+preserving its principal, triggers and settings. An update failure propagates;
+installation does not replace it with the default registration. Before
+registering or updating the task, installation assigns the current user's
 ownership and private ACL to the log directory and existing log files, including
 the daemon output logs, so an elevated installation can start a limited task.
 Dry runs leave those permissions unchanged.
