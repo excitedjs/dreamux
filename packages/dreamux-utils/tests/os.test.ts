@@ -6,21 +6,42 @@
  * these use a per-test mkdtemp directory cleaned up in afterEach — never the
  * operator's real ~/.dreamux state.
  */
-import { mkdtemp, rm, stat, symlink, writeFile, mkdir } from 'node:fs/promises';
+import {
+  mkdtemp,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+  mkdir,
+  readFile,
+  readdir,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, toNamespacedPath } from 'node:path';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { expectOwnerOnlyPermissions } from './permissions.js';
+import {
+  currentWindowsUserSid,
+  isWindowsAdministrator,
+  makeWorldReadable,
+  readWindowsPermissions,
+  setWindowsFixturePermissions,
+  withWindowsRestorePrivilege,
+} from '../../../common/scripts/test-permissions.mjs';
 
 import {
   isProcessAlive,
   isProcessGroupAlive,
   killProcessGroup,
   ensureOwnerOnlyDir,
+  ensureOwnerOnlyFile,
   removeEmptyLogFile,
   pathExists,
 } from '../src/os.js';
+import { writeFileAtomic } from '../src/fs.js';
 
 /**
  * Spawn a detached child that exits immediately and await its exit, returning
@@ -31,7 +52,10 @@ import {
  * live hazard, not just test flake.
  */
 async function getProvablyDeadPid(): Promise<number> {
-  const child = spawn('node', ['-e', 'process.exit(0)'], { detached: true });
+  const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+    detached: process.platform !== 'win32',
+    windowsHide: true,
+  });
   const pid = await new Promise<number>((resolve, reject) => {
     child.once('spawn', () => {
       if (child.pid === undefined)
@@ -65,78 +89,110 @@ describe('isProcessAlive', () => {
   });
 });
 
-describe('isProcessGroupAlive / killProcessGroup with a real detached child', () => {
-  let child: ReturnType<typeof spawn> | null = null;
+describe.skipIf(process.platform === 'win32')(
+  'isProcessGroupAlive / killProcessGroup with a real detached child',
+  () => {
+    let child: ReturnType<typeof spawn> | null = null;
 
-  afterEach(async () => {
-    if (child && child.pid !== undefined) {
-      try {
-        killProcessGroup(child.pid, 'SIGKILL');
-      } catch {
-        /* already gone */
+    afterEach(async () => {
+      if (
+        child &&
+        child.pid !== undefined &&
+        child.exitCode === null &&
+        child.signalCode === null
+      ) {
+        try {
+          await killProcessGroup(child.pid, 'SIGKILL');
+        } catch {
+          /* already gone */
+        }
       }
-    }
-    child = null;
-  });
-
-  it('reports a freshly spawned detached child group as alive, then not-alive after SIGKILL', async () => {
-    child = spawn('node', ['-e', 'setInterval(() => {}, 1000)'], {
-      detached: true,
+      child = null;
     });
-    await new Promise<void>((resolve, reject) => {
-      child!.once('spawn', () => resolve());
-      child!.once('error', reject);
+
+    it('reports a freshly spawned detached child group as alive, then not-alive after SIGKILL', async () => {
+      child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        detached: process.platform !== 'win32',
+        windowsHide: true,
+      });
+      await new Promise<void>((resolve, reject) => {
+        child!.once('spawn', () => resolve());
+        child!.once('error', reject);
+      });
+      const pgid = child.pid!;
+      // A detached child is its own process-group leader, so its pid == its pgid.
+      expect(isProcessGroupAlive(pgid)).toBe(true);
+
+      const closed = once(child, 'close');
+      await killProcessGroup(pgid, 'SIGKILL');
+      await closed;
+      expect(isProcessGroupAlive(pgid)).toBe(false);
+      // Native Windows termination includes a cold PowerShell/WMI startup on CI.
+    }, 15_000);
+
+    it('killProcessGroup on an already-absent group is a silent no-op (ESRCH swallowed)', async () => {
+      const deadPgid = await getProvablyDeadPid();
+      await expect(
+        killProcessGroup(deadPgid, 'SIGTERM'),
+      ).resolves.toBeUndefined();
     });
-    const pgid = child.pid!;
-    // A detached child is its own process-group leader, so its pid == its pgid.
-    expect(isProcessGroupAlive(pgid)).toBe(true);
 
-    killProcessGroup(pgid, 'SIGKILL');
-
-    // Give the kernel a moment to reap the signalled group.
-    const deadline = Date.now() + 2_000;
-    while (isProcessGroupAlive(pgid) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
-    expect(isProcessGroupAlive(pgid)).toBe(false);
-  });
-
-  it('killProcessGroup on an already-absent group is a silent no-op (ESRCH swallowed)', async () => {
-    const deadPgid = await getProvablyDeadPid();
-    expect(() => killProcessGroup(deadPgid, 'SIGTERM')).not.toThrow();
-  });
-
-  it('isProcessGroupAlive/killProcessGroup ignore non-positive or non-finite pgids', () => {
-    expect(isProcessGroupAlive(0)).toBe(false);
-    expect(isProcessGroupAlive(-5)).toBe(false);
-    expect(() => killProcessGroup(0, 'SIGTERM')).not.toThrow();
-    expect(() => killProcessGroup(-5, 'SIGTERM')).not.toThrow();
-  });
-});
+    it('isProcessGroupAlive/killProcessGroup ignore non-positive or non-finite pgids', async () => {
+      expect(isProcessGroupAlive(0)).toBe(false);
+      expect(isProcessGroupAlive(-5)).toBe(false);
+      await expect(killProcessGroup(0, 'SIGTERM')).resolves.toBeUndefined();
+      await expect(killProcessGroup(-5, 'SIGTERM')).resolves.toBeUndefined();
+    });
+  },
+);
 
 describe('ensureOwnerOnlyDir', () => {
   let root: string;
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     if (root) await rm(root, { recursive: true, force: true });
   });
 
-  it('creates a fresh directory with 0700 permissions', async () => {
+  it.skipIf(process.platform !== 'win32')(
+    'enforces native privacy without an external command search path',
+    async () => {
+      root = await mkdtemp(join(tmpdir(), 'dreamux-utils-native-'));
+      vi.stubEnv('PATH', '');
+      const target = join(root, 'private');
+      await ensureOwnerOnlyDir(target);
+      await expectOwnerOnlyPermissions(target, 0o700);
+      expect(readWindowsPermissions(target)).toMatchObject({
+        protected: true,
+        rules: [{ flags: 3 }],
+      });
+      const file = join(target, 'private.json');
+      await writeFile(file, '{}');
+      await ensureOwnerOnlyFile(file);
+      await expectOwnerOnlyPermissions(file, 0o600);
+      expect(readWindowsPermissions(file)).toMatchObject({
+        protected: true,
+        rules: [{ flags: 0 }],
+      });
+    },
+    15_000,
+  );
+
+  it('creates a fresh directory with owner-only permissions', async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-os-'));
     const target = join(root, 'nested', 'dir');
     await ensureOwnerOnlyDir(target);
     const info = await stat(target);
     expect(info.isDirectory()).toBe(true);
-    expect(info.mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(target, 0o700);
   });
 
-  it('tightens an existing directory that has permissive group/other bits', async () => {
+  it('tightens an existing directory that has permissive access', async () => {
     root = await mkdtemp(join(tmpdir(), 'dreamux-utils-os-'));
     const target = join(root, 'loose');
     await mkdir(target, { mode: 0o755 });
     await ensureOwnerOnlyDir(target);
-    const info = await stat(target);
-    expect(info.mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(target, 0o700);
   });
 
   it('is idempotent: calling it twice on an already-0700 dir does not throw', async () => {
@@ -151,7 +207,11 @@ describe('ensureOwnerOnlyDir', () => {
     const real = join(root, 'real');
     await mkdir(real, { mode: 0o700 });
     const link = join(root, 'link');
-    await symlink(real, link);
+    await symlink(
+      real,
+      link,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
     await expect(ensureOwnerOnlyDir(link)).rejects.toThrow(
       /it is a symlink, not a real directory/,
     );
@@ -168,6 +228,130 @@ describe('ensureOwnerOnlyDir', () => {
       ensureOwnerOnlyDir(target, { getuid: () => -1 }),
     ).rejects.toThrow(
       /it is owned by uid \d+, not the current user \(uid -1\)/,
+    );
+  });
+
+  it.skipIf(process.platform !== 'win32')(
+    'refuses a foreign Windows owner without changing its ACL',
+    async (context) => {
+      if (!isWindowsAdministrator()) context.skip();
+      root = await mkdtemp(join(tmpdir(), 'dreamux-utils-foreign-owner-'));
+      const target = join(root, 'foreign');
+      await mkdir(target);
+      const sid = currentWindowsUserSid();
+      withWindowsRestorePrivilege(() =>
+        setWindowsFixturePermissions(target, `O:SYD:P(A;OICI;FA;;;${sid})`),
+      );
+      try {
+        const before = readWindowsPermissions(target);
+        expect(before.owner).toBe('S-1-5-18');
+        await expect(ensureOwnerOnlyDir(target)).rejects.toThrow(
+          'owned by a different Windows user',
+        );
+        expect(readWindowsPermissions(target)).toEqual(before);
+      } finally {
+        withWindowsRestorePrivilege(() =>
+          setWindowsFixturePermissions(
+            target,
+            `O:${sid}D:P(A;OICI;FA;;;${sid})`,
+          ),
+        );
+      }
+    },
+  );
+});
+
+describe.skipIf(process.platform !== 'win32')(
+  'Windows paths beyond MAX_PATH',
+  () => {
+    it.each([
+      ['directory', 'absolute'],
+      ['directory', 'relative'],
+      ['directory', 'namespaced'],
+      ['file', 'absolute'],
+      ['file', 'relative'],
+      ['file', 'namespaced'],
+    ] as const)('protects a %s using a %s path', async (kind, form) => {
+      const originalCwd = process.cwd();
+      const root = await mkdtemp(join(tmpdir(), 'dreamux-long-path-'));
+      try {
+        // Every component remains below 255 UTF-16 units; the full path exceeds 260.
+        const directory = join(
+          root,
+          ...Array.from(
+            { length: 6 },
+            (_, index) => `level-${index}-${'x'.repeat(40)}`,
+          ),
+        );
+        const file = join(directory, 'identity.json');
+        const target = kind === 'directory' ? directory : file;
+        await mkdir(directory, { recursive: true });
+        if (form === 'relative') process.chdir(root);
+        const suppliedPath =
+          form === 'relative'
+            ? relative(root, target)
+            : form === 'namespaced'
+              ? toNamespacedPath(target)
+              : target;
+        expect(suppliedPath.length).toBeGreaterThan(260);
+        const nativePath = toNamespacedPath(target);
+        if (kind === 'directory') {
+          await writeFile(file, 'private content');
+          await makeWorldReadable(nativePath, 0o755);
+          await ensureOwnerOnlyDir(suppliedPath);
+        } else {
+          // Exercise the same private temporary-file publication used for identities.
+          await writeFileAtomic(suppliedPath, 'private content');
+          await ensureOwnerOnlyFile(suppliedPath);
+        }
+        await expectOwnerOnlyPermissions(
+          nativePath,
+          kind === 'directory' ? 0o700 : 0o600,
+        );
+        expect(readWindowsPermissions(nativePath)).toMatchObject({
+          protected: true,
+          rules: [{ flags: kind === 'directory' ? 3 : 0 }],
+        });
+        expect(await readFile(file, 'utf8')).toBe('private content');
+        expect(await readdir(directory)).toEqual(['identity.json']);
+      } finally {
+        process.chdir(originalCwd);
+        await rm(root, { recursive: true, force: true, maxRetries: 3 });
+      }
+    });
+  },
+);
+
+describe('ensureOwnerOnlyFile', () => {
+  let root: string;
+
+  afterEach(async () => {
+    if (root) await rm(root, { recursive: true, force: true });
+  });
+
+  it('tightens an existing regular file', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-file-'));
+    const file = join(root, 'private.log');
+    await writeFile(file, 'private data', { mode: 0o644 });
+    await ensureOwnerOnlyFile(file);
+    await expectOwnerOnlyPermissions(file, 0o600);
+  });
+
+  it('rejects a directory junction or symlink before changing its target', async () => {
+    root = await mkdtemp(join(tmpdir(), 'dreamux-utils-file-'));
+    const target = join(root, 'target');
+    await mkdir(target);
+    const link = join(root, 'private.log');
+    await symlink(
+      target,
+      link,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    await expect(ensureOwnerOnlyFile(link)).rejects.toThrow(
+      /not a regular file/,
+    );
+    await expect(ensureOwnerOnlyFile(target)).rejects.toThrow(
+      /not a regular file/,
     );
   });
 });

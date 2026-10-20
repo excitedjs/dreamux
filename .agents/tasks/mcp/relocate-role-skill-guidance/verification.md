@@ -61,7 +61,7 @@ Commands ran in the Team workspace on the `dreamux/dreamux-fable` branch on
 
 ## Known limitations
 
-- `.agents/scripts/check.sh` does not parse under this host's system bash
+- `.agents/scripts/check.mjs` does not parse under this host's system bash
   3.2 (`case` pattern with `continue`, line 222); it runs in CI on Linux.
 - The manual step "start a Team and read the TeamLeader system prompt in the
   runtime log" is replaced by the static read of `teamLeaderSystemPrompt`
@@ -104,8 +104,8 @@ finding → ruling → reason → operator-ruling conflict.
   build`, `rush typecheck`, `rush typecheck:tests`, `rush lint`, and the
   focused tests (dreamux: 7 files / 123 tests including
   `internal-content-scan.test.ts`; feishu-channel routing: 7) all passed.
-- `common/scripts/check-internal-content.sh` over the tree: clean.
-- gitleaks 8.30.1 installed with `common/scripts/install-gitleaks.sh`;
+- `common/scripts/check-internal-content.mjs` over the tree: clean.
+- gitleaks 8.30.1 installed with `common/scripts/install-gitleaks.mjs`;
   `gitleaks git --config .gitleaks.toml` over this branch's commits: no leaks.
   Because the repository pre-commit hook is not wired on this host (global
   `core.hooksPath`), the hook script is run by hand against the staged

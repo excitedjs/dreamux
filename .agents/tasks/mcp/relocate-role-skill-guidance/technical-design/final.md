@@ -364,7 +364,7 @@ operator's, and later additions are ordinary skill edits.
 
 ## 8. Verification
 
-- `rush build`, `rush lint`, `rush test`, `.agents/scripts/check.sh`.
+- `rush build`, `rush lint`, `rush test`, `.agents/scripts/check.mjs`.
 - Acceptance grep from the requirement returns nothing.
 - Dump both callers' `teammate`/`team` catalogs and the `cron` catalog in a
   script and read every description once as the model would.

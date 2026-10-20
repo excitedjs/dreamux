@@ -5,11 +5,11 @@ import type {
   RuntimeAdmission,
   RuntimeCompletion,
 } from '@excitedjs/dreamux-types';
-import type { CodexWsClient } from '../src/rpc.js';
+import type { CodexRpcClient } from '../src/rpc.js';
 import { TurnManager } from '../src/turn-manager.js';
 import { CodexReasoningEffort } from '../src/reasoning-effort.js';
 import { compileCodexOutputSchema } from '../src/output-schema-codec.js';
-import { FakeCodexWsClient, waitFor } from './helpers/codex-runtime-fakes.js';
+import { FakeCodexRpcClient, waitFor } from './helpers/codex-runtime-fakes.js';
 
 const logger: DreamuxLogger = {
   info() {},
@@ -25,8 +25,8 @@ function submitted(admission: RuntimeAdmission) {
   return admission.submission;
 }
 function fixture(codec = false) {
-  const client = new FakeCodexWsClient({ autoComplete: false });
-  const native = client as unknown as CodexWsClient;
+  const client = new FakeCodexRpcClient({ autoComplete: false });
+  const native = client as unknown as CodexRpcClient;
   const published: RuntimeCompletion[] = [];
   const manager = new TurnManager({
     threadId: 'thread',

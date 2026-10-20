@@ -23,10 +23,10 @@ import { compileCodexOutputSchema } from '../src/output-schema-codec.js';
 import { defaultDispatcherCodexConfig } from '../src/config.js';
 import type { CodexRuntimeDeps } from '../src/runtime-deps.js';
 import { CodexProcess, type CodexProcessOptions } from '../src/supervisor.js';
-import { CodexWsClient } from '../src/rpc.js';
+import { CodexRpcClient } from '../src/rpc.js';
 import {
   FakeCodexProcess,
-  FakeCodexWsClient,
+  FakeCodexRpcClient,
   FAKE_PATHS,
   RecordingStateSink,
   noopStateSink,
@@ -44,10 +44,10 @@ import type {
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
 
-vi.mock('../src/rpc.js', () => ({ CodexWsClient: vi.fn() }));
+vi.mock('../src/rpc.js', () => ({ CodexRpcClient: vi.fn() }));
 vi.mock('../src/supervisor.js', () => ({ CodexProcess: vi.fn() }));
 beforeEach(() => {
-  vi.mocked(CodexWsClient).mockReset();
+  vi.mocked(CodexRpcClient).mockReset();
   vi.mocked(CodexProcess).mockReset();
 });
 const logger: DreamuxLogger = {
@@ -70,12 +70,12 @@ function identity(
 function makeDeps(
   overrides: Partial<CodexRuntimeDeps> & {
     process?: FakeCodexProcess;
-    client?: FakeCodexWsClient;
+    client?: FakeCodexRpcClient;
   } = {},
 ): {
   deps: CodexRuntimeDeps;
   process: FakeCodexProcess;
-  client: FakeCodexWsClient;
+  client: FakeCodexRpcClient;
 } {
   const {
     process: suppliedProcess,
@@ -83,12 +83,12 @@ function makeDeps(
     ...runtimeOverrides
   } = overrides;
   const process = suppliedProcess ?? new FakeCodexProcess();
-  const client = suppliedClient ?? new FakeCodexWsClient();
+  const client = suppliedClient ?? new FakeCodexRpcClient();
   vi.mocked(CodexProcess).mockImplementation(
     () => process as unknown as CodexProcess,
   );
-  vi.mocked(CodexWsClient).mockImplementation(
-    () => client as unknown as CodexWsClient,
+  vi.mocked(CodexRpcClient).mockImplementation(
+    () => client as unknown as CodexRpcClient,
   );
   const deps: CodexRuntimeDeps = {
     cwd: '/fake/cwd',
@@ -116,6 +116,28 @@ function requireSubmitted(admission: RuntimeAdmission): RuntimeSubmission {
 }
 
 describe('CodexRuntime start() continuity', () => {
+  it('starts on Windows without allocating a Unix socket', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'win32' });
+    const { deps } = makeDeps({
+      paths: {
+        ...FAKE_PATHS,
+        runtimeSocketDirs: () => [
+          'C:/Users/operator/' + 'long-directory/'.repeat(20),
+        ],
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    try {
+      await expect(runtime.start()).resolves.toEqual({ continuity: 'fresh' });
+      expect(
+        vi.mocked(CodexProcess).mock.calls[0]?.[0].socketPath,
+      ).toBeUndefined();
+    } finally {
+      await runtime.stop();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('reports fresh continuity and calls thread/start when there is no prior session', async () => {
     const { deps, client } = makeDeps();
     const runtime = new CodexRuntime(identity(null), deps);
@@ -145,7 +167,7 @@ describe('CodexRuntime start() continuity', () => {
   });
 
   it('rejects loudly instead of silently starting fresh when a first-start resume fails', async () => {
-    const client = new FakeCodexWsClient({
+    const client = new FakeCodexRpcClient({
       failResumeWith: new Error('native session gone'),
     });
     const { deps } = makeDeps({ client });
@@ -210,9 +232,9 @@ describe('CodexRuntime developerInstructions re-supply', () => {
 
   it('re-sends developerInstructions on the resume-fallback thread/start after a child crash', async () => {
     let clientCount = 0;
-    const clients: FakeCodexWsClient[] = [];
-    const client1 = new FakeCodexWsClient({ freshThreadId: 'thread-A' });
-    const client2 = new FakeCodexWsClient({
+    const clients: FakeCodexRpcClient[] = [];
+    const client1 = new FakeCodexRpcClient({ freshThreadId: 'thread-A' });
+    const client2 = new FakeCodexRpcClient({
       failResumeWith: new Error('resume rejected on restart'),
       freshThreadId: 'thread-B',
     });
@@ -226,10 +248,10 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     vi.mocked(CodexProcess).mockImplementation(
       () => processes[processIndex++]! as unknown as CodexProcess,
     );
-    vi.mocked(CodexWsClient).mockImplementation(() => {
+    vi.mocked(CodexRpcClient).mockImplementation(() => {
       const c = clients[clientCount++];
       if (c === undefined) throw new Error('no more fake clients scripted');
-      return c as unknown as CodexWsClient;
+      return c as unknown as CodexRpcClient;
     });
     const deps: CodexRuntimeDeps = {
       cwd: '/fake/cwd',
@@ -395,7 +417,7 @@ describe('CodexRuntime stop() semantics', () => {
     // The failed attempt must not have left an unterminated process behind —
     // a fresh start attempt must be able to create a brand new process.
     const retryProcess = new FakeCodexProcess();
-    const retryClient = new FakeCodexWsClient();
+    const retryClient = new FakeCodexRpcClient();
     const { deps: retryDeps } = makeDeps({
       process: retryProcess,
       client: retryClient,
@@ -408,7 +430,7 @@ describe('CodexRuntime stop() semantics', () => {
   });
 
   it('converges an admission whose turn/start is still in flight when stop() lands', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -418,7 +440,7 @@ describe('CodexRuntime stop() semantics', () => {
     await waitFor(() => client.hasBlocked('turn/start'));
 
     const stopping = runtime.stop();
-    // The real CodexWsClient rejects in-flight requests when its socket
+    // The real CodexRpcClient rejects in-flight requests when its socket
     // closes (see stopRuntime, which closes the client before tearing down
     // the process); the fake mirrors that in close(). Both stop() and the
     // in-flight admission must resolve, not hang.
@@ -430,7 +452,7 @@ describe('CodexRuntime stop() semantics', () => {
 
 describe('CodexRuntime submit() and settlement', () => {
   it('interrupts the tracked native turn and reports idle when none is running', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await expect(runtime.interrupt()).resolves.toEqual({ status: 'idle' });
@@ -459,7 +481,7 @@ describe('CodexRuntime submit() and settlement', () => {
     // status: without the marker the turn would look answered, and without the
     // end status the Feishu COT would render 任务已完成 rather than 任务中断.
     const activity: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (fact) => {
@@ -497,7 +519,7 @@ describe('CodexRuntime submit() and settlement', () => {
     // reach either branch: nothing but `interrupted` puts the marker on the
     // card or changes the end codex reports.
     const activity: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (fact) => {
@@ -526,7 +548,7 @@ describe('CodexRuntime submit() and settlement', () => {
   });
 
   it('interrupts the most recently started turn when two native turns are open', async () => {
-    const client = new FakeCodexWsClient({
+    const client = new FakeCodexRpcClient({
       autoComplete: false,
       scriptedTurnIds: ['turn-older', 'turn-newer'],
     });
@@ -553,7 +575,7 @@ describe('CodexRuntime submit() and settlement', () => {
   });
 
   it('admits a second submit during an active turn without waiting for the first (non-blocking mid-turn submit)', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -590,7 +612,7 @@ describe('CodexRuntime submit() and settlement', () => {
     // the wire (turn/start called twice, non-blocking admission), but the
     // native app-server answers both with the SAME turn id, and a single
     // turn/completed notification must settle both submissions identically.
-    const client = new FakeCodexWsClient({
+    const client = new FakeCodexRpcClient({
       autoComplete: false,
       scriptedTurnIds: ['turn-folded', 'turn-folded'],
     });
@@ -626,7 +648,7 @@ describe('CodexRuntime submit() and settlement', () => {
   });
 
   it('settles a failed native turn as a failed completion', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -648,7 +670,7 @@ describe('CodexRuntime submit() and settlement', () => {
   });
 
   it('settles every in-flight submission as failed on an internal (unscoped) protocol failure', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -665,7 +687,7 @@ describe('CodexRuntime submit() and settlement', () => {
   });
 
   it('settles pending submissions as stopped when stop() is called mid-turn', async () => {
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -704,7 +726,7 @@ describe('CodexRuntime token usage', () => {
   it('keeps only the latest cumulative snapshot and emits it before the end without changing completion text', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
-      client: new FakeCodexWsClient({ autoComplete: false }),
+      client: new FakeCodexRpcClient({ autoComplete: false }),
       activitySink: (fact) => {
         activity.push(fact);
       },
@@ -761,7 +783,7 @@ describe('CodexRuntime token usage', () => {
   it('preserves the interrupt marker before usage and the native interrupted end', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
-      client: new FakeCodexWsClient({ autoComplete: false }),
+      client: new FakeCodexRpcClient({ autoComplete: false }),
       activitySink: (fact) => {
         activity.push(fact);
       },
@@ -802,7 +824,7 @@ describe('CodexRuntime token usage', () => {
   it('does not wait for admission before displaying usage and the native end', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
-      client: new FakeCodexWsClient({ autoComplete: false }),
+      client: new FakeCodexRpcClient({ autoComplete: false }),
       activitySink: (fact) => {
         activity.push(fact);
       },
@@ -833,7 +855,7 @@ describe('CodexRuntime token usage', () => {
   it('omits context entirely when codex holds no positive window size, so the line stays n/a', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
-      client: new FakeCodexWsClient({ autoComplete: false }),
+      client: new FakeCodexRpcClient({ autoComplete: false }),
       activitySink: (fact) => {
         activity.push(fact);
       },
@@ -861,7 +883,7 @@ describe('CodexRuntime token usage', () => {
   it('treats a zero window like a missing one, even with used tokens present', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
-      client: new FakeCodexWsClient({ autoComplete: false }),
+      client: new FakeCodexRpcClient({ autoComplete: false }),
       activitySink: (fact) => {
         activity.push(fact);
       },
@@ -883,7 +905,7 @@ describe('CodexRuntime token usage', () => {
   it('does not repeat the previous turn snapshot when the next same-thread turn ends without an update', async () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
-      client: new FakeCodexWsClient({ autoComplete: false }),
+      client: new FakeCodexRpcClient({ autoComplete: false }),
       activitySink: (fact) => {
         activity.push(fact);
       },
@@ -921,7 +943,7 @@ describe('CodexRuntime token usage', () => {
 describe('CodexRuntime native turn end', () => {
   it('reports one completed end for a native turn that folded two submissions', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({
+    const client = new FakeCodexRpcClient({
       autoComplete: false,
       scriptedTurnIds: ['turn-folded', 'turn-folded'],
     });
@@ -956,7 +978,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('reports one end per native turn when two submissions ran as two turns', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -982,7 +1004,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('reports nothing while a turn is still running', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1005,7 +1027,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('reports failed when the native turn carried an error', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1027,7 +1049,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('decodes command display on start and completion without changing raw arguments', async () => {
     const activity: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (fact) => {
@@ -1075,7 +1097,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('projects what a web search asked for, which it states outside an argument member', async () => {
     const activity: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (fact) => {
@@ -1125,7 +1147,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('leaves out the action a plain web search reports as null', async () => {
     const activity: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (fact) => {
@@ -1168,7 +1190,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('ends a native turn no submission ever bound, after its items displayed', async () => {
     const activity: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (fact) => {
@@ -1217,7 +1239,7 @@ describe('CodexRuntime native turn end', () => {
     // and the end goes out then — the gate exists so `finalize` does not settle
     // a submission that has not bound yet, which is push-back's problem.
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1246,7 +1268,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('ends a turn codex only ever sent items for, when stop() tears it down', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1278,7 +1300,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('ends a turn codex only ever sent items for, when the protocol fails', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1310,7 +1332,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('reports a text-free context.compacted activity on item completion only', async () => {
     const events: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1342,7 +1364,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('reports failed once for every turn an unscoped protocol failure tore down', async () => {
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1362,7 +1384,7 @@ describe('CodexRuntime native turn end', () => {
 
   it('reports only an interrupted end, exactly once, when stop() tears down a turn mid-flight', async () => {
     const events: RuntimeActivity[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1396,7 +1418,7 @@ describe('CodexRuntime native turn end', () => {
     // stop() reports an interrupted end regardless; a card belongs to no turn,
     // and a consumer with nothing open ignores the end (rule 8).
     const nativeEnds: NativeTurnEnd[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       activitySink: (activity) => {
@@ -1437,7 +1459,7 @@ describe('CodexRuntime outputSchema binding', () => {
     const codec = compileCodexOutputSchema(
       schema as unknown as Record<string, unknown>,
     );
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({ client, codec });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -1466,7 +1488,7 @@ describe('CodexRuntime outputSchema binding', () => {
     const codec = compileCodexOutputSchema(
       schema as unknown as Record<string, unknown>,
     );
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       codec,
@@ -1496,7 +1518,7 @@ describe('CodexRuntime outputSchema binding', () => {
     const codec = compileCodexOutputSchema(
       schema as unknown as Record<string, unknown>,
     );
-    const client = new FakeCodexWsClient({ autoComplete: true });
+    const client = new FakeCodexRpcClient({ autoComplete: true });
     const { deps } = makeDeps({ client, codec });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -1524,13 +1546,13 @@ describe('MCP server list passthrough encoding', () => {
     ];
     let capturedArgs: string[] | undefined;
     const process = new FakeCodexProcess();
-    const client = new FakeCodexWsClient();
+    const client = new FakeCodexRpcClient();
     vi.mocked(CodexProcess).mockImplementation((opts: CodexProcessOptions) => {
       capturedArgs = opts.extraArgs;
       return process as unknown as CodexProcess;
     });
-    vi.mocked(CodexWsClient).mockImplementation(
-      () => client as unknown as CodexWsClient,
+    vi.mocked(CodexRpcClient).mockImplementation(
+      () => client as unknown as CodexRpcClient,
     );
     const provider = createCodexAgentRuntimeProvider();
 
@@ -1631,7 +1653,7 @@ describe('CodexRuntime ordered native results', () => {
     'keeps a folded input on its selected C when its positive ack resumes after %s teardown begins',
     async (fence) => {
       const published: RuntimeCompletion[] = [];
-      const client = new FakeCodexWsClient({ autoComplete: false });
+      const client = new FakeCodexRpcClient({ autoComplete: false });
       const state = new RecordingStateSink();
       const { deps } = makeDeps({
         client,
@@ -1676,7 +1698,7 @@ describe('CodexRuntime ordered native results', () => {
     'preserves the selected bound interrupted %s value without publishing a native report',
     async (mode) => {
       const published: RuntimeCompletion[] = [];
-      const client = new FakeCodexWsClient({ autoComplete: false });
+      const client = new FakeCodexRpcClient({ autoComplete: false });
       const codec =
         mode === 'empty'
           ? null
@@ -1715,7 +1737,7 @@ describe('CodexRuntime ordered native results', () => {
   );
   it('publishes bound/folded and unbound normal/failed results, skips interruptions and connection loss', async () => {
     const published: RuntimeCompletion[] = [];
-    const client = new FakeCodexWsClient({
+    const client = new FakeCodexRpcClient({
       autoComplete: false,
       scriptedTurnIds: ['folded', 'folded'],
     });
@@ -1778,7 +1800,7 @@ describe('CodexRuntime ordered native results', () => {
   });
   it('publishes a bound terminal before a pending folded admission returns and gives the late input exactly C', async () => {
     const published: RuntimeCompletion[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
       resultSink: (completion) => published.push(completion),
@@ -1812,7 +1834,7 @@ describe('CodexRuntime ordered native results', () => {
   });
   it('publishes unbound codec failures and scoped fatal terminals as failed results', async () => {
     const published: RuntimeCompletion[] = [];
-    const client = new FakeCodexWsClient({ autoComplete: false });
+    const client = new FakeCodexRpcClient({ autoComplete: false });
     const codec = compileCodexOutputSchema({
       type: 'object',
       properties: { answer: { type: 'string' } },

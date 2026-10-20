@@ -75,7 +75,6 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
       context,
       runner,
     ): Promise<AgentRuntimeDiagnosticResult> {
-      const socketDirs = context.paths.runtimeSocketDirs();
       // Validate against the env this runtime's Codex child actually spawns
       // with (the diagnostic's target env — the managed service's own env for
       // a managed-service check — plus this runtime's own `extra_env`), not
@@ -86,12 +85,14 @@ export const codexAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability<Dispa
       const homeContext = dispatcherCodexHomeDoctorContext(
         context.runtime_id,
         env,
-        {
-          socketPath: representativeCodexSocketPath(
-            socketDirs,
-            context.runtime_id,
-          ),
-        },
+        process.platform === 'win32'
+          ? {}
+          : {
+              socketPath: representativeCodexSocketPath(
+                context.paths.runtimeSocketDirs(),
+                context.runtime_id,
+              ),
+            },
       );
       const home = await validateDispatcherCodexHome(homeContext, { env });
       const errors = [...home.errors];

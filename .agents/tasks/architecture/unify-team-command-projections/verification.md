@@ -84,7 +84,7 @@ accepted finding remains unresolved.
   native turn timed out; recent activity returned zero entries; and mid-turn
   Feishu marker injection timed out waiting for its marker. All deterministic
   packages, including Dreamux and Feishu Channel, passed in the same run.
-- `.agents/scripts/check.sh`: passed in the final TeamLeader rerun (`187` files
+- `.agents/scripts/check.mjs`: passed in the final TeamLeader rerun (`187` files
   reachable from `root.md`).
 - `rush change --verify --target-branch origin/next --no-fetch`: exited zero
   on the committed branch; the three required change files are present for
@@ -116,7 +116,7 @@ are in the requirement; the findings and their outcomes:
   passed after the fix.
 - `rush build`, `rush lint`, `rush typecheck:tests`, and `rush test` with
   `DREAMUX_SKIP_LIVE_CODEX=1` passed on the fix commit; live Codex is not
-  claimed by that run. Task validation, `.agents/scripts/check.sh` (`190`
+  claimed by that run. Task validation, `.agents/scripts/check.mjs` (`190`
   files reachable from `root.md`), and `git diff --check` passed.
   `rush change --verify --target-branch origin/next --no-fetch` was run on
   the committed branch.

@@ -1,15 +1,14 @@
 /** Real Codex app-server and MCP, with Feishu platform IO replaced locally. */
 import { describe, expect, it, vi } from 'vitest';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCodexAgentRuntimeProvider } from '@excitedjs/agent-runtime-codex';
+import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 // Test-only internal coupling: native RPC ordering/types/version and the Feishu
 // bot IO interception have no public seam. They retain real Codex/MCP evidence
 // while preventing platform sends; provider construction uses public entries.
-import { CodexWsClient } from '../../agent-runtime/codex/dist/rpc.js';
+import { CodexRpcClient } from '../../agent-runtime/codex/dist/rpc.js';
 import { codexVersionSatisfies } from '../../agent-runtime/codex/dist/version.js';
 import type {
   ServerNotification,
@@ -38,16 +37,12 @@ import { ProviderRegistry } from '../src/registry/registry.js';
 import { registerBuiltinProvider } from '../src/registry/builtins.js';
 import { AgentRuntimeProviderCatalog } from '../src/agent-runtime/catalog.js';
 import { ChannelProviderCatalog } from '../src/channel/catalog.js';
+import {
+  captureLiveCodexVersion,
+  skipLiveModelGate,
+} from './helpers/live-codex-provider.js';
 
-const capture = promisify(execFile);
 const bin = process.env['CODEX_HOST_CODEX_BIN']?.trim() || 'codex';
-const skip =
-  process.env['DREAMUX_SKIP_LIVE_CODEX'] === '1' ||
-  process.env['DREAMUX_RUN_LIVE_MODEL_GATE'] !== '1';
-if (skip)
-  console.warn(
-    '[codex-live] Real #63 model gate excluded; set DREAMUX_RUN_LIVE_MODEL_GATE=1 with usable auth. This run does not certify folding.',
-  );
 async function waitFor(predicate: () => boolean, label: string, ms = 60_000) {
   const deadline = Date.now() + ms;
   while (!predicate()) {
@@ -76,22 +71,25 @@ function inbound(text: string, messageId: string): FeishuInboundEvent {
 }
 
 describe('real Codex #63 inbound gate', () => {
-  it.skipIf(skip)(
+  it.skipIf(skipLiveModelGate)(
     'folds mid-operation Feishu input into one real turn and keeps reactions explicit',
     async () => {
-      const { stdout } = await capture(bin, ['--version']);
+      const stdout = await captureLiveCodexVersion(bin);
       expect(codexVersionSatisfies(stdout)).toBe(true);
       const dir = await mkdtemp(join(tmpdir(), 'dreamux-r63-'));
       const oldRoot = process.env['DREAMUX_ROOT'];
       const oldBin = process.env['DREAMUX_BIN'];
-      const authHome = process.env['CODEX_HOME'] ?? join(homedir(), '.codex');
+      const authHome =
+        process.env['DREAMUX_TEST_AUTH_HOME'] ??
+        process.env['CODEX_HOME'] ??
+        join(homedir(), '.codex');
       const codexHome = join(dir, 'codex');
       const cwd = join(dir, 'cwd');
       const root = join(dir, 'root');
       let server: Server | undefined;
       let routes: FeishuInboundRoutes | undefined;
       let instance: ChannelInstance | undefined;
-      let liveClient: CodexWsClient | undefined;
+      let liveClient: CodexRpcClient | undefined;
       let sequence = 0;
       const requests: Array<{
         method: string;
@@ -159,12 +157,12 @@ describe('real Codex #63 inbound gate', () => {
         resolveWikiNode: unsupported,
         fetchMessageResource: unsupported,
       };
-      const realRequest = CodexWsClient.prototype.request;
-      const observed = new WeakSet<CodexWsClient>();
+      const realRequest = CodexRpcClient.prototype.request;
+      const observed = new WeakSet<CodexRpcClient>();
       const requestSpy = vi
-        .spyOn(CodexWsClient.prototype, 'request')
+        .spyOn(CodexRpcClient.prototype, 'request')
         .mockImplementation(async function <R = unknown>(
-          this: CodexWsClient,
+          this: CodexRpcClient,
           method: string,
           params: unknown,
         ): Promise<R> {
@@ -207,6 +205,7 @@ describe('real Codex #63 inbound gate', () => {
           );
         });
       try {
+        await ensureOwnerOnlyDir(dir);
         await Promise.all([mkdir(codexHome), mkdir(cwd), mkdir(root)]);
         // Keep the operator's actual model provider/auth configuration, in a disposable home.
         for (const file of ['auth.json', 'config.toml']) {
@@ -291,11 +290,12 @@ describe('real Codex #63 inbound gate', () => {
         });
         await server.start();
         const marker = `ISSUE63_LIVE_MARKER_${Date.now()}`;
+        const blockingCommand = `node -e "setTimeout(() => console.log('issue63-sleep-done'), 6000)"`;
         await routes!.onMessage(
           inbound(
             [
               'Integration gate. Follow this exact sequence.',
-              'First call exec_command with cmd "sleep 6; echo issue63-sleep-done" and wait for completion.',
+              `First call exec_command with cmd ${JSON.stringify(blockingCommand)} and wait for completion.`,
               'After it returns, inspect later Feishu input folded into this turn.',
               'Reply through the Feishu MCP reply tool to the later marker message, echoing its marker verbatim.',
               'Do not react or send a plain assistant answer before the reply tool call.',
@@ -416,7 +416,12 @@ describe('real Codex #63 inbound gate', () => {
           else process.env['DREAMUX_ROOT'] = oldRoot;
           if (oldBin === undefined) delete process.env['DREAMUX_BIN'];
           else process.env['DREAMUX_BIN'] = oldBin;
-          await rm(dir, { recursive: true, force: true });
+          await rm(dir, {
+            recursive: true,
+            force: true,
+            maxRetries: process.platform === 'win32' ? 3 : 0,
+            retryDelay: 100,
+          });
         }
       }
     },

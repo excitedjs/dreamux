@@ -8,7 +8,7 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
 ## Server And Service
 
 - `dreamux serve` is the foreground server entry point. The public
-  `dreamux daemon install|uninstall|start|stop|restart` command group manages
+  `dreamux daemon install|uninstall|start|stop|restart|status` command group manages
   the user service; `serve` is not self-daemonizing.
 - `dreamux uninstall` removes the managed user service and recursively removes
   `DREAMUX_ROOT`, including other files and directories inside it. Its
@@ -19,8 +19,42 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   path inside or containing a provider-derived operator runtime home is refused
   before any service mutation. Physical symlink aliases are not resolved.
   `dreamux daemon uninstall` removes only the service.
-- Check launchd or systemd only for service-lifecycle questions. Explain before
-  changing units, linger, environment, or shell startup.
+- Check the native manager only for service-lifecycle questions: launchd on
+  macOS, systemd user services on Linux, and Task Scheduler on Windows. Explain
+  before changing units, task registration, linger, environment, or shell startup.
+- Windows installs one `Dreamux-<current-user-SID>` Password, limited task per
+  account, with a user-logon trigger. A new task or conversion to Password asks
+  for the Windows account password in the local terminal using a masked
+  PowerShell prompt; the Windows Hello PIN is not that password. Never request
+  or send the password through chat. Task Scheduler stores the credential;
+  Dreamux does not put it in configuration, launchers, arguments, environment
+  or logs. A non-interactive install fails if it needs a password; dry runs do
+  not prompt. An existing Password task receives an action-only update without
+  another password prompt. Other modes are converted for the current user,
+  preserving triggers, settings, description and run level. An update error
+  propagates without falling back to Interactive or S4U. A different `DREAMUX_ROOT` does
+  not create a second managed task. Use `dreamux daemon status` to inspect it.
+  Installation refuses to change a running or queued task's Job identity;
+  stop it from a terminal outside the service before changing that identity.
+  Before registration, installation prepares current-user ownership and private
+  ACLs for the log directory and existing logs, including daemon stdout/stderr,
+  so logs created by an elevated installer remain usable by the limited task.
+  Dry runs leave permissions unchanged.
+  `serve` also prepares current-user ownership for the server log and each
+  configured dispatcher's channel/workflow log before logging starts, preserving
+  existing content. Private ACL inheritance alone does not set a new file's owner
+  under an elevated token. These log files and directories are server-owned.
+  Codex and Claude Code similarly prepare their own log directories and append
+  files before child output begins, including during elevated foreground runs.
+  Existing contents are preserved; provider logs remain private and owned by
+  the current user for later limited service startup.
+  `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
+  installation to refresh its pinned Node command and captured environment.
+  Do not hand-edit that launcher.
+  Password tasks run noninteractively without leaving the service console on
+  the desktop. Login mode is separate from the trigger: a logon trigger does
+  not become a boot trigger. Task Scheduler's `Hidden` setting only hides the
+  task entry and is not the mechanism used for the service window.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
   state, and runtime app-server readiness. Use `dreamux status` for current
   Dispatcher and process facts; neither command proves Channel delivery.
@@ -38,17 +72,49 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   subtree. It is that plugin's concern, not something this skill's generic
   inspection/repair procedures cover.
 
-Dispatcher shutdown refuses new work before stopping children, waits for
+Graceful Dispatcher shutdown refuses new work before stopping children, waits for
 already-admitted operations, and releases Channels after runtime cleanup.
 A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
-`dreamux serve` always exits on SIGTERM or SIGINT. It exits 0 once shutdown
+Windows managed `stop` and `restart` forcefully terminate and await the task
+Job owned by its Node launcher, including native runtime descendants. Its
+`Global` namespace and current-user-only DACL let the desktop CLI and
+non-interactive service address the same object. They do not guarantee
+graceful draining or completion delivery. Inspect persisted state after restart;
+its normal startup rules determine recovery. Task startup runs at user logon,
+not before a user signs in.
+
+A Windows restart issued from inside the service hands control to a short-lived
+process outside the service Job before stopping it. Command handoff is not
+restart completion: for self-upgrade, wait for the existing resumed Dispatcher
+notice. Controller errors are written to `logs/daemon.stderr.log`.
+
+For a delivered SIGTERM or SIGINT, `dreamux serve` exits 0 once shutdown
 completes; if shutdown fails, or has not settled within 15 seconds, it logs the
 reason and exits 1. Under systemd a non-zero exit that was not requested through
 `systemctl stop` restarts the service (`Restart=on-failure`). A runtime child
 process can outlive a daemon that was cut off at the 15-second deadline, so
 check for leftover runtime processes after such an exit.
+
+## Native Runtime And Local IPC
+
+- The logical admin endpoint remains `<DREAMUX_ROOT>/run/admin.sock`, with its
+  sibling lock. On Windows it resolves to a named pipe with a protected
+  current-user DACL before Commands are admitted; there is no filesystem socket
+  to remove. POSIX keeps the private Unix socket. Use Dreamux commands to reach
+  the endpoint rather than substituting a TCP listener.
+- Codex app-server uses private child stdio on Windows and Unix WebSocket
+  transport on Linux/macOS. Windows readiness is the initialize handshake,
+  not appearance of a socket file. Stdout carries protocol frames; stderr is
+  the diagnostic stream. An explicit `CODEX_HOME` overrides Codex's native home;
+  `HOME` alone does not relocate native Windows Codex.
+- Native Windows executables and npm Node command shims are supported. The npm
+  Node target launches directly so multiline system prompts remain intact.
+  Arbitrary batch commands cannot carry multiline arguments; configure the
+  executable directly if startup reports that limitation.
+- Claude skill directories use Windows junctions. Its activity reader follows
+  `CLAUDE_CONFIG_DIR`, then `HOME`, then Node's home-directory fallback.
 
 ## Missing Replies And Stuck Turns
 
@@ -173,7 +239,7 @@ check for leftover runtime processes after such an exit.
   and reserved-name rules. Such entries are not read as Team records or removed
   by startup, history, or replay; direct requests using an invalid Team ID fail.
 - Dissolve is a submission. The caller's receipt (`{ accepted, team_name,
-  status: submitted }`) proves only that the request was accepted; writing the
+status: submitted }`) proves only that the request was accepted; writing the
   record closed, destroying every child resource, and reclaiming the worktree
   all run behind that receipt and are never reported back to that caller. Read
   the Team's status afterward to learn what actually happened.
@@ -181,8 +247,8 @@ check for leftover runtime processes after such an exit.
   dissolve facts. There is no persisted dissolve operation, phase, retry
   counter, or generation. Writing `status: closed` is the dissolve's one commit
   point: once it lands, the dissolve cannot fail in a way that reopens the
-  Team. A dissolve interrupted *before* that write simply did not happen — the
-  Team is still open and can be asked again. One interrupted *after* that write
+  Team. A dissolve interrupted _before_ that write simply did not happen — the
+  Team is still open and can be asked again. One interrupted _after_ that write
   leaves the Team durably closed, with whatever child resources (cron jobs,
   members, the leader's runtime) had not yet been destroyed left exactly as
   they were — nothing revisits a closed Team to finish that cleanup, so a
@@ -217,7 +283,7 @@ check for leftover runtime processes after such an exit.
   runs `git worktree remove <path>`, forced only under that authorization: it
   does not use ref reachability as an eligibility check, and neither form
   deletes the managed branch or its commits.
-- A Team's cron store file is deleted while its resources close, *after* the
+- A Team's cron store file is deleted while its resources close, _after_ the
   closed record is committed — not before — alongside every other child
   resource (Workflows, members, the leader). Once the closed record lands the
   dissolve itself cannot fail: a cron-store deletion failure there is logged

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 
 const mocks = vi.hoisted(() => ({
   execa: vi.fn(),
@@ -9,6 +10,7 @@ vi.mock('execa', () => ({ execa: mocks.execa }));
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 
 const LARGE_REF_COUNT = 10_000;
+const commonGitDir = join(process.cwd(), '.git');
 const LARGE_REF_OUTPUT = Array.from(
   { length: LARGE_REF_COUNT },
   (_unused, index) =>
@@ -49,6 +51,11 @@ describe('repository-scale worktree-only cleanup', () => {
             return { stdout: '' };
           case 'for-each-ref':
             return { stdout: LARGE_REF_OUTPUT };
+          case 'rev-parse':
+            if (args.includes('--git-common-dir')) {
+              return { stdout: commonGitDir };
+            }
+            throw new Error('cleanup must not resolve repository refs');
           default:
             throw new Error(
               `unexpected git command: ${String(command)} ${args.join(' ')}`,
@@ -67,17 +74,17 @@ describe('repository-scale worktree-only cleanup', () => {
     expect(calls.map((call) => call[1])).toEqual([
       ['ls-files', '-u'],
       ['status', '--porcelain=v1', '-uall'],
+      ['rev-parse', '--path-format=absolute', '--git-common-dir'],
       ['worktree', 'remove', identity.worktree.path],
     ]);
+    expect(calls.at(-1)?.[2]).toMatchObject({ cwd: commonGitDir });
     expect(LARGE_REF_OUTPUT.split('\n')).toHaveLength(LARGE_REF_COUNT);
     expect(
       calls.filter((call) => (call[1] as string[])[0] === 'for-each-ref'),
     ).toHaveLength(0);
     expect(
       calls.filter((call) =>
-        ['rev-list', 'rev-parse', 'merge-base', 'log'].includes(
-          (call[1] as string[])[0]!,
-        ),
+        ['rev-list', 'merge-base', 'log'].includes((call[1] as string[])[0]!),
       ),
     ).toHaveLength(0);
     expect(

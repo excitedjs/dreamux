@@ -22,12 +22,10 @@
  *     would force a `flushSync()` in a `process.on('exit')` handler — re-adding
  *     unavoidable sync IO in the one truly sync-only context, plus a log-tail
  *     loss risk in the short-lived `channel-mcp` shim.
- *   - Files are created `0o600` and their parent directory `mkdir`-ed by
- *     `pino.destination` itself (`{ mkdir: true, mode: 0o600 }`). That open is
- *     internal to pino/SonicBoom, not application sync IO, so `createLogger`
- *     stays synchronous (the `Server` constructor builds loggers synchronously)
- *     while our own code holds no `fs.*Sync` calls. Matches the `0600` posture
- *     of `config.json` / state files.
+ *   - File loggers require awaited file preparation before use. It creates
+ *     private files with current-user ownership, including under elevated
+ *     Windows tokens. Pino then writes synchronously, preserving immediate-exit
+ *     logs without an asynchronous write buffer.
  *   - Credentials are removed by a provider-agnostic recursive key sanitizer.
  *     Message *bodies* are NOT redacted — they are simply never passed to the
  *     logger (callers log ids, never turn `text` / `rawContent` / reply text).
@@ -37,10 +35,17 @@
  *     explicitly and never calls `logsRoot()` itself.
  */
 
-import { chmod } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
-import { errorInfo, isSecretKeyName } from '@excitedjs/dreamux-utils';
+import {
+  ensureOwnerOnlyDir,
+  ensureOwnerOnlyFile,
+  errorInfo,
+  isSecretKeyName,
+  publishFileExclusive,
+} from '@excitedjs/dreamux-utils';
 import pino, { type DestinationStream, type LoggerOptions } from 'pino';
 
 /**
@@ -62,7 +67,8 @@ export interface CreateLoggerOptions {
    */
   name?: string;
   /**
-   * Absolute path of the log file. When omitted the logger writes to stderr
+   * Absolute path already prepared by `prepareLogFile`.
+   * When omitted the logger writes to stderr
    * only — the safe default for tests and any `Server` constructed without an
    * injected file-backed logger (it opens zero files).
    */
@@ -93,31 +99,37 @@ function resolveLevel(level?: pino.Level): pino.Level {
 }
 
 /**
- * Open a log file at `path` with owner-only permissions. pino/SonicBoom creates
- * the parent directory (`mkdir: true`) and the append-mode file with `0o600`
- * (`mode`) itself; that open is internal to pino, not application sync IO, so
- * this stays a synchronous factory with no `fs.*Sync` of our own (issue #85).
- *
- * `mode` is applied only when SonicBoom *creates* the file; a pre-existing
- * wider-permission log (an older build, or manual tampering) would otherwise
- * keep its looser bits. We tighten it to 0600 defensively with a fire-and-forget
- * async `chmod`: `createLogger` stays synchronous (the `Server` constructor
- * builds loggers synchronously), and async `chmod` is not a `*Sync` call, so the
- * issue #85 gate holds while the `0600` posture of `config.json` / state files
- * is preserved. Errors are swallowed — the create-time `mode` already covers the
- * common (new-file) path.
+ * Prepare before constructing any file logger. Existing log files are
+ * tightened before more data can be appended. Individual new destinations are
+ * prepared by prepareLogFile; ACL inheritance alone does not set their owner.
  */
+export async function prepareLogDirectory(path: string): Promise<void> {
+  await ensureOwnerOnlyDir(path);
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const child = join(path, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new Error(
+        `refusing to use Dreamux log entry ${child}: it is a symlink`,
+      );
+    }
+    if (entry.isDirectory()) await prepareLogDirectory(child);
+    else await ensureOwnerOnlyFile(child);
+  }
+}
+
+/** Prepare a private append destination without replacing existing log content. */
+export async function prepareLogFile(path: string): Promise<void> {
+  await ensureOwnerOnlyDir(dirname(path));
+  await publishFileExclusive(path, '');
+  await ensureOwnerOnlyFile(path);
+}
+
 function openLogFileStream(path: string): DestinationStream {
-  const stream = pino.destination({
+  return pino.destination({
     dest: path,
-    mkdir: true,
     mode: 0o600,
     sync: true,
   });
-  void chmod(path, 0o600).catch(() => {
-    /* best-effort hardening of a pre-existing wider-permission file */
-  });
-  return stream;
 }
 
 export function createLogger(opts: CreateLoggerOptions = {}): DreamuxLogger {

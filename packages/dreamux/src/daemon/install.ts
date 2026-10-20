@@ -1,6 +1,6 @@
 /**
  * `daemon/` owns the managed-service lifecycle end to end: rendering and
- * installing the launchd/systemd unit (`installUserService`,
+ * installing the launchd/systemd unit or Windows logon task (`installUserService`,
  * `registerLaunchd`, `registerSystemd`, `enableSystemdLinger`), and removing
  * it (`removeUserService`).
  *
@@ -30,6 +30,7 @@ import {
   type FileLedgerEntry,
 } from '../platform/file-ledger.js';
 import { pathExists } from '../platform/fs-errors.js';
+import { prepareLogDirectory } from '../platform/logger.js';
 import { dreamuxBinPath } from '../platform/package-bin.js';
 import { logsRoot, stateRoot } from '../platform/paths.js';
 import {
@@ -47,6 +48,12 @@ import {
   SYSTEMD_UNIT,
   type ServicePlatform,
 } from './unit.js';
+import {
+  assertWindowsServiceInstallable,
+  registerWindowsService,
+  renderWindowsService,
+  unregisterWindowsService,
+} from './windows.js';
 
 export interface DaemonInstallOptions {
   startService?: boolean;
@@ -172,6 +179,14 @@ export async function installUserService(
   const logDir = logsRoot();
   const stdoutLog = join(logDir, 'daemon.stdout.log');
   const stderrLog = join(logDir, 'daemon.stderr.log');
+  if (unit.platform === 'windows') {
+    // Preserve a running launcher's ownership definition until it has been
+    // stopped from outside the service before changing its Job identity.
+    await assertWindowsServiceInstallable(
+      options.host.runner,
+      options.answers.dryRun,
+    );
+  }
   await ensureDirectory(
     workingDir,
     options.ledger,
@@ -193,7 +208,9 @@ export async function installUserService(
   const content =
     unit.platform === 'launchd'
       ? renderLaunchdPlist(options.answers, stdoutLog, stderrLog)
-      : renderSystemdUnit(options.answers, stdoutLog, stderrLog);
+      : unit.platform === 'windows'
+        ? renderWindowsService(options.answers, stdoutLog, stderrLog)
+        : renderSystemdUnit(options.answers, stdoutLog, stderrLog);
   const unitStatus = await writeTextFile(
     unit.path,
     content,
@@ -209,6 +226,15 @@ export async function installUserService(
   const warnings: string[] = [];
   if (unit.platform === 'launchd') {
     await registerLaunchd(unit.path, unitStatus, options);
+  } else if (unit.platform === 'windows') {
+    // An elevated installer can create Administrators-owned logs. Prepare
+    // their user ownership before the limited task tries to open them.
+    if (!options.answers.dryRun) await prepareLogDirectory(logDir);
+    await registerWindowsService(
+      unit.path,
+      options.host.runner,
+      options.answers,
+    );
   } else {
     const systemd = await registerSystemd(unit.path, options);
     lingerEnabled = systemd.lingerEnabled;
@@ -323,7 +349,9 @@ export async function removeUserService(
   const unit = serviceUnitPath(options.host.platform, options.host.homeDir);
   const dryRun = options.dryRun ?? false;
 
-  if (unit.platform === 'launchd') {
+  if (unit.platform === 'windows') {
+    await unregisterWindowsService(options.host.runner, dryRun);
+  } else if (unit.platform === 'launchd') {
     const serviceTarget = launchdTarget(options.host.uid);
     const loaded = await options.host.runner.check(
       'launchctl',

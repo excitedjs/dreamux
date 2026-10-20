@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Prepare private current-user ownership for Codex log directories and append files before child output, including elevated Windows startup, while preserving existing log contents.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

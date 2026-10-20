@@ -18,14 +18,7 @@
  * that lives in the same formatter and touches neither deleted symbol.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  chmodSync,
-  lstatSync,
-  mkdtempSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-} from 'node:fs';
+import { lstatSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -39,6 +32,10 @@ import {
 } from '../src/service/agent/channel-submission.js';
 import { commandPayload } from '../src/command/payload.js';
 import { renderSubmission } from '../src/service/agent/submission.js';
+import {
+  expectOwnerOnlyPermissions,
+  makeWorldReadable,
+} from '../../../common/scripts/test-permissions.mjs';
 
 /**
  * The production pipeline one Command runs: a payload carrying the Channel's
@@ -227,12 +224,12 @@ describe('attachment cache owner-only enforcement (issue #182 PR-2)', () => {
       cacheDir: cache,
       resourceFetcher: fetcher,
     });
-    expect(miss.attachments[0]?.status).toBe('downloaded');
+    expect(miss.attachments[0]).toMatchObject({ status: 'downloaded' });
     expect(fetcher.calls).toBe(1);
+    await expectOwnerOnlyPermissions(miss.attachments[0]!.path!, 0o600);
 
     // Someone loosens the cache dir behind our back.
-    chmodSync(cache, 0o755);
-    expect(statSync(cache).mode & 0o777).toBe(0o755);
+    await makeWorldReadable(cache, 0o755);
 
     // Second call: cache HIT. The fix runs ensureOwnerOnlyDir BEFORE the
     // fast-path return, so the dir is re-tightened and the fetcher is not hit.
@@ -242,13 +239,14 @@ describe('attachment cache owner-only enforcement (issue #182 PR-2)', () => {
     });
     expect(hit.attachments[0]?.status).toBe('downloaded');
     expect(fetcher.calls).toBe(1);
-    expect(statSync(cache).mode & 0o777).toBe(0o700);
+    await expectOwnerOnlyPermissions(cache, 0o700);
+    await expectOwnerOnlyPermissions(hit.attachments[0]!.path!, 0o600);
   });
 
   it('refuses a symlinked cache dir instead of returning a downloaded path', async () => {
     const real = cacheDir();
     const link = `${real}-link`;
-    symlinkSync(real, link);
+    symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
     dirs.push(link);
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
 

@@ -45,6 +45,7 @@ function answers(
     ],
     dreamuxBin: '/opt/dreamux/bin/dreamux',
     nodeBin: '/usr/bin/node',
+    platform: 'linux',
     startService: false,
     dryRun: true,
     fallbackDirs: [],

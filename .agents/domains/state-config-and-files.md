@@ -15,6 +15,7 @@ Dreamux local files split by volatility and ownership:
 ```text
 ~/.dreamux/
   config.json          operator-owned config
+  daemon.mjs           Windows install-owned service launcher (when installed)
   run/                 volatile IPC/control files
   state/               durable server-owned state
   cache/               rebuildable artifacts
@@ -61,8 +62,10 @@ Source:
 
 The path reported by `dreamux config path` is the only Dreamux operator config
 source. It is normally `~/.dreamux/config.json`, relocatable with
-`DREAMUX_ROOT`, and is mode `0600` because provider configs may contain
-secrets.
+`DREAMUX_ROOT`. Private writes use mode `0600` on POSIX and a current-user
+DACL on Windows because provider configs may contain secrets. Windows does not
+interpret Node mode bits as an access-control check; config loading enforces
+`0600` only on POSIX.
 
 It declares:
 
@@ -109,7 +112,7 @@ onboard policy; other writers retain their own contracts. Source:
 `/packages/dreamux/src/config/config.ts`.
 
 `dreamux serve` fails loudly and creates no silent defaults when the config file
-is missing, when its mode is not `0600`, when the JSON does not parse, when the
+is missing, when its POSIX mode is not `0600`, when the JSON does not parse, when the
 shape is rejected (a wrong type or a missing required field at any level, a
 duplicate dispatcher id, a dispatcher entry without a non-empty `cwd` (enabled
 or not; the error names the dispatcher id)), or when a providerized entry or a
@@ -552,18 +555,31 @@ holds `admin.sock` and its lock, `restart-intent.json` (a one-shot marker the
 freshly started server reads once and deletes), and a `sockets/` fallback root
 for runtime rendezvous sockets.
 
-`admin.sock` is a stable cross-process path contract, so an over-budget path
-fails loudly rather than moving. Runtime sockets are the opposite: fresh, random
-per start, and live only in process memory. Allocation prefers
-`$XDG_RUNTIME_DIR/dreamux/sockets/`, then `~/.dreamux/run/sockets/`, then a
-private per-user OS temp directory; shared `/tmp` and `/var/tmp` are not valid
-socket roots.
+`admin.sock` is the stable logical cross-process path. On POSIX it is a Unix
+socket, mode `0600` inside an owner-only directory, and an over-budget path
+fails loudly rather than moving. On Windows it maps deterministically to a
+named pipe hashed from the absolute, case-normalized logical path; the sibling
+lock remains a filesystem file. Before admitting Commands, startup gives the
+pipe a protected current-user DACL. The default Windows pipe ACL is not used
+as an owner-only guarantee. Different Dreamux roots have different endpoints.
+
+Codex uses private child stdio on Windows and allocates no runtime Unix socket;
+the Windows host does not sweep Unix socket roots. On POSIX, runtime sockets
+are fresh, random per start, and live only in process memory. Allocation
+prefers `$XDG_RUNTIME_DIR/dreamux/sockets/`, then
+`~/.dreamux/run/sockets/`, then a private per-user OS temp directory; shared
+`/tmp` and `/var/tmp` are not valid socket roots. Runtime directories use
+`0700` on POSIX and a protected current-user DACL on Windows.
 
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/platform/runtime-sockets.ts`
 - `/packages/dreamux/src/admin/socket.ts`
+- `/packages/dreamux-utils/src/windows-security.ts`
+- `/packages/dreamux-utils/src/os.ts`
+- `/packages/dreamux-utils/src/fs.ts`
+- `/packages/agent-runtime/codex/src/supervisor.ts`
 
 ### Cache
 
@@ -637,10 +653,60 @@ Source:
 - `/packages/dreamux/src/service/worktree/manager.ts`
 - `/packages/dreamux/src/service/worktree/workspaces.ts`
 
+### Native Private Files And Log Preparation
+
+Shared filesystem utilities enforce owner-only Unix modes or a protected
+current-user Windows ACL. Atomic publication secures the temporary file before
+writing private content. The Windows ACL owner converts filesystem paths with
+Node's `toNamespacedPath` before passing them to native named-security APIs;
+this preserves long-path support across Node file creation and ACL preparation.
+On Windows the prepared handle stays open through
+publication and temporary-link cleanup; closing before hardlink publication can
+leave the resulting file refusing later replacement. The native regression
+creates and immediately replaces fresh files concurrently. Windows retries a
+temporarily blocked atomic rename for at most one second; it never unlinks the
+committed destination first.
+
+`runServe()` awaits `prepareLogDirectory()` and privately prepares the server,
+channel, and workflow log destinations for its configured dispatcher IDs before
+constructing file loggers. `prepareLogFile()` creates an empty file without
+replacing existing content and confirms current-user ownership. This is needed
+for elevated Windows tokens, whose newly created files otherwise default to
+Administrators ownership despite inheriting a private DACL. Log subdirectories
+are also explicitly owned by the current user, so a later limited service can
+reopen them. Linked log entries are rejected without changing their targets;
+synchronous Pino writes retain immediate-exit logs.
+
+Codex and Claude Code prepare their provider-owned log directories and append
+files before passing descriptors to their children. They enforce current-user
+ownership even when the foreground server is elevated; this keeps later limited
+startup's recursive log check compatible with newly created provider logs.
+Preparation preserves existing contents and closes opened handles on failure.
+
+Attachment cache publication likewise sets temporary-file ownership before
+writing bytes and verifies existing files before returning a cache hit.
+
+`WorkflowJournal` prepares access at its owning create/load boundary: new files
+are privately published, and an existing file is tightened before loading its
+facts. Later rows append to the existing file without starting another ACL
+process or implicitly recreating a deleted journal. JSONL privacy belongs to
+this owner rather than a generic append helper.
+
+Source:
+
+- `/packages/dreamux-utils/src/fs.ts`
+- `/packages/dreamux-utils/src/os.ts`
+- `/packages/dreamux/src/platform/logger.ts`
+- `/packages/dreamux/src/service/workflow-service/journal.ts`
+- `/packages/dreamux/src/cli/server.ts`
+- `/packages/agent-runtime/codex/src/supervisor.ts`
+- `/packages/agent-runtime/claude-code/src/supervisor.ts`
+
 ### Managed Service PATH And Working Directory
 
-`dreamux onboard` and `dreamux daemon install` render a systemd user service or
-launchd plist with an explicit `PATH`, and resolve bare provider/agent binaries
+`dreamux onboard` and `dreamux daemon install` render a systemd user service,
+launchd plist, or Windows user Scheduled Task with an explicit `PATH`, and
+resolve bare provider/agent binaries
 under that same effective PATH. `buildServicePath()` in `platform/paths.ts` is
 the single source of its order: stable Dreamux-owned dirs (selected Node bin,
 resolved provider bin dirs, dreamux bin dir), then the operator's captured
@@ -653,16 +719,54 @@ environment: `env`, `homeDir`, and `platform` are resolved once by the caller,
 persisted into the install answers, and used for both the resolve-time and the
 service-unit PATH.
 
-Both service kinds use `stateRoot()` as their working directory, and
-`installUserService()` creates that directory before either service manager
+All service kinds use `stateRoot()` as their working directory, and
+`installUserService()` creates that directory before the service manager
 registers or starts the service, so `dreamux daemon install --start` works even
 when onboarding never created server state. A dry run records the planned
 creation in the transparent file ledger without touching the filesystem.
+
+Windows installs one `Dreamux-<current-user-SID>` Scheduled Task per account,
+independent of `DREAMUX_ROOT`. A new task has a Password, limited principal
+and a user-logon trigger. Registration asks for the current Windows account
+password locally using PowerShell's masked secure prompt; a Windows Hello PIN
+is not the account password. The credential is passed directly to Task Scheduler,
+which stores it, and never enters Dreamux's generated files, arguments or
+environment. A new registration or login-mode conversion requires a terminal;
+non-interactive calls fail if a password is needed. Dry runs never prompt.
+Reinstallation updates only an existing Password task's action. Other login
+modes are converted to Password for the current user while preserving the
+remaining task definition, including triggers, settings, description and run
+level. An update failure propagates without an Interactive or S4U fallback.
+Before writing service installation files, the installer reads the actual registered
+launcher. If a running or queued task has a different Job identity, installation
+fails until it is stopped from a terminal outside that service.
+Before
+registering or updating the task, installation assigns the current user's
+ownership and private ACL to the log directory and existing log files, including
+the daemon output logs, so an elevated installation can start a limited task.
+Dry runs leave those permissions unchanged.
+The generated `<DREAMUX_ROOT>/daemon.mjs` owns the captured environment,
+pinned Node command and log paths; rerun `dreamux daemon install` to change it,
+rather than hand-editing it. Task start/restart enables the task. Stop disables
+it while holding or reserving the launcher's named native Job in the `Global`
+namespace, shared across user sessions and protected by a current-user-only DACL, terminates and
+awaits its member process handles, then stops the task action before releasing
+the Job. It restores the task's previous enabled state. A restart invoked by a
+Dispatcher must survive termination of its own service Job: control checks
+current-process membership before task mutation and hands a member's operation
+to a short-lived same-user Node process created through WMI. That process uses
+the actual registered task identity and the same stop/start path; it creates no
+additional scheduled task or persisted state. The ordinary restart-intent notice
+remains the self-upgrade completion signal. Windows managed stop is forced and
+does not promise graceful draining of admitted work. `daemon uninstall` removes the
+service and generated launcher; `dreamux uninstall` additionally removes the
+Dreamux root under its existing provider-home exclusion rules.
 
 Source:
 
 - `/packages/dreamux/src/platform/paths.ts`
 - `/packages/dreamux/src/daemon/unit.ts`
+- `/packages/dreamux/src/daemon/windows.ts`
 - `/packages/dreamux/src/daemon/environment.ts`
 - `/packages/dreamux/src/daemon/host.ts`
 - `/packages/dreamux/src/daemon/control.ts`

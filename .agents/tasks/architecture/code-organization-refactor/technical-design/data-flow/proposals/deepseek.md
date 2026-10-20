@@ -487,7 +487,7 @@ code):
 - every `teammate.state` literal is constructed in exactly one module;
 - `dependency-cruiser` stays at `error` with the one new layer entry, and no
   new cycle appears;
-- `.agents/scripts/check.sh`, plus `rush build`, `rush lint`, `rush test` and
+- `.agents/scripts/check.mjs`, plus `rush build`, `rush lint`, `rush test` and
   `rush typecheck:tests` on the branch;
 - behavior probes named in §8, especially create-time publication, the
   record-only close, and a completion delivered to a leader after a member

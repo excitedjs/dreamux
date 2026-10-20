@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Run development checks with portable quoting and disposable test homes on Windows, Linux and macOS.",
+      "type": "none",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

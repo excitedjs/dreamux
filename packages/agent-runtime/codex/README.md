@@ -9,7 +9,7 @@ Named bare-provider constructors retain their own options.
 The provider it contributes implements the public `AgentRuntimeProvider`
 contract from
 [`@excitedjs/dreamux-types`](../../dreamux-types) against the Codex
-`app-server`: process supervision, the WebSocket RPC client, the `initialize`
+`app-server`: process supervision, the JSON-RPC client, the `initialize`
 handshake, thread start/resume, the per-runtime turn manager, teammate
 completion delivery, bounded native transcript pagination, and Codex doctor
 diagnostics.
@@ -36,8 +36,7 @@ The package logs through the required `DreamuxLogger` in the neutral runtime
 create context. The provider binds that logger, skill sources, and extra CLI
 arguments when it constructs the runtime. Each successful thread start/resume
 constructs a TurnManager bound to that thread id; socket allocation remains
-per process start. Optional process/client factories remain available for
-embedders.
+per process start on Unix.
 
 ## Ultrathink
 
@@ -68,9 +67,17 @@ import { createCodexAgentRuntimeProvider } from '@excitedjs/agent-runtime-codex'
 ```
 
 The provider accepts `restartBackoffBaseMs` and `restartBackoffMaxMs` options.
-It constructs the native process and WebSocket client directly. Each runtime
-start allocates a fresh socket from the neutral path capability; restart never
-reuses a construction-time socket allocation.
+It constructs the native process and RPC client directly. Linux and macOS use a
+private Unix socket: each start allocates a fresh socket from the neutral path
+capability. Windows uses Codex's native `stdio://` transport over the supervised
+child's stdin/stdout pipes, without a network listener or socket path. Both
+transports share initialization, thread continuity, turn handling, and restart
+semantics. Protocol stdout is not logged on Windows; stderr remains the child
+diagnostic log.
+
+On Windows the default Codex home is the operating system account's `.codex`
+directory, matching native Codex. Set `CODEX_HOME` for an explicit override;
+setting `HOME` alone does not redirect Windows Codex.
 
 ## Portable Structured Output
 

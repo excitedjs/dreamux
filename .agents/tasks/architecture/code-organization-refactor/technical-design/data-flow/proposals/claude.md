@@ -594,7 +594,7 @@ Everything else is routine implementation detail chosen above.
   change, so no `dreamux-maintenance` reference changes.
 - Rush change files per §7.
 - Gates: build, lint (dependency-cruiser layer rules included), test,
-  `typecheck:tests`, and `.agents/scripts/check.sh`. No test references the
+  `typecheck:tests`, and `.agents/scripts/check.mjs`. No test references the
   removed fields today (only a comment in `feishu-bot-logger.test.ts` names
   `createTransport`); `package-boundary-guards.test.ts` pins construction call
   text for `createFeishuChannelProvider(` and `new FeishuChannelSession`,

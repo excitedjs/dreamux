@@ -1,10 +1,10 @@
 /** Actual Codex process/model fixture; observations call through the real transport. */
-import { execFile } from 'node:child_process';
+import { once } from 'node:events';
 import { copyFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { promisify } from 'node:util';
 import { vi } from 'vitest';
+import { ensureOwnerOnlyDir, spawnCommand } from '@excitedjs/dreamux-utils';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
@@ -18,12 +18,11 @@ import {
 } from '@excitedjs/agent-runtime-codex';
 // Test-only internal coupling: public provider creation is sufficient for execution,
 // but native RPC/version/notification observations have no public equivalent.
-import { CodexWsClient } from '../../../agent-runtime/codex/dist/rpc.js';
+import { CodexRpcClient } from '../../../agent-runtime/codex/dist/rpc.js';
 import { codexVersionSatisfies } from '../../../agent-runtime/codex/dist/version.js';
 import type { ServerNotification } from '../../../agent-runtime/codex/dist/types.js';
 import { createLogger } from '../../src/platform/logger.js';
 
-const capture = promisify(execFile);
 export const skipLiveModelGate =
   process.env['DREAMUX_SKIP_LIVE_CODEX'] === '1' ||
   process.env['DREAMUX_RUN_LIVE_MODEL_GATE'] !== '1';
@@ -33,15 +32,37 @@ if (skipLiveModelGate)
   );
 
 export interface LiveCodexRequest {
-  readonly client: CodexWsClient;
+  readonly client: CodexRpcClient;
   readonly method: string;
   readonly params: unknown;
   result?: unknown;
 }
 
+export async function captureLiveCodexVersion(bin: string): Promise<string> {
+  const child = await spawnCommand(bin, ['--version'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout!.setEncoding('utf8');
+  child.stdout!.on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr!.setEncoding('utf8');
+  child.stderr!.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+  const [code, signal] = await once(child, 'close');
+  if (code !== 0)
+    throw new Error(
+      `Live Codex version probe failed (${String(code ?? signal)}): ${stderr.trim()}`,
+    );
+  return stdout;
+}
+
 export async function liveCodexProvider() {
   const bin = process.env['CODEX_HOST_CODEX_BIN']?.trim() || 'codex';
-  const { stdout } = await capture(bin, ['--version']);
+  const stdout = await captureLiveCodexVersion(bin);
   if (!codexVersionSatisfies(stdout))
     throw new Error(
       `Unsupported or unparseable live Codex version: ${stdout.trim()}`,
@@ -49,8 +70,12 @@ export async function liveCodexProvider() {
   const dir = await mkdtemp(join(tmpdir(), 'dreamux-native-live-'));
   const cwd = join(dir, 'cwd');
   const codexHome = join(dir, 'codex');
-  const authHome = process.env['CODEX_HOME'] ?? join(homedir(), '.codex');
+  const authHome =
+    process.env['DREAMUX_TEST_AUTH_HOME'] ??
+    process.env['CODEX_HOME'] ??
+    join(homedir(), '.codex');
   try {
+    await ensureOwnerOnlyDir(dir);
     await Promise.all([mkdir(cwd), mkdir(codexHome)]);
     // Preserve the actual configured model/provider and usable auth, as #63
     // does, without copying operator sessions or editing the operator home.
@@ -62,7 +87,12 @@ export async function liveCodexProvider() {
       }
     }
   } catch (error) {
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === 'win32' ? 3 : 0,
+      retryDelay: 100,
+    });
     throw error;
   }
   const config: DispatcherCodexConfig = {
@@ -78,16 +108,16 @@ export async function liveCodexProvider() {
     runtimeSocketDirs: () => [dir],
   };
   const requests: LiveCodexRequest[] = [];
-  const clients: CodexWsClient[] = [];
+  const clients: CodexRpcClient[] = [];
   const notifications: Array<{
-    client: CodexWsClient;
+    client: CodexRpcClient;
     notification: ServerNotification;
   }> = [];
-  const original = CodexWsClient.prototype.request;
+  const original = CodexRpcClient.prototype.request;
   const requestSpy = vi
-    .spyOn(CodexWsClient.prototype, 'request')
+    .spyOn(CodexRpcClient.prototype, 'request')
     .mockImplementation(async function <R = unknown>(
-      this: CodexWsClient,
+      this: CodexRpcClient,
       method: string,
       params: unknown,
     ): Promise<R> {
@@ -147,7 +177,12 @@ export async function liveCodexProvider() {
       runtimes.map((runtime) => runtime.stop()),
     );
     requestSpy.mockRestore();
-    await rm(dir, { recursive: true, force: true });
+    await rm(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === 'win32' ? 3 : 0,
+      retryDelay: 100,
+    });
     const failures = results.filter(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     );

@@ -231,7 +231,7 @@ the same change that touches it.
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
   Channel replies under that message — `Could not start a Team for this
-  conversation. The reason is in the Dreamux log.` — and delivers nothing to
+conversation. The reason is in the Dreamux log.` — and delivers nothing to
   the Dispatcher Agent. The notice names no reason, because raw failure text
   can carry host paths into a group chat. A settled question-card answer on
   such a topic is dropped with a log line instead, since re-routing an answer
@@ -606,6 +606,17 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 
 ## Local state and upgrades
 
+- **Windows runs natively.** The CLI, foreground server, local admin/MCP
+  communication and provider children run through shared Node/native capabilities
+  without Bash, PowerShell, or WSL. The managed
+  user service uses Task Scheduler Password logon without a persistent desktop
+  console. Installation locally prompts for the Windows account password when
+  registering or converting a task; Dreamux does not store it. The initial
+  trigger remains user logon. Reinstallation preserves an existing Password
+  task's settings; other login modes are converted to Password while preserving
+  the rest of their definition. Its stop command terminates the
+  owned process tree; it does not guarantee Unix signal-based graceful draining.
+  (Task: [native Windows support](/.agents/tasks/architecture/native-windows-support/README.md).)
 - **Uninstall recursively removes the Dreamux root.** `dreamux uninstall`
   removes the managed service and the state/run/cache/log paths, then the
   root directory, including other files placed inside that root. Operator-state

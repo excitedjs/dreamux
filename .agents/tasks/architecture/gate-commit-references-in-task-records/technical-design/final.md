@@ -33,7 +33,7 @@ just as immutable.
 
 ## 3. Detection
 
-The rule joins `init_task.py check-all`, which `.agents/scripts/check.sh`
+The rule joins `init_task.py check-all`, which `.agents/scripts/check.mjs`
 already runs, so no new gate is added.
 
 - **Files.** Every file under `.agents/tasks/`, not only a record's README.
@@ -93,7 +93,7 @@ one Opus node closed out the whole sweep. Every node was told:
 
 | Upstream practice | Why not |
 |---|---|
-| Rejecting the deployment organization's URLs | Dreamux has one public home, and internal hosts are covered by `check-internal-content.sh`. |
+| Rejecting the deployment organization's URLs | Dreamux has one public home, and internal hosts are covered by `check-internal-content.mjs`. |
 | Scanning every maintained file | No file outside `.agents/` cites a commit, and the archive is frozen; there is no failure scenario to name. |
 | Release tags as the evidence identifier | The release workflow publishes without creating git tags; the public repository has two tags, both from its first releases. There is no tag to cite. |
 | An archived tree as the frozen exemption | The `## Historical …` section #413 defined is this repository's frozen unit, and the task tree has no archive. |

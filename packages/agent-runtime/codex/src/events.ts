@@ -7,7 +7,7 @@
  * diagnostics and tests rather than channel forwarding.
  */
 
-import type { CodexWsClient } from './rpc.js';
+import type { CodexRpcClient } from './rpc.js';
 import type {
   ItemCompletedNotification,
   ItemStartedNotification,
@@ -66,7 +66,7 @@ export interface TurnSubscriptionOptions {
  * across successive native turns until `dispose()`.
  */
 export function subscribeTurnCollection(
-  client: CodexWsClient,
+  client: CodexRpcClient,
   threadId: string,
   options: TurnSubscriptionOptions = {},
 ): TurnCollector {
@@ -174,7 +174,7 @@ function rememberTerminal(terminals: Set<string>, turnId: string): boolean {
  * wait for `turn/completed`.
  */
 export async function submitTurnStart(
-  client: CodexWsClient,
+  client: CodexRpcClient,
   threadId: string,
   texts: string[],
   outputSchema?: Record<string, unknown>,
@@ -193,7 +193,7 @@ export async function submitTurnStart(
 
 /** Interrupt one running turn and resolve once Codex accepts the request. */
 export async function interruptTurn(
-  client: CodexWsClient,
+  client: CodexRpcClient,
   threadId: string,
   turnId: string,
 ): Promise<void> {

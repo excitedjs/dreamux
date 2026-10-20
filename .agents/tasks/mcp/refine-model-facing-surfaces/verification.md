@@ -63,14 +63,14 @@ Run by the workflow's gate agent after the last source change, read from the
 | `rush lint` | green (7 operations, eslint-config no-op) |
 | `rush test` | green; `codex-live.test.ts` ran against codex 0.153.4 (`DREAMUX_SKIP_LIVE_CODEX` unset) and observed the `channel-feishu` server in `mcpServerStatus/list` |
 | `rush typecheck:tests` | green (6 operations, 2 no-op) |
-| `.agents/scripts/check.sh` | `KB OK (166 files reachable from root.md)` |
+| `.agents/scripts/check.mjs` | `KB OK (166 files reachable from root.md)` |
 | `rush change --verify` | cannot pass in an uncommitted tree: rush enumerates change files from the committed diff against the target branch and reads them from disk, and #369's two files are deleted but still in HEAD. Run after the commit with `--target-branch origin/next --no-fetch`; result recorded below. |
 | leftover check | old skill directories absent; `team-workflow` absent from `packages/dreamux/{skills,src,README.md}`, `.agents/domains`, `.agents/skills` |
 
 Post-commit gate results (after the review fixes below, tree at the closeout
 commit): `rush build` green (8 operations), `rush lint` green (7), `rush test`
 green (`codex-live.test.ts` 9 passed against codex 0.153.4), `rush typecheck:tests`
-green (6), `.agents/scripts/check.sh` `KB OK`, `rush change --verify
+green (6), `.agents/scripts/check.mjs` `KB OK`, `rush change --verify
 --target-branch origin/next --no-fetch` lists the three change files and
 passes, `git diff --check` clean. One intermediate run failed `rush build` on an
 unescaped apostrophe the TeamLeader had introduced in the `team.create`
@@ -279,7 +279,7 @@ were applied as reported.
 
 Gates after the round (working tree with all eight fixes, 2026-09-06 15:20):
 `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-`.agents/scripts/check.sh` (KB OK), `rush change --verify --target-branch
+`.agents/scripts/check.mjs` (KB OK), `rush change --verify --target-branch
 origin/next --no-fetch`, `git diff --check`: all green. Focused suites:
 `team-leader-prompt`, `teammate-system-prompt`, `mcp-tool-descriptions`,
 `channel-input-format` (dreamux), `skill-materializer` (claude-code, five

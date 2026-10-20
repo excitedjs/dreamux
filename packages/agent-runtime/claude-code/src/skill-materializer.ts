@@ -47,7 +47,12 @@ export async function materializeClaudeSkillAddDir(
         }
         if (previous !== undefined) continue;
         linkedNames.set(skill.name, skill.path);
-        await symlink(skill.path, join(tmpSkillsRoot, skill.name), 'dir');
+        // Directory junctions do not require Windows symlink privileges.
+        await symlink(
+          skill.path,
+          join(tmpSkillsRoot, skill.name),
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
       }
     }
     await writeFile(
@@ -88,7 +93,13 @@ async function publish(
     await rename(tmpRoot, root);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw err;
+    // Windows reports an occupied directory as EPERM during concurrent publish.
+    if (
+      code !== 'EEXIST' &&
+      code !== 'ENOTEMPTY' &&
+      !(process.platform === 'win32' && code === 'EPERM')
+    )
+      throw err;
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
     if (!(await validateSkillAdapter(root, manifest))) {
       throw new Error(

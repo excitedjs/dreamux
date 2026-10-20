@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Validate Claude activity cursor syntax and query fingerprints before history discovery so unavailable or slow history cannot mask an invalid cursor.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

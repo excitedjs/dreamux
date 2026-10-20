@@ -239,7 +239,7 @@ The TeamLeader's implementation closeout should update the affected current
 service/Workflow knowledge and product behavior record, plus the source comment
 above; record that R73 supersedes the two deferred admission rows in the prior
 solution without erasing their historical rationale. Run
-`.agents/scripts/check.sh` after those authorized documentation edits. This
+`.agents/scripts/check.mjs` after those authorized documentation edits. This
 proposal does not write any of them. R72 and the parent's other deferred
 product/coverage items stay outside this continuation.
 

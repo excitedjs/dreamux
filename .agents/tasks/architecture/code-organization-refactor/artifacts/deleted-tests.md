@@ -1987,7 +1987,7 @@ stay absent` (5 cases); and `neutral contract shapes stay minimal` (4
 other 67 test files; the one failing file,
 `packages/dreamux/tests/codex-live.test.ts`, is pre-existing Item 1
 collateral unrelated to this item — see the correction note appended to
-Item 1's section above. `.agents/scripts/check.sh` passes.
+Item 1's section above. `.agents/scripts/check.mjs` passes.
 
 **Docs rewritten in this item, and one scope note:**
 `packages/dreamux/src/service/CLAUDE.md` (root-helpers list, the "old state
@@ -2477,7 +2477,7 @@ cannot register zero tests (e.g. an explicit `it('codex is available',
 `lint`, `typecheck:tests`, and `test` all report `SUCCESS`/`SUCCESS WITH
 WARNINGS` (the warnings are expected stderr capture from tests that assert on
 logged output, not failures) across all 9 operations, with `codex` present on
-`PATH` and no live-codex env var set. `.agents/scripts/check.sh` is clean
+`PATH` and no live-codex env var set. `.agents/scripts/check.mjs` is clean
 after also fixing two pre-existing KB issues this round's check run
 surfaced, unrelated to Driver C: a stale `packages/dreamux/tests/helpers/fake-feishu-bot.ts`
 path citation in `domains/repository-operations-and-release.md` (the double

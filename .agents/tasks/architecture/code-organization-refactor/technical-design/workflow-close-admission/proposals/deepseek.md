@@ -208,7 +208,7 @@ Evidence to produce instead of tests:
   fence" statement becomes true for Workflow agent construction too; the deferred-asymmetry note in
   `technical-design/data-flow/final.md` and the "TeamLeader member and Workflow mutation" phrasing in
   `.agents/domains/dispatcher-orchestration.md` should be re-stated as settled by R73; then run
-  `.agents/scripts/check.sh`. (The TeamLeader/implementer owns `.agents` writes; this proposal does not write them.)
+  `.agents/scripts/check.mjs`. (The TeamLeader/implementer owns `.agents` writes; this proposal does not write them.)
 
 Coverage limit to state: no gate run proves the live close-vs-construction race; the evidence for that is the source
 trace above, not a green test suite.

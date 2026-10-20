@@ -1,12 +1,14 @@
 import {
   fork,
-  spawn,
   type ChildProcess,
   type ForkOptions,
   type SpawnOptions,
 } from 'node:child_process';
+import { once } from 'node:events';
 
 import { isProcessGroupAlive, killProcessGroup } from './os.js';
+import { spawnCommand } from './process-command.js';
+import type { WindowsJob } from './windows-job.js';
 
 export interface SupervisedChildExit {
   code: number | null;
@@ -36,15 +38,17 @@ type ExitHandler = (exit: SupervisedChildExit) => void;
 type ErrorHandler = (error: Error) => void;
 
 /**
- * Neutral owner for one detached child process group. Domain wrappers keep
+ * Neutral owner for one child process tree. Domain wrappers keep
  * readiness probes, transports, and cleanup policy; this class owns only
- * launch, unexpected-exit observation, and two-stage group termination.
+ * launch, unexpected-exit observation, and platform-native tree termination.
  */
 export class SupervisedChild {
   private child_: ChildProcess | null = null;
   private pid_: number | null = null;
   private stopping = false;
   private stopPromise: Promise<void> | null = null;
+  private startPromise: Promise<ChildProcess> | null = null;
+  private windowsJob: WindowsJob | null = null;
   private readonly exitHandlers = new Set<ExitHandler>();
   private readonly errorHandlers = new Set<ErrorHandler>();
 
@@ -68,17 +72,40 @@ export class SupervisedChild {
   }
 
   async start(): Promise<ChildProcess> {
-    if (this.child_ !== null) {
+    if (this.child_ !== null || this.startPromise !== null) {
       throw new Error('SupervisedChild.start: already started');
     }
     if (this.stopping) {
       throw new Error('SupervisedChild.start: already stopped');
     }
+    const attempt = this.doStart();
+    this.startPromise = attempt;
+    try {
+      return await attempt;
+    } finally {
+      this.startPromise = null;
+    }
+  }
 
-    const child = launchChild(this.launch);
+  private async doStart(): Promise<ChildProcess> {
+    let child: ChildProcess;
+    try {
+      if (process.platform === 'win32') {
+        const { launchWindowsChild } = await import('./windows-child.js');
+        const launched = await launchWindowsChild(this.launch);
+        child = launched.child;
+        this.windowsJob = launched.job;
+      } else {
+        child = await launchChild(this.launch);
+      }
+    } catch (error) {
+      this.notifyError(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+      throw error;
+    }
     this.child_ = child;
-    // Node assigns pid synchronously for a successfully launched child. Publish
-    // it before the first await so a concurrent stop can never miss the group.
+    // stop() joins pending launch before reading this process-tree authority.
     if (child.pid !== undefined) this.pid_ = child.pid;
     child.on('error', (error) => this.notifyError(error));
     child.once('exit', (code, signal) => {
@@ -86,13 +113,6 @@ export class SupervisedChild {
       this.notifyExit({ code, signal });
     });
 
-    try {
-      await waitForSpawn(child);
-    } catch (error) {
-      this.child_ = null;
-      this.pid_ = null;
-      throw error;
-    }
     if (child.pid === undefined) {
       this.child_ = null;
       this.pid_ = null;
@@ -100,7 +120,6 @@ export class SupervisedChild {
     }
     this.pid_ = child.pid;
     if (this.stopping) {
-      await this.stopPromise;
       throw new Error('SupervisedChild.start: stopped during start');
     }
     return child;
@@ -118,10 +137,19 @@ export class SupervisedChild {
 
   private async doStop(): Promise<void> {
     this.stopping = true;
+    await this.startPromise?.catch(() => undefined);
+    if (process.platform === 'win32') {
+      await this.windowsJob?.terminate();
+      this.windowsJob?.close();
+      this.windowsJob = null;
+      this.child_ = null;
+      this.pid_ = null;
+      return;
+    }
     const pid = this.pid_;
     if (pid !== null) {
       if (isProcessGroupAlive(pid)) {
-        killProcessGroup(pid, 'SIGTERM');
+        await killProcessGroup(pid, 'SIGTERM');
         await waitForProcessGroupExit(
           pid,
           this.options.stopTimeoutMs ?? 1_000,
@@ -129,7 +157,7 @@ export class SupervisedChild {
         );
       }
       if (isProcessGroupAlive(pid)) {
-        killProcessGroup(pid, 'SIGKILL');
+        await killProcessGroup(pid, 'SIGKILL');
         await waitForProcessGroupExit(
           pid,
           this.options.stopTimeoutMs ?? 1_000,
@@ -180,35 +208,21 @@ async function waitForProcessGroupExit(
   }
 }
 
-function launchChild(launch: SupervisedChildLaunch): ChildProcess {
+async function launchChild(
+  launch: SupervisedChildLaunch,
+): Promise<ChildProcess> {
   if (launch.kind === 'fork') {
-    return fork(launch.modulePath, [...(launch.args ?? [])], {
+    const options = {
       ...launch.options,
-      detached: true,
-    });
+      detached: process.platform !== 'win32',
+      windowsHide: true,
+    };
+    const child = fork(launch.modulePath, [...(launch.args ?? [])], options);
+    await once(child, 'spawn');
+    return child;
   }
-  return spawn(launch.command, [...(launch.args ?? [])], {
+  return spawnCommand(launch.command, [...(launch.args ?? [])], {
     ...launch.options,
-    detached: true,
-  });
-}
-
-async function waitForSpawn(child: ChildProcess): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const onError = (error: Error): void => {
-      if (settled) return;
-      settled = true;
-      child.off('spawn', onSpawn);
-      reject(error);
-    };
-    const onSpawn = (): void => {
-      if (settled) return;
-      settled = true;
-      child.off('error', onError);
-      resolve();
-    };
-    child.once('error', onError);
-    child.once('spawn', onSpawn);
+    detached: process.platform !== 'win32',
   });
 }

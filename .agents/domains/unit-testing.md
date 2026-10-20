@@ -92,17 +92,85 @@ by a result adapter cannot prove real multi-submit folding. Remove the dead
 dimension, retain the result projection and point the folding obligation to
 the test that actually submits multiple inputs and observes their native end.
 
+## Disposable homes and native platform behavior
+
+The root `.gitattributes` pins detected text files to LF on checkout, including
+Windows hosts with `core.autocrlf=true`, so the same Prettier gate runs everywhere.
+Launcher path assertions compare canonical installed paths with `realpathSync`:
+macOS temporary directories can resolve through `/var` to `/private/var`.
+
+Package `test` and `test:watch` scripts invoke Vitest directly. The host,
+utils, Codex and Claude packages load `/common/testing/isolated-home.mjs`
+through `globalSetup` in their `vitest.config.mjs`. It creates a unique short
+`.dt-*` directory under `tmpdir()` on Windows or the account home on Unix
+(to keep Unix sockets outside shared temporary directories). After creating
+the application directories, `provide` passes their environment to the shared
+`/common/testing/apply-isolated-home.mjs` setup-file hook. It uses `inject` to set
+`HOME`, `USERPROFILE`, `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR` and `DREAMUX_ROOT` before test modules load; children inherit
+the resulting environment. If initialization failed, no environment is
+provided and the hook refuses to import tests, including watch reruns.
+Run focused tests from the package directory so Vitest discovers its config.
+Watch reruns reuse the same directory; normal shutdown and failed test runs
+invoke global teardown. Setup failures clean up before rethrowing. Cleanup
+uses only the captured `mkdtemp` result, never an environment variable.
+Tests still own joining their children and closing handles before teardown.
+
+Vitest timeouts do not cancel an async test body. For CLI fixtures, keep the
+directory's `try/finally` around the callback that awaits subprocess completion;
+an independent `afterEach` can otherwise delete files while packing or scanning
+still holds them. A passing rerun does not explain the original timeout.
+
+Types, channel and bootstrap tests use explicit fixtures or repository files
+and need no account-home setup. Config/global-setup imports execute before
+the test environment is applied and must not read application state. Explicit
+live-model opt-in preserves the original auth source for fixture copies; ordinary runs
+remove it from the inherited test environment.
+
+When changing this boundary, first run the focused isolation regressions with
+the outer Vitest process also pointed at synthetic account/application homes.
+Verify sentinel preservation and generated-directory cleanup before broader
+tests. Do not reintroduce a process launcher to implement lifecycle hooks
+already provided by the test framework.
+
+A test that overrides home resolution still owns its fixture isolation. On
+Windows, changing `HOME` alone does not redirect Node `os.homedir()`, and native
+Codex needs an explicit temporary `CODEX_HOME`. Tests exercising a missing-home
+fallback must mock `homedir()` to a disposable directory. Never derive a
+recursive cleanup target from an ambient or restored user home.
+
+Assert native behavior: current-user DACLs on Windows, POSIX modes on Unix,
+realpath equivalence for junction/symlink targets, complete literal argv
+(including multiline prompts) and termination of descendants after their
+parent exits. A Windows directory junction tests the skill-link contract
+without requiring symlink privileges. Activity file-opening tests also use
+leaf junctions and scheduled real file replacements around both open calls,
+asserting rejection and closed descriptors. Keep this coverage runnable even
+when privileged file-symlink fixtures must skip. Keep meaningful platform-specific
+contracts, such as POSIX SIGTERM escalation, scoped to that platform rather
+than weakening their assertions.
+
+The host suite runs files sequentially to avoid concurrent native process and
+ACL setup overwhelming short race-test waits. Preserve explicit barriers and
+behavior assertions. When a catalog test already has a stateless delegate,
+reuse it instead of rebuilding a filesystem harness for every tool.
+
 ## Real Codex execution boundaries
 
 `/packages/dreamux/tests/codex-live.test.ts` checks the installed version and
 initializes a real app-server/thread in a disposable home without operator
-config or authentication. Missing or unsupported Codex fails this check.
+config or authentication. On Windows it uses the same private stdio transport
+as production; POSIX retains Unix WebSocket transport. Missing or unsupported
+Codex fails this check.
 `DREAMUX_SKIP_LIVE_CODEX=1` is an explicit exclusion for an environment that
 intentionally lacks Codex; it does not certify provider compatibility.
 
 The model cases in `codex-native-contracts-live.test.ts`,
 `codex-activity-live.test.ts` and `codex-inbound-live.test.ts` additionally require
-`DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model authentication. This explicit
+`DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model authentication. Only that
+opt-in makes the wrapper retain the original Codex home in
+`DREAMUX_TEST_AUTH_HOME`; the live fixtures read its auth file into their
+disposable homes rather than creating sessions in the operator home. This explicit
 execution boundary lets normal hosted CI check installed/protocol compatibility
 without model credentials. An excluded model case is reported as excluded;
 installation, protocol startup or a default green run cannot substitute for

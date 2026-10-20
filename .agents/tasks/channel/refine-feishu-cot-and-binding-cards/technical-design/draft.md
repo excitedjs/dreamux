@@ -178,7 +178,7 @@ remains active in the neutral card.
   when status detail cannot be obtained.
 - Update the product catalog and Channel domain to state the three distinct route
   notifications, canonical runtime context, English Card 2.0 presentation, and
-  successful superseded-anchor terminal. Run `.agents/scripts/check.sh`.
+  successful superseded-anchor terminal. Run `.agents/scripts/check.mjs`.
 - Run Rush build, lint, test, and `typecheck:tests`. Add the required
   `@excitedjs/feishu-channel` change file through `rush change`; this is a
   user-visible non-breaking notification/presentation fix, with no state rebuild.

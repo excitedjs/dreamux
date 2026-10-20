@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Run Dreamux natively on Windows with Node launchers, private named-pipe admin/MCP transport, Task Scheduler user service, and native process and permission capabilities. Runtime operations do not require PowerShell; platform commands are confined to service management. The Windows service runs the generated daemon.mjs launcher and owns its processes through a native Job Object.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

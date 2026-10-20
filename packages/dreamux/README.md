@@ -97,8 +97,37 @@ node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
 
-The bin launcher shells out to plain `node` against compiled `dist/` output;
-no `tsx` is needed at runtime.
+The bin launcher is a Node script that loads compiled `dist/` output; no `tsx`
+is needed at runtime. Tests run through a shared launcher that gives each
+package disposable account and application homes.
+
+## Native Windows
+
+Windows runs natively with Node.js 22.7 or newer. Normal runtime capabilities
+use Node and native Windows bindings; PowerShell is used only to manage the
+optional Task Scheduler service. After building the checkout, for example:
+
+```powershell
+node .\packages\dreamux\bin\dreamux onboard
+node .\packages\dreamux\bin\dreamux daemon install --start
+node .\packages\dreamux\bin\dreamux daemon status
+node .\packages\dreamux\bin\dreamux doctor
+```
+
+For a foreground server, run `node .\packages\dreamux\bin\dreamux serve`.
+An npm-installed package exposes the equivalent `dreamux` command.
+
+The managed service is one Scheduled Task for the current user, starts at
+user logon, and runs with limited privileges. `daemon start`, `stop`, `restart`
+and `uninstall` manage it. Windows stop/restart forcefully terminate the full
+process tree; they do not drain active turns. The generated
+`<DREAMUX_ROOT>/daemon.mjs` captures the Node command and service environment;
+rerun `daemon install` to refresh it rather than editing the script.
+
+Local administration uses a private named pipe, and Codex uses child stdio.
+Native executables and npm Node shims work without a Unix socket or shell.
+Use explicit `CODEX_HOME` to relocate Codex data; setting `HOME` alone does not
+move native Windows Codex. Claude skill adapters use directory junctions.
 
 ## Run the server
 
@@ -114,7 +143,8 @@ logs:
 | Path | Purpose | Source of truth |
 |---|---|---|
 | `dreamux config path` (normally `~/.dreamux/config.json`) | User-editable provider config and local channel credentials, created by `dreamux onboard`; edit and restart to apply | the operator |
-| `~/.dreamux/run/admin.sock` | Admin Unix socket (+ `admin.sock.lock`); volatile run file | the server |
+| `~/.dreamux/run/admin.sock` | Logical admin endpoint: Unix socket on POSIX, private named pipe on Windows (+ filesystem `admin.sock.lock`) | the server |
+| `~/.dreamux/daemon.mjs` | Generated Windows service launcher; refresh through `daemon install` | the installer |
 | `~/.dreamux/run/restart-intent.json` | One-shot daemon restart marker; volatile run file | the server |
 | `~/.dreamux/run/sockets/` | Fallback root for ephemeral Codex app-server rendezvous sockets (preferred root: `$XDG_RUNTIME_DIR/dreamux/sockets/`); random per start, never persisted | the server |
 | `~/.dreamux/state/<id>/access.json` | Dispatcher-local Feishu access state: schema/runtime ledger are Channel-owned; policy fields and quiesced `allow_users` maintenance are operator-authorized | mixed |
@@ -124,7 +154,7 @@ logs:
 | `~/.dreamux/cache/<id>/spill/` | Over-budget teammate completion spill files; rebuildable cache, only the path is inlined into a dispatcher turn | the server |
 | `~/.dreamux/cache/<id>/` | Per-dispatcher provider cache root; providers own subdirectories such as Feishu attachment cache | the server |
 | `~/.dreamux/cache/claude-code/` | Claude Code MCP config and skill adapters; rebuildable provider cache | the server |
-| `~/.dreamux/logs/codex-app-server/<id>.log` | Codex app-server stdout/stderr | the server |
+| `~/.dreamux/logs/codex-app-server/<id>.log` | Codex diagnostics; Windows stdout is reserved for protocol frames | the server |
 | `~/.dreamux/logs/channel/<id>.log` | Per-dispatcher channel logs | the server |
 | `~/.dreamux/logs/teammate-mcp/<id>.log` | TeamMate MCP shim diagnostics | the server |
 | `~/.codex/` | Codex global default home: auth, memory, and config | the operator / Codex |
@@ -140,7 +170,8 @@ lifecycle operation, and no migration or cleanup is required.
 ## Configure dispatchers
 
 For normal installs, run `dreamux onboard`. It writes `~/.dreamux/config.json`
-with mode `0600`, creates state/log directories, and registers a user-level
+with private permissions (`0600` on POSIX, a current-user DACL on Windows),
+creates state/log directories, and registers a user-level
 service when supported. Bundled Dreamux skills are injected at runtime by role,
 not written into the workspace.
 

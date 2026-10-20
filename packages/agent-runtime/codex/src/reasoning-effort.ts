@@ -1,4 +1,4 @@
-import type { CodexWsClient } from './rpc.js';
+import type { CodexRpcClient } from './rpc.js';
 import type { ThreadStartResponse } from './types.js';
 
 const EFFORT_ORDER = [
@@ -40,7 +40,7 @@ export class CodexReasoningEffort {
   private highest: string | undefined;
 
   constructor(
-    private readonly client: CodexWsClient,
+    private readonly client: CodexRpcClient,
     private readonly thread: Pick<
       ThreadStartResponse,
       'model' | 'reasoningEffort'

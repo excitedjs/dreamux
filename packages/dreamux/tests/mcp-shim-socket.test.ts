@@ -2,6 +2,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 
 import { AdminClientError } from '../src/admin/client.js';
+import { adminSocketAddress } from '../src/platform/paths.js';
 import { runDreamuxMcp } from '../src/mcp/shim.js';
 import { McpLeaseRegistry } from '../src/service/mcp/leases.js';
 import type {
@@ -256,7 +257,9 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
       // the words Node wrote. An absent socket says ENOENT; restating that as
       // advice would replace the only concrete fact there is.
       expect(text).toMatch(/^TRANSPORT_ERROR: /);
-      expect(text).toContain(`connect ENOENT ${admin.socketPath}`);
+      expect(text).toContain(
+        `connect ENOENT ${adminSocketAddress(admin.socketPath)}`,
+      );
       expect(text).not.toMatch(/is the server running/);
       expect(spy.calls).toHaveLength(0); // the call never reached the delegate at all
     } finally {

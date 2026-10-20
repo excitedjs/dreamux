@@ -402,6 +402,56 @@ describe('readClaudeRecentActivity: bounds', () => {
 });
 
 describe('readClaudeRecentActivity: neutral typed errors', () => {
+  it.each(['missing', 'mismatched'])(
+    'validates cursors before discovering a %s session',
+    async (state) => {
+      const fixture = await makeFixture();
+      await fixture.write(conversation(fixture.sessionId));
+      const page = await readClaudeRecentActivity(
+        query(fixture, { limit: 1, includeTools: true }),
+        fixture.context,
+      );
+      expect(page.nextCursor).toBeTruthy();
+      const cursor = page.nextCursor!;
+      if (state === 'missing') await rm(fixture.path);
+      else await fixture.write(conversation(randomUUID()));
+
+      await expect(
+        readClaudeRecentActivity(
+          query(fixture, { cursor, includeTools: false }),
+          fixture.context,
+        ),
+      ).rejects.toMatchObject({
+        name: 'AgentActivityError',
+        reason: 'cursor_invalid',
+      });
+      await expect(
+        readClaudeRecentActivity(
+          query(fixture, { cursor: 'not-a-real-cursor' }),
+          fixture.context,
+        ),
+      ).rejects.toMatchObject({
+        name: 'AgentActivityError',
+        reason: 'cursor_invalid',
+      });
+      await expect(
+        readClaudeRecentActivity(query(fixture, { cursor }), fixture.context),
+      ).rejects.toMatchObject({
+        name: 'AgentActivityError',
+        reason: 'session_unavailable',
+      });
+      await expect(
+        readClaudeRecentActivity(
+          query(fixture, { limit: 0, cursor: 'not-a-real-cursor' }),
+          fixture.context,
+        ),
+      ).rejects.toMatchObject({
+        name: 'AgentActivityError',
+        reason: 'activity_corrupt',
+      });
+    },
+  );
+
   it('surfaces session_unavailable when the session file does not exist at all', async () => {
     const fixture = await makeFixture();
     // Never written: the derived path is valid but nothing lives there.

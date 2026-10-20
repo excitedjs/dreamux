@@ -13,10 +13,11 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { open } from 'node:fs/promises';
+import { chmod } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { ensureOwnerOnlyDir } from './os.js';
+import { publishFileExclusive } from './fs.js';
 
 /**
  * Inline character budget, mirroring claude-code's native task-output budget
@@ -80,17 +81,10 @@ export async function resolveCompletionBody(
     // The storage key is deliberately opaque. Business labels and provider
     // identifiers never become filenames or surrogate Turn identifiers.
     const path = join(spillDir, `completion-${randomUUID()}.output`);
-    try {
-      const handle = await open(path, 'wx', 0o600);
-      try {
-        await handle.writeFile(result, 'utf8');
-        await handle.chmod(0o600);
-      } finally {
-        await handle.close();
-      }
+    if (await publishFileExclusive(path, result)) {
+      // Preserve the spill contract's exact Unix mode even with a strict umask.
+      if (process.platform !== 'win32') await chmod(path, 0o600);
       return { kind: 'spilled', path };
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
   }
   throw new Error('failed to allocate an exclusive completion spill file');

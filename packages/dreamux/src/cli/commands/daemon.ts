@@ -10,6 +10,7 @@ import {
   notifyResumedRestart,
 } from '../../service/dispatcher-service/restart-intent.js';
 import { controlUserService, type DaemonVerb } from '../../daemon/control.js';
+import { getServiceStatus } from '../../daemon/status.js';
 import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
 import { noopHandler, type DreamuxCommand } from './types.js';
@@ -41,6 +42,13 @@ export function createDaemonCommand(): CommandModule {
           createDaemonStartCommand(),
           createDaemonStopCommand(),
           createDaemonRestartCommand(),
+          {
+            command: 'status',
+            describe: 'Show the native user-level service status',
+            handler: async () => {
+              console.log(JSON.stringify(await getServiceStatus(), null, 2));
+            },
+          },
         ] as DreamuxCommand[])
         .demandCommand(1, 'Choose a daemon command')
         .strict(),
@@ -140,6 +148,10 @@ function createDaemonRestartCommand(): CommandModule<{}, DaemonRestartArgv> {
 
 async function runDaemonControl(verb: DaemonVerb): Promise<void> {
   const result = await controlUserService(verb, {});
+  if (result.platform === 'windows') {
+    console.log(`dreamux daemon ${verb}: Windows Task Scheduler`);
+    return;
+  }
   const issued = result.commands
     .map((cmd) => `${cmd.command} ${cmd.args.join(' ')}`)
     .join('; ');

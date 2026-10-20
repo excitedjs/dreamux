@@ -276,6 +276,6 @@ intent, and that Team's bindings.
   note and no `Rebuild:` anywhere in this task.
 - Knowledge delta: `AgentRuntime` gaining a method is a provider contract change
   and the Feishu command surface is new user-visible behavior. Update the owning
-  `.agents/domains/` pages and run `.agents/scripts/check.sh`.
+  `.agents/domains/` pages and run `.agents/scripts/check.mjs`.
 - `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` must all
   pass.

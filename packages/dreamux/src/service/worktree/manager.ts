@@ -237,7 +237,15 @@ export class WorktreeManager {
       const repo =
         identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
       if (force) await assertRemovableWorktree({ repo, path: worktree.path });
-      await git(repo, [
+      // A recovered record can identify the checkout itself as its source.
+      // Run from the shared Git directory so removal never holds the checkout
+      // open as the subprocess cwd (Windows refuses to remove that directory).
+      const commonDir = await git(repo, [
+        'rev-parse',
+        '--path-format=absolute',
+        '--git-common-dir',
+      ]);
+      await git(commonDir.stdout.trim(), [
         'worktree',
         'remove',
         ...(force ? ['--force'] : []),

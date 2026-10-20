@@ -17,6 +17,8 @@ async function managedTeam(fixture: Fixture, prompt?: string) {
   const repo = join(fixture.host.cwd, 'source-repo');
   await mkdir(repo);
   await git(repo, ['init', '-q']);
+  // Keep this fixture's LF content stable regardless of the machine's Git defaults.
+  await git(repo, ['config', 'core.autocrlf', 'false']);
   await git(repo, ['config', 'user.name', 'Test']);
   await git(repo, ['config', 'user.email', 'test@example.com']);
   await writeFile(join(repo, 'tracked.txt'), 'initial\n');

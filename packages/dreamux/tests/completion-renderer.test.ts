@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -78,12 +78,9 @@ describe('buildCompletionTurnText', () => {
       `Workflow report-1 has completed. ${NOTIFICATION} The output is too ` +
       'long, so the full result was saved to a file:\n\n';
     expect(text.startsWith(prefix)).toBe(true);
-    expect(text.slice(prefix.length)).toMatch(
-      new RegExp(
-        `^${escapeRegex(spillDir)}/completion-[0-9a-f-]+\\.output$`,
-        'u',
-      ),
-    );
+    const path = text.slice(prefix.length);
+    expect(dirname(path)).toBe(spillDir);
+    expect(basename(path)).toMatch(/^completion-[0-9a-f-]+\.output$/u);
   });
 });
 
@@ -111,10 +108,6 @@ function workflowCompletion(
     status,
     result,
   };
-}
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 }
 
 function temporarySpillDir(): string {

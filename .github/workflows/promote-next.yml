@@ -68,8 +68,12 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # topology check + ff merge need the full graph
+          fetch-depth: 0 # topology check + ff merge need the full graph
           ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
 
       - name: ensure local refs exist for both branches
         run: |
@@ -137,19 +141,7 @@ jobs:
         if: steps.ff.outputs.noop != 'true'
         env:
           RELEASE_DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
-        run: |
-          set -euo pipefail
-          if [ -z "${RELEASE_DEPLOY_KEY}" ]; then
-            echo "::error::RELEASE_DEPLOY_KEY secret is missing; the ruleset-protected main branch cannot be pushed without the release deploy key."
-            exit 1
-          fi
-          mkdir -p ~/.ssh
-          printf '%s\n' "${RELEASE_DEPLOY_KEY}" > ~/.ssh/release_deploy_key
-          chmod 600 ~/.ssh/release_deploy_key
-          # Pin GitHub's SSH host keys from the meta API instead of trusting
-          # first use.
-          curl -fsS https://api.github.com/meta \
-            | jq -r '.ssh_keys[] | "github.com " + .' > ~/.ssh/release_known_hosts
+        run: node common/scripts/prepare-release-ssh.mjs
 
       - name: push main to origin (deploy key)
         if: steps.ff.outputs.noop != 'true'

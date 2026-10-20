@@ -477,7 +477,7 @@ state, and safe last error without exposing machine-local paths. Existing
   real worktree integration tests. Current-state guidance says delete-on-close
   removes only the worktree and preserves its branch; transition detail is kept
   in the generated Rush change note rather than the maintenance reference.
-- Focused tests, full Rush build/test, `.agents/scripts/check.sh`, and CI pass.
+- Focused tests, full Rush build/test, `.agents/scripts/check.mjs`, and CI pass.
 
 ## Out of Scope
 

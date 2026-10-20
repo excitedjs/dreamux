@@ -81,10 +81,19 @@ export function mcpServerDescriptor(input: {
   command?: string;
   env?: NodeJS.ProcessEnv;
 }): AgentRuntimeMcpServer {
+  const launcher = input.command ?? dreamuxBinPath(input.env);
+  // Native runtimes cannot execute an extensionless Node script on Windows.
+  // An explicit command is already an operator-selected executable.
+  const useNode = input.command === undefined && process.platform === 'win32';
   return {
     name: input.name,
-    command: input.command ?? dreamuxBinPath(input.env),
-    args: [DREAMUX_MCP_SUBCOMMAND, '--admin-socket', input.adminSocketPath],
+    command: useNode ? process.execPath : launcher,
+    args: [
+      ...(useNode ? [launcher] : []),
+      DREAMUX_MCP_SUBCOMMAND,
+      '--admin-socket',
+      input.adminSocketPath,
+    ],
     env: { [DREAMUX_MCP_LEASE_ENV]: input.token },
   };
 }

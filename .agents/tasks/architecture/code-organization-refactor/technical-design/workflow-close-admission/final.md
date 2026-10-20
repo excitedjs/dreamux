@@ -117,7 +117,7 @@ under the existing delivery ruling; this does not authorize merging #453 to
 `next`.
 
 Run build, lint, test, and `typecheck:tests` through
-`node common/scripts/install-run-rush.js`, plus `.agents/scripts/check.sh`
+`node common/scripts/install-run-rush.js`, plus `.agents/scripts/check.mjs`
 and the diff check. Independently review the complete implementation and its
 preserved lock/terminal/close paths. R43 still forbids new or repaired child
 unit tests; no deletion is predicted, and source regressions must not be
