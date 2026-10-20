@@ -49,6 +49,7 @@ import {
   type ServicePlatform,
 } from './unit.js';
 import {
+  assertWindowsServiceInstallable,
   registerWindowsService,
   renderWindowsService,
   unregisterWindowsService,
@@ -178,6 +179,14 @@ export async function installUserService(
   const logDir = logsRoot();
   const stdoutLog = join(logDir, 'daemon.stdout.log');
   const stderrLog = join(logDir, 'daemon.stderr.log');
+  if (unit.platform === 'windows') {
+    // Preserve a running launcher's ownership definition until it has been
+    // stopped from outside the service before changing its Job identity.
+    await assertWindowsServiceInstallable(
+      options.host.runner,
+      options.answers.dryRun,
+    );
+  }
   await ensureDirectory(
     workingDir,
     options.ledger,

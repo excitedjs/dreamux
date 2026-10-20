@@ -27,6 +27,7 @@ import {
 } from '../src/daemon/install.js';
 import { getServiceStatus } from '../src/daemon/status.js';
 import {
+  assertWindowsServiceInstallable,
   registerWindowsService,
   renderWindowsService,
   windowsPowerShellEnvironment,
@@ -45,6 +46,7 @@ class WindowsRunner implements CommandRunner {
   calls: { command: string; script: string }[] = [];
   state = 'Running';
   installed = true;
+  registeredLauncher: string | null = null;
   async run(command: string, args: string[], options?: { dryRun?: boolean }) {
     if (options?.dryRun) return;
     this.calls.push({
@@ -59,7 +61,13 @@ class WindowsRunner implements CommandRunner {
     this.calls.push({ command, script });
     if (script.includes('$registered.Actions[0].Arguments')) {
       return JSON.stringify(
-        this.installed ? { taskName: 'Dreamux-fixture', launcher: null } : null,
+        this.installed
+          ? {
+              taskName: 'Dreamux-fixture',
+              state: this.state,
+              launcher: this.registeredLauncher,
+            }
+          : null,
       );
     }
     if (script.includes('$task.Definition.Actions.Item(1).Arguments')) {
@@ -82,7 +90,10 @@ class WindowsRunner implements CommandRunner {
   }
 }
 
-function scheduledTaskScriptRunner(installed: boolean, failSet = false) {
+function scheduledTaskScriptRunner(
+  logonType: 'Password' | 'Interactive' | null,
+  fixture: { failSet?: boolean; mockPrompt?: boolean } = {},
+) {
   const calls: { command: string; parameters: Record<string, unknown> }[] = [];
   const run = vi.fn<CommandRunner['run']>(async (command, args, options) => {
     if (run.mock.calls.length !== 1)
@@ -96,8 +107,10 @@ $PSModuleAutoLoadingPreference = 'None'
 Import-Module Microsoft.PowerShell.Utility
 $fixtureCalls = [System.Collections.Generic.List[object]]::new()
 $fixtureTaskName = 'Dreamux-' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$fixturePassword = [guid]::NewGuid().ToString()
 function Record-SchedulerCall($command, $parameters) {
   $values = @{} + $parameters
+  if ($values.ContainsKey('Password')) { $values.Password = $values.Password -eq $fixturePassword }
   $fixtureCalls.Add(@{ command = $command; parameters = $values })
   [pscustomobject]$values
 }
@@ -105,10 +118,13 @@ function Get-ScheduledTask {
   [CmdletBinding()] param($TaskPath)
   $null = Record-SchedulerCall 'Get-ScheduledTask' $PSBoundParameters
   [pscustomobject]@{ TaskName = 'Dreamux-unrelated' }
-  if ($${installed}) {
+  if ($${logonType !== null}) {
     [pscustomobject]@{
       TaskName = $fixtureTaskName
-      Principal = @{ LogonType = 'Password'; RunLevel = 'Highest' }
+      TaskPath = '\\'
+      Actions = @(@{ Execute = 'old-action' })
+      Principal = @{ LogonType = '${logonType}'; RunLevel = 'Highest' }
+      Description = 'operator-description'
       Triggers = @('operator-trigger')
       Settings = @{ Description = 'operator-settings' }
     }
@@ -130,14 +146,32 @@ function New-ScheduledTaskSettingsSet {
   [CmdletBinding()] param([TimeSpan]$ExecutionTimeLimit, $RestartCount, [TimeSpan]$RestartInterval, $MultipleInstances, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries)
   Record-SchedulerCall 'New-ScheduledTaskSettingsSet' $PSBoundParameters
 }
+function New-ScheduledTask {
+  [CmdletBinding()] param($Action, $Trigger, $Principal, $Settings)
+  $null = Record-SchedulerCall 'New-ScheduledTask' $PSBoundParameters
+  [pscustomobject]@{ Actions = @($Action); Triggers = @($Trigger); Principal = $Principal; Settings = $Settings }
+}
 function Register-ScheduledTask {
-  [CmdletBinding()] param($TaskName, $Action, $Trigger, $Principal, $Settings, [switch]$Force)
+  [CmdletBinding()] param($InputObject, $TaskName, $TaskPath, $User, $Password, [switch]$Force)
   $null = Record-SchedulerCall 'Register-ScheduledTask' $PSBoundParameters
 }
 function Set-ScheduledTask {
-  [CmdletBinding()] param($TaskName, $TaskPath, $Action, $Principal, $Trigger, $Settings, $User, $Password)
+  [CmdletBinding()] param($TaskName, $TaskPath, $Action, $InputObject, $User, $Password)
   $null = Record-SchedulerCall 'Set-ScheduledTask' $PSBoundParameters
-  if ($${failSet}) { Write-Error 'fixture Set-ScheduledTask failed' }
+  if ($${fixture.failSet ?? false}) { Write-Error 'fixture Set-ScheduledTask failed' }
+}
+${
+  fixture.mockPrompt === false
+    ? ''
+    : `
+function Read-Host {
+  [CmdletBinding()] param($Prompt, [switch]$AsSecureString)
+  $null = Record-SchedulerCall 'Read-Host' $PSBoundParameters
+  $secure = [System.Security.SecureString]::new()
+  foreach ($character in $fixturePassword.ToCharArray()) { $secure.AppendChar($character) }
+  $secure
+}
+`
 }
 try {
   & {
@@ -218,12 +252,12 @@ describe('Windows managed service', () => {
       unitPath: windowsServiceFile(),
       started: true,
     });
-    expect(runner.calls).toHaveLength(6);
+    expect(runner.calls).toHaveLength(7);
     expect(runner.calls[0]?.command).toBe('powershell.exe');
-    expect(runner.calls[0]?.script).toContain(
-      '-LogonType Interactive -RunLevel Limited',
+    expect(runner.calls[1]?.script).toContain(
+      '-LogonType Password -RunLevel Limited',
     );
-    expect(runner.calls[0]?.script).toContain(
+    expect(runner.calls[1]?.script).toContain(
       'New-ScheduledTaskTrigger -AtLogOn -User $user',
     );
     const status = await getServiceStatus({ runner, platform: 'win32' });
@@ -246,10 +280,60 @@ describe('Windows managed service', () => {
   describe.skipIf(process.platform !== 'win32')(
     'scheduled task registration',
     () => {
+      it('allows interactive input only for registration with both TTY streams', async () => {
+        const stdinTTY = Object.getOwnPropertyDescriptor(
+          process.stdin,
+          'isTTY',
+        );
+        const stdoutTTY = Object.getOwnPropertyDescriptor(
+          process.stdout,
+          'isTTY',
+        );
+        try {
+          for (const [stdin, stdout] of [
+            [true, true],
+            [true, false],
+            [false, true],
+          ]) {
+            Object.defineProperty(process.stdin, 'isTTY', {
+              configurable: true,
+              value: stdin,
+            });
+            Object.defineProperty(process.stdout, 'isTTY', {
+              configurable: true,
+              value: stdout,
+            });
+            const runner = new WindowsRunner();
+            const run = vi.spyOn(runner, 'run');
+            await registerWindowsService(windowsServiceFile(), runner, {
+              ...answers,
+              startService: false,
+            });
+            const args = run.mock.calls[0]?.[1] ?? [];
+            expect(args.includes('-NonInteractive')).toBe(!(stdin && stdout));
+            expect(args.includes('-WindowStyle')).toBe(!(stdin && stdout));
+            await controlUserService('start', { runner, platform: 'win32' });
+            expect(run.mock.calls[1]?.[1]).toEqual(
+              expect.arrayContaining([
+                '-NonInteractive',
+                '-WindowStyle',
+                'Hidden',
+              ]),
+            );
+          }
+        } finally {
+          if (stdinTTY) Object.defineProperty(process.stdin, 'isTTY', stdinTTY);
+          else Reflect.deleteProperty(process.stdin, 'isTTY');
+          if (stdoutTTY)
+            Object.defineProperty(process.stdout, 'isTTY', stdoutTTY);
+          else Reflect.deleteProperty(process.stdout, 'isTTY');
+        }
+      });
+
       it(
         'updates only the action of an existing Password task',
         async () => {
-          const { runner, calls } = scheduledTaskScriptRunner(true);
+          const { runner, calls } = scheduledTaskScriptRunner('Password');
           await registerWindowsService(windowsServiceFile(), runner, {
             ...answers,
             startService: false,
@@ -280,47 +364,66 @@ describe('Windows managed service', () => {
       );
 
       it(
-        'registers the original defaults when the task is missing',
+        'registers a missing task with a Password principal and secure prompt',
         async () => {
-          const { runner, calls } = scheduledTaskScriptRunner(false);
+          const { runner, calls } = scheduledTaskScriptRunner(null);
           await registerWindowsService(windowsServiceFile(), runner, {
             ...answers,
             startService: false,
           });
           expect(calls.map((call) => call.command).sort()).toEqual([
             'Get-ScheduledTask',
+            'New-ScheduledTask',
             'New-ScheduledTaskAction',
             'New-ScheduledTaskPrincipal',
             'New-ScheduledTaskSettingsSet',
             'New-ScheduledTaskTrigger',
+            'Read-Host',
             'Register-ScheduledTask',
           ]);
+          expect(
+            calls.find((call) => call.command === 'Read-Host')?.parameters,
+          ).toEqual({
+            Prompt: 'Windows account password (not PIN)',
+            AsSecureString: { IsPresent: true },
+          });
           const registration = calls.find(
             (call) => call.command === 'Register-ScheduledTask',
           )?.parameters;
           expect(registration).toEqual({
             TaskName: expect.stringMatching(/^Dreamux-S-1-/),
-            Action: {
-              Execute: answers.nodeBin,
-              Argument: `"${windowsServiceFile()}"`,
-              WorkingDirectory: join(root, 'state'),
-            },
-            Trigger: {
-              AtLogOn: { IsPresent: true },
-              User: expect.stringMatching(/^S-1-/),
-            },
-            Principal: {
-              UserId: expect.stringMatching(/^S-1-/),
-              LogonType: 'Interactive',
-              RunLevel: 'Limited',
-            },
-            Settings: {
-              ExecutionTimeLimit: expect.objectContaining({ TotalSeconds: 0 }),
-              RestartCount: 999,
-              RestartInterval: expect.objectContaining({ TotalSeconds: 60 }),
-              MultipleInstances: 'IgnoreNew',
-              AllowStartIfOnBatteries: { IsPresent: true },
-              DontStopIfGoingOnBatteries: { IsPresent: true },
+            TaskPath: '\\',
+            User: expect.any(String),
+            Password: true,
+            InputObject: {
+              Actions: [
+                {
+                  Execute: answers.nodeBin,
+                  Argument: `"${windowsServiceFile()}"`,
+                  WorkingDirectory: join(root, 'state'),
+                },
+              ],
+              Triggers: [
+                {
+                  AtLogOn: { IsPresent: true },
+                  User: expect.stringMatching(/^S-1-/),
+                },
+              ],
+              Principal: {
+                UserId: expect.stringMatching(/^S-1-/),
+                LogonType: 'Password',
+                RunLevel: 'Limited',
+              },
+              Settings: {
+                ExecutionTimeLimit: expect.objectContaining({
+                  TotalSeconds: 0,
+                }),
+                RestartCount: 999,
+                RestartInterval: expect.objectContaining({ TotalSeconds: 60 }),
+                MultipleInstances: 'IgnoreNew',
+                AllowStartIfOnBatteries: { IsPresent: true },
+                DontStopIfGoingOnBatteries: { IsPresent: true },
+              },
             },
             Force: { IsPresent: true },
           });
@@ -329,9 +432,101 @@ describe('Windows managed service', () => {
       );
 
       it(
+        'converts an Interactive task to Password while preserving its definition',
+        async () => {
+          const { runner, calls } = scheduledTaskScriptRunner('Interactive');
+          await registerWindowsService(windowsServiceFile(), runner, {
+            ...answers,
+            startService: false,
+          });
+          expect(calls.map((call) => call.command).sort()).toEqual([
+            'Get-ScheduledTask',
+            'New-ScheduledTaskAction',
+            'New-ScheduledTaskPrincipal',
+            'Read-Host',
+            'Set-ScheduledTask',
+          ]);
+          expect(
+            calls.find((call) => call.command === 'Set-ScheduledTask')
+              ?.parameters,
+          ).toEqual({
+            User: expect.any(String),
+            Password: true,
+            InputObject: {
+              TaskName: expect.stringMatching(/^Dreamux-S-1-/),
+              TaskPath: '\\',
+              Actions: [
+                {
+                  Execute: answers.nodeBin,
+                  Argument: `"${windowsServiceFile()}"`,
+                  WorkingDirectory: join(root, 'state'),
+                },
+              ],
+              Principal: {
+                UserId: expect.stringMatching(/^S-1-/),
+                LogonType: 'Password',
+                RunLevel: 'Highest',
+              },
+              Description: 'operator-description',
+              Triggers: ['operator-trigger'],
+              Settings: { Description: 'operator-settings' },
+            },
+          });
+        },
+        SCHEDULED_TASK_FIXTURE_TIMEOUT_MS,
+      );
+
+      it(
+        'rejects a password-required non-TTY install without registration or restart',
+        async () => {
+          const { runner, calls } = scheduledTaskScriptRunner(null, {
+            mockPrompt: false,
+          });
+          const stdinTTY = Object.getOwnPropertyDescriptor(
+            process.stdin,
+            'isTTY',
+          );
+          const stdoutTTY = Object.getOwnPropertyDescriptor(
+            process.stdout,
+            'isTTY',
+          );
+          Object.defineProperty(process.stdin, 'isTTY', {
+            configurable: true,
+            value: false,
+          });
+          Object.defineProperty(process.stdout, 'isTTY', {
+            configurable: true,
+            value: false,
+          });
+          try {
+            await expect(
+              registerWindowsService(windowsServiceFile(), runner, answers),
+            ).rejects.toThrow('requires a Windows account password');
+          } finally {
+            if (stdinTTY)
+              Object.defineProperty(process.stdin, 'isTTY', stdinTTY);
+            else Reflect.deleteProperty(process.stdin, 'isTTY');
+            if (stdoutTTY)
+              Object.defineProperty(process.stdout, 'isTTY', stdoutTTY);
+            else Reflect.deleteProperty(process.stdout, 'isTTY');
+          }
+          expect(calls.map((call) => call.command).sort()).toEqual([
+            'Get-ScheduledTask',
+            'New-ScheduledTaskAction',
+          ]);
+          expect(runner.run).toHaveBeenCalledTimes(1);
+          expect(runner.run.mock.calls[0]?.[1]).toContain('-NonInteractive');
+          expect(runner.capture).not.toHaveBeenCalled();
+        },
+        SCHEDULED_TASK_FIXTURE_TIMEOUT_MS,
+      );
+
+      it(
         'rejects an action update failure without registering or restarting',
         async () => {
-          const { runner, calls } = scheduledTaskScriptRunner(true, true);
+          const { runner, calls } = scheduledTaskScriptRunner('Password', {
+            failSet: true,
+          });
           await expect(
             registerWindowsService(windowsServiceFile(), runner, {
               ...answers,
@@ -351,6 +546,101 @@ describe('Windows managed service', () => {
       );
     },
   );
+
+  describe('Windows installation guard', () => {
+    async function registeredLauncher(
+      kind: 'Local' | 'same Global' | 'different Global',
+    ) {
+      const directory = join(root, 'registered-install');
+      await mkdir(directory);
+      const launcher = join(directory, 'daemon.mjs');
+      const originalRoot = process.env['DREAMUX_ROOT'];
+      let content: string;
+      try {
+        if (kind === 'different Global')
+          process.env['DREAMUX_ROOT'] = directory;
+        content = renderWindowsService(answers, 'stdout', 'stderr');
+      } finally {
+        if (originalRoot === undefined) delete process.env['DREAMUX_ROOT'];
+        else process.env['DREAMUX_ROOT'] = originalRoot;
+      }
+      if (kind === 'Local')
+        content = content.replace('Global\\\\', 'Local\\\\');
+      await writeFile(launcher, content);
+      return { launcher, content };
+    }
+
+    it.each([
+      ['Local', 'Running'],
+      ['different Global', 'Queued'],
+    ] as const)(
+      'rejects an active %s Job before replacing any installation files',
+      async (kind, state) => {
+        const registered = await registeredLauncher(kind);
+        await writeFile(windowsServiceFile(), 'target launcher sentinel');
+        const runner = new WindowsRunner();
+        runner.state = state;
+        runner.registeredLauncher = `"${registered.launcher}"`;
+        const run = vi.spyOn(runner, 'run');
+        await expect(
+          installUserService({
+            answers,
+            ledger: new TransparentFileLedger(),
+            host: createServiceHost({
+              runner,
+              platform: 'win32',
+              homeDir: root,
+            }),
+          }),
+        ).rejects.toThrow(
+          'from a terminal outside the service before installing with a different Job identity',
+        );
+        expect(run).not.toHaveBeenCalled();
+        expect(await readFile(registered.launcher, 'utf8')).toBe(
+          registered.content,
+        );
+        expect(await readFile(windowsServiceFile(), 'utf8')).toBe(
+          'target launcher sentinel',
+        );
+      },
+    );
+
+    it('allows replacing a stopped Local Job from a different registered launcher path', async () => {
+      const registered = await registeredLauncher('Local');
+      const runner = new WindowsRunner();
+      runner.state = 'Ready';
+      runner.registeredLauncher = `"${registered.launcher}"`;
+      const run = vi.spyOn(runner, 'run');
+      await installUserService({
+        answers: { ...answers, startService: false },
+        ledger: new TransparentFileLedger(),
+        host: createServiceHost({ runner, platform: 'win32', homeDir: root }),
+      });
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(await readFile(registered.launcher, 'utf8')).toBe(
+        registered.content,
+      );
+      expect(await readFile(windowsServiceFile(), 'utf8')).toBe(
+        renderWindowsService(
+          answers,
+          join(root, 'logs', 'daemon.stdout.log'),
+          join(root, 'logs', 'daemon.stderr.log'),
+        ),
+      );
+    });
+
+    it('allows an active registration with the same Global Job identity', async () => {
+      const registered = await registeredLauncher('same Global');
+      const runner = new WindowsRunner();
+      runner.registeredLauncher = `"${registered.launcher}"`;
+      const run = vi.spyOn(runner, 'run');
+      await assertWindowsServiceInstallable(runner, false);
+      expect(run).not.toHaveBeenCalled();
+      expect(await readFile(registered.launcher, 'utf8')).toBe(
+        registered.content,
+      );
+    });
+  });
 
   it('reports a missing registration and launch file without inventing a running service', async () => {
     const runner = new WindowsRunner();
@@ -485,7 +775,7 @@ describe('Windows managed service', () => {
     process.platform === 'win32' &&
       process.env['DREAMUX_RUN_WINDOWS_SERVICE_TEST'] === '1',
   )(
-    'controls and self-restarts an isolated task without surviving children',
+    'controls and self-restarts an isolated Interactive lifecycle fixture without surviving children',
     async () => {
       const taskName = `Dreamux-Test-${randomUUID()}`;
       const systemRunner = new ExecaCommandRunner();
@@ -564,15 +854,45 @@ setInterval(async () => {
         expect(alive(pids.child)).toBe(false);
       };
       try {
-        await installUserService({
-          answers: {
-            ...answers,
-            dreamuxBin: launcher,
-            env: { ...answers.env, PATH: process.env['PATH'] },
-          },
-          ledger: new TransparentFileLedger(),
-          host: createServiceHost({ runner, platform: 'win32' }),
-        });
+        // This opt-in fixture covers task control in the current session, not
+        // Password credentials or execution across logon sessions.
+        await mkdir(join(root, 'state'));
+        await mkdir(join(root, 'logs'));
+        await writeFile(
+          windowsServiceFile(),
+          renderWindowsService(
+            {
+              ...answers,
+              dreamuxBin: launcher,
+              env: { ...answers.env, PATH: process.env['PATH'] },
+            },
+            join(root, 'logs', 'daemon.stdout.log'),
+            join(root, 'logs', 'daemon.stderr.log'),
+          ),
+        );
+        const quote = (value: string) => `'${value.replaceAll("'", "''")}'`;
+        const fixtureRegistration = `
+$ErrorActionPreference = 'Stop'
+$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$action = New-ScheduledTaskAction -Execute ${quote(answers.nodeBin)} -Argument ${quote(`"${windowsServiceFile()}"`)} -WorkingDirectory ${quote(join(root, 'state'))}
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName ${quote(taskName)} -TaskPath '\\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+`;
+        await systemRunner.run(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-NonInteractive',
+            '-WindowStyle',
+            'Hidden',
+            '-EncodedCommand',
+            Buffer.from(fixtureRegistration, 'utf16le').toString('base64'),
+          ],
+          { env: windowsPowerShellEnvironment() },
+        );
+        await controlUserService('start', { runner, platform: 'win32' });
         await vi.waitFor(
           async () => expect((await readPids()).parent).toBeGreaterThan(0),
           { timeout: 15000 },

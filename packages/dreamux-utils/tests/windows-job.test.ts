@@ -308,28 +308,31 @@ console.log(await job.containsCurrentProcess());
       }
     });
 
-    it('a separately opened service Job waits for the entire nested tree to exit', async () => {
-      const name = `Local\\Dreamux-test-${randomUUID()}`;
-      const root = await mkdtemp(join(tmpdir(), 'dreamux-job-completion-'));
-      const { host, pids } = await fixtureHost(name, root);
-      const job = await WindowsJob.acquire(name);
-      const held = retainProcesses([host.pid!, ...pids]);
-      const closed = once(host, 'close');
-      try {
-        expect(job).not.toBeNull();
-        await job!.terminate();
-        // No extra close event or polling may make an early terminate() pass.
-        expect(held.states()).toEqual([0, 0, 0]);
-        await rm(root, { recursive: true, force: true });
-        expect(pids.map(isProcessAlive)).toEqual([false, false]);
-      } finally {
-        job?.close();
-        if (host.exitCode === null && host.signalCode === null) host.kill();
-        await closed;
-        await held.dispose();
-        await rm(root, { recursive: true, force: true });
-      }
-    });
+    it.each(['Local', 'Global'])(
+      'a separately opened %s service Job waits for the entire nested tree to exit',
+      async (namespace) => {
+        const name = `${namespace}\\Dreamux-test-${randomUUID()}`;
+        const root = await mkdtemp(join(tmpdir(), 'dreamux-job-completion-'));
+        const { host, pids } = await fixtureHost(name, root);
+        const job = await WindowsJob.acquire(name);
+        const held = retainProcesses([host.pid!, ...pids]);
+        const closed = once(host, 'close');
+        try {
+          expect(job).not.toBeNull();
+          await job!.terminate();
+          // No extra close event or polling may make an early terminate() pass.
+          expect(held.states()).toEqual([0, 0, 0]);
+          await rm(root, { recursive: true, force: true });
+          expect(pids.map(isProcessAlive)).toEqual([false, false]);
+        } finally {
+          job?.close();
+          if (host.exitCode === null && host.signalCode === null) host.kill();
+          await closed;
+          await held.dispose();
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+    );
 
     it('supervised stop releases its process objects and cwd before returning', async () => {
       const root = await mkdtemp(

@@ -32,7 +32,11 @@ export function windowsPowerShellEnvironment(
 }
 
 /** Encoded commands preserve Unicode paths and bypass shell interpolation. */
-function windowsPowerShellArgs(script: string, taskName?: string): string[] {
+function windowsPowerShellArgs(
+  script: string,
+  taskName?: string,
+  interactive = false,
+): string[] {
   const identity =
     taskName === undefined
       ? TASK_IDENTITY
@@ -40,9 +44,7 @@ function windowsPowerShellArgs(script: string, taskName?: string): string[] {
   return [
     '-NoLogo',
     '-NoProfile',
-    '-NonInteractive',
-    '-WindowStyle',
-    'Hidden',
+    ...(interactive ? [] : ['-NonInteractive', '-WindowStyle', 'Hidden']),
     '-EncodedCommand',
     Buffer.from(
       `$ErrorActionPreference = 'Stop'\n$ProgressPreference = 'SilentlyContinue'\n${identity}${script}`,
@@ -121,6 +123,38 @@ function parseWindowsService(content: string): WindowsServiceDefinition {
   return JSON.parse(json[1]) as WindowsServiceDefinition;
 }
 
+export async function assertWindowsServiceInstallable(
+  runner: CommandRunner,
+  dryRun: boolean,
+): Promise<void> {
+  if (dryRun) return;
+  const registered = JSON.parse(
+    await runner.capture(
+      'powershell.exe',
+      windowsPowerShellArgs(`
+$registered = Get-ScheduledTask -TaskPath '\\' | Where-Object TaskName -EQ $taskName
+if ($null -eq $registered) { 'null' } else {
+  @{ state = [string]$registered.State; launcher = $registered.Actions[0].Arguments } | ConvertTo-Json -Compress
+}
+`),
+      { env: windowsPowerShellEnvironment() },
+    ),
+  ) as { state: string; launcher: string | null } | null;
+  if (
+    !registered?.launcher ||
+    !['Running', 'Queued'].includes(registered.state)
+  )
+    return;
+  const definition = parseWindowsService(
+    await readFile(registered.launcher.replace(/^"|"$/g, ''), 'utf8'),
+  );
+  if (definition.jobName !== windowsServiceJobName()) {
+    throw new Error(
+      'Stop the existing Windows service from a terminal outside the service before installing with a different Job identity. Run "dreamux daemon stop", then run "dreamux daemon install" again.',
+    );
+  }
+}
+
 export async function registerWindowsService(
   unitPath: string,
   runner: CommandRunner,
@@ -129,18 +163,35 @@ export async function registerWindowsService(
   const actionArgs = `"${unitPath}"`;
   await runner.run(
     'powershell.exe',
-    windowsPowerShellArgs(`
+    windowsPowerShellArgs(
+      `
 $action = New-ScheduledTaskAction -Execute ${psString(answers.nodeBin)} -Argument ${psString(actionArgs)} -WorkingDirectory ${psString(stateRoot())}
 $registered = Get-ScheduledTask -TaskPath '\\' | Where-Object TaskName -EQ $taskName
-if ($null -ne $registered) {
+if ($null -ne $registered -and $registered.Principal.LogonType -eq 'Password') {
   Set-ScheduledTask -TaskName $taskName -TaskPath '\\' -Action $action | Out-Null
 } else {
-  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-  $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
-  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-  Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+  try {
+    $password = Read-Host -Prompt 'Windows account password (not PIN)' -AsSecureString
+  } catch {
+    throw "Installing a Password task requires a Windows account password entered from an interactive terminal (not a PIN). $($_.Exception.Message)"
+  }
+  $credential = [System.Management.Automation.PSCredential]::new([System.Security.Principal.WindowsIdentity]::GetCurrent().Name, $password)
+  if ($null -ne $registered) {
+    $registered.Actions = @($action)
+    $registered.Principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Password -RunLevel $registered.Principal.RunLevel
+    Set-ScheduledTask -InputObject $registered -User $credential.UserName -Password $credential.GetNetworkCredential().Password | Out-Null
+  } else {
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Password -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    $definition = New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings
+    Register-ScheduledTask -InputObject $definition -TaskName $taskName -TaskPath '\\' -User $credential.UserName -Password $credential.GetNetworkCredential().Password -Force | Out-Null
+  }
 }
-`),
+`,
+      undefined,
+      process.stdin.isTTY === true && process.stdout.isTTY === true,
+    ),
     { dryRun: answers.dryRun, env: windowsPowerShellEnvironment() },
   );
   if (answers.startService) {
