@@ -1,5 +1,42 @@
 # Verification
 
+## Tarball fixture budget follow-up
+
+The Password-default delivery passed [push CI](https://github.com/excitedjs/dreamux/actions/runs/39436934066)
+on all three platforms. Its [PR CI](https://github.com/excitedjs/dreamux/actions/runs/39436943984)
+passed on Ubuntu and macOS but failed on Windows: both tarball cases in
+`internal-content-scan.test.ts` reached the default 5,000 ms timeout. The other
+seven packages passed. The complete log has no phase marker, stack or EBUSY;
+its later failure block is a Rush reprint, not another sample. It does not
+identify whether packing, scanning or cleanup exceeded the budget, and the
+same-head push success does not explain it.
+
+The two cases assert scanner results and exit codes, not a performance
+requirement. Their budget includes real tar and Node processes and scoped
+cleanup. Earlier diagnostics recorded a completed 4,914.58 ms case, including
+4,156.08 ms awaiting the packing subprocess and 2.87 ms cleanup. That completed
+sample leaves little room under the implicit five-second limit. It does not
+establish the underlying delay or prove the historical failures had that phase.
+
+Only these two tarball cases now declare an explicit 30-second budget. This
+supersedes retaining their implicit five-second limit in the earlier cleanup
+correction. It is an engineering allowance for the real subprocess fixtures,
+not a statistical guarantee or a diagnosed Windows fix. Assertions, commands,
+fixtures, cleanup, the index-scan cases, suite default and retries are unchanged.
+
+Focused verification passed both tarball cases with two filtered index cases;
+the synthetic account was unchanged, temporary directory empty and captured
+root removed. Local Rush build (1.68 s), lint (15.97 s), test typechecking
+(6.19 s) and full tests (100.7 s) passed. The eight package logs again report
+**2,925 passed / 25 skipped**; the complete scanner file passed four cases
+in 624 ms. Production code did not change in this follow-up.
+
+The full suite again preserved the synthetic account but failed the separate
+empty-temp assertion on five baseline spill-parent directories. The outer
+finally removed its captured root and all leftovers. Real Scheduler and model
+gates remained disabled. Independent review confirmed that only the two
+deadlines changed; hosted CI of the resulting revision is pending.
+
 ## Password installation default
 
 The operator clarified on 2026-10-20 that installation itself must select
@@ -72,7 +109,8 @@ were not inspected. The synthetic account and application sentinels remained
 unchanged, and the outer finally removed its captured root, including those
 five leftovers. The extra cleanup assertion is not a successful gate.
 
-Hosted CI for this correction is pending. No operator task, account password,
+Hosted results for this delivery are recorded in the follow-up above.
+No operator task, account password,
 real Scheduler fixture or authenticated model has been used for this correction.
 
 ## Earlier correction: existing Windows task registration
