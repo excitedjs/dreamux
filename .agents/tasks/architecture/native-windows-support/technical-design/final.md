@@ -59,20 +59,42 @@ The discovery budget and its behavior for valid queries are unchanged.
 
 ## Service and privacy
 
-Windows initially registers an interactive, limited-token Task Scheduler task
-for the current user at logon. For an existing task, installation updates only
-its action through `Set-ScheduledTask`; it leaves the principal, triggers and
-settings under the existing registration. An update error propagates without
-falling back to replacement registration. This does not change the first-install
-console behavior or introduce credential collection. Installation owns
+Windows registers a Password, limited-token Task Scheduler task for the current
+user at logon. Password logon runs without the interactive desktop console;
+the logon trigger remains separate from that login mode. The same registration
+PowerShell process collects the account password with `Read-Host -AsSecureString`
+only for a new task or a conversion from another mode. It passes a transient
+credential directly to the Scheduler Object parameter set. Dreamux does not
+receive the password in JavaScript or put it in arguments, environment, files
+or logs. Task Scheduler stores the login credential. Registration can prompt
+only in a terminal; without one, PowerShell's non-interactive mode rejects the
+prompt. Dry runs do not prompt or launch registration.
+
+An existing Password task receives an action-only update. Other existing tasks
+keep their full definition, including triggers, settings, description and run
+level, while installation updates the action and selects the current user's
+Password principal. Errors propagate without fallback to Interactive or S4U.
+Installation owns
 `DREAMUX_ROOT/daemon.mjs`, including pinned executable,
 arguments, environment and append-only log routing. The Node launcher owns a
-named service Job, and ordinary supervised children retain their own nested Jobs.
+named service Job in the `Global` namespace with a current-user-only DACL, so
+the desktop CLI and non-interactive service refer to the same kernel object.
+Ordinary supervised children retain their own nested Jobs.
 Stop disables the task and acquires its named Job, reserving the name if startup
 has not created it yet. It terminates and awaits the owned processes before
 stopping the task action, then releases the Job. A late launcher cannot create
 another Job during this interval. No process tree is reconstructed from PIDs. The
 previous task-enabled state is preserved. Unix service managers remain unchanged.
+
+Before service installation writes or registration changes, installation inspects
+the actual registered launcher and refuses to change a running or queued task's
+Job identity. This includes a previous alpha's Local Job or moving the service
+to another root. The operator must stop that service from outside its process
+tree first. This avoids
+overwriting the only recorded old Job name or terminating an installer running
+inside it. The old cross-session stop/wait limitation is not retroactively
+repaired; the Global guarantee begins with the newly launched definition.
+Normal Global reinstalls and self-upgrade retain the existing control path.
 
 Dispatcher self-upgrade invokes the restart command from inside that same Job.
 Before mutating the task, service control checks membership against its actual

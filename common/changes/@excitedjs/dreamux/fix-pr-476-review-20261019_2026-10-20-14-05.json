@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Install Windows services with Password logon and a local masked account-password prompt for new or converted tasks. Preserve existing task settings and use a same-user Global Job for cross-session control. Before changing an active task's Job identity, stop the service from an external terminal and rerun installation.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}
