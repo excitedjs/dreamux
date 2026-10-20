@@ -22,12 +22,20 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
 - Check the native manager only for service-lifecycle questions: launchd on
   macOS, systemd user services on Linux, and Task Scheduler on Windows. Explain
   before changing units, task registration, linger, environment, or shell startup.
-- Windows initially installs one `Dreamux-<current-user-SID>` interactive,
-  limited task per account, which starts at that user's logon. Reinstallation
-  updates the existing task's action while preserving its principal, triggers
-  and settings. An update error fails installation without replacing the task
-  with the defaults. A different `DREAMUX_ROOT` does
+- Windows installs one `Dreamux-<current-user-SID>` Password, limited task per
+  account, with a user-logon trigger. A new task or conversion to Password asks
+  for the Windows account password in the local terminal using a masked
+  PowerShell prompt; the Windows Hello PIN is not that password. Never request
+  or send the password through chat. Task Scheduler stores the credential;
+  Dreamux does not put it in configuration, launchers, arguments, environment
+  or logs. A non-interactive install fails if it needs a password; dry runs do
+  not prompt. An existing Password task receives an action-only update without
+  another password prompt. Other modes are converted for the current user,
+  preserving triggers, settings, description and run level. An update error
+  propagates without falling back to Interactive or S4U. A different `DREAMUX_ROOT` does
   not create a second managed task. Use `dreamux daemon status` to inspect it.
+  Installation refuses to change a running or queued task's Job identity;
+  stop it from a terminal outside the service before changing that identity.
   Before registration, installation prepares current-user ownership and private
   ACLs for the log directory and existing logs, including daemon stdout/stderr,
   so logs created by an elevated installer remain usable by the limited task.
@@ -43,12 +51,10 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
   installation to refresh its pinned Node command and captured environment.
   Do not hand-edit that launcher.
-  An interactive task directly launches the console Node executable and can
-  display a console on the desktop. Task Scheduler's `Hidden` setting hides the
-  task entry, not that process window. A manually configured Password task runs
-  noninteractively; its login mode is separate from its trigger, so a logon
-  trigger does not become a boot trigger. Installation does not collect account
-  passwords or switch existing tasks to S4U.
+  Password tasks run noninteractively without leaving the service console on
+  the desktop. Login mode is separate from the trigger: a logon trigger does
+  not become a boot trigger. Task Scheduler's `Hidden` setting only hides the
+  task entry and is not the mechanism used for the service window.
 - Use `dreamux doctor` to inspect configuration, provider loading, service
   state, and runtime app-server readiness. Use `dreamux status` for current
   Dispatcher and process facts; neither command proves Channel delivery.
@@ -72,7 +78,9 @@ A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
 Windows managed `stop` and `restart` forcefully terminate and await the task
-Job owned by its Node launcher, including native runtime descendants. They do not guarantee
+Job owned by its Node launcher, including native runtime descendants. Its
+`Global` namespace and current-user-only DACL let the desktop CLI and
+non-interactive service address the same object. They do not guarantee
 graceful draining or completion delivery. Inspect persisted state after restart;
 its normal startup rules determine recovery. Task startup runs at user logon,
 not before a user signs in.
@@ -231,7 +239,7 @@ check for leftover runtime processes after such an exit.
   and reserved-name rules. Such entries are not read as Team records or removed
   by startup, history, or replay; direct requests using an invalid Team ID fail.
 - Dissolve is a submission. The caller's receipt (`{ accepted, team_name,
-  status: submitted }`) proves only that the request was accepted; writing the
+status: submitted }`) proves only that the request was accepted; writing the
   record closed, destroying every child resource, and reclaiming the worktree
   all run behind that receipt and are never reported back to that caller. Read
   the Team's status afterward to learn what actually happened.
@@ -239,8 +247,8 @@ check for leftover runtime processes after such an exit.
   dissolve facts. There is no persisted dissolve operation, phase, retry
   counter, or generation. Writing `status: closed` is the dissolve's one commit
   point: once it lands, the dissolve cannot fail in a way that reopens the
-  Team. A dissolve interrupted *before* that write simply did not happen — the
-  Team is still open and can be asked again. One interrupted *after* that write
+  Team. A dissolve interrupted _before_ that write simply did not happen — the
+  Team is still open and can be asked again. One interrupted _after_ that write
   leaves the Team durably closed, with whatever child resources (cron jobs,
   members, the leader's runtime) had not yet been destroyed left exactly as
   they were — nothing revisits a closed Team to finish that cleanup, so a
@@ -275,7 +283,7 @@ check for leftover runtime processes after such an exit.
   runs `git worktree remove <path>`, forced only under that authorization: it
   does not use ref reachability as an eligibility check, and neither form
   deletes the managed branch or its commits.
-- A Team's cron store file is deleted while its resources close, *after* the
+- A Team's cron store file is deleted while its resources close, _after_ the
   closed record is committed — not before — alongside every other child
   resource (Workflows, members, the leader). Once the closed record lands the
   dissolve itself cannot fail: a cron-store deletion failure there is logged

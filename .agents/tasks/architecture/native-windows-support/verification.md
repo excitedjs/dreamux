@@ -1,6 +1,81 @@
 # Verification
 
-## Existing Windows task registration
+## Password installation default
+
+The operator clarified on 2026-10-20 that installation itself must select
+Password logon. Preserving a manually selected mode was insufficient.
+The new implementation uses the existing registration PowerShell process for
+local masked credential input and keeps the credential out of JavaScript,
+arguments, environment, generated launchers and Dreamux state. Existing task
+definitions retain their settings while the current-user Password principal
+and action are updated. The service Job uses the Global namespace for control
+from another Windows session.
+
+A read-only preflight protects the registered launcher's ownership record:
+running or queued tasks must be stopped from outside the service before an
+installation changes their Job identity, including Local-to-Global or a
+different service root. No automatic
+legacy migration or console-hiding helper is introduced. This does not establish
+that the previous Local implementation could wait for a service in another
+session.
+
+A small Windows PowerShell probe created only in-memory ScheduledTasks CIM
+objects with a synthetic identity. Replacing Actions and Principal preserved
+the captured description, trigger, settings and Highest run level while
+selecting Password. It never called Get-, Set- or Register-ScheduledTask.
+All three executions passed those functional assertions. The extra whole-profile
+snapshot did not pass: PowerShell created its roaming directory and subsequently
+its `StartupProfileData-NonInteractive` cache under the synthetic profile.
+Every captured outer root was removed. Further focused checks precreate the
+cache directory and exclude only that exact cache file from the comparison;
+all other account content and application-home sentinels remain protected.
+This probe validates CIM assignment, not native task storage or credentials.
+
+A real synthetic terminal check inherited stdio into PowerShell with
+`windowsHide: true`, without `-NonInteractive` or `-WindowStyle`.
+`Read-Host -AsSecureString` displayed ten masking characters for the synthetic
+input and completed successfully. Account sentinels remained unchanged, the
+temporary directory was empty and the captured root was removed. It did not
+invoke Scheduler or use a real password.
+
+A focused native Global Job case passed in 176 ms: a separately opened Job
+terminated the nested fixture tree and observed the retained process handles
+signalled before deleting its files. Its synthetic account was unchanged,
+temporary directory empty and outer root removed. This was a single-session
+native test of the Global name, not an experiment across login sessions.
+
+The first focused registration run passed six cases, with 15 filtered skips.
+Five cases executed the actual generated PowerShell against Scheduler function
+shadows; the non-terminal case used the real `Read-Host` rejection. The full
+daemon and privacy files then passed 22 cases with one live Scheduler skip.
+They cover definition preservation, refusal before service-file writes when
+the registered Job identity changes, unchanged dry-run permissions, and the
+generated Node/cmd launchers. Both runs preserved the synthetic account and
+application sentinels, left an empty temporary directory, and removed the
+captured outer root. Real-PowerShell cases retain the explicit 30-second budget.
+
+The live opt-in case now explicitly prepares an Interactive lifecycle fixture;
+it tests control and self-restart without pretending to certify the new
+Password installation flow. It was not run. Independent static review found
+no blocking issue.
+
+Local Windows gates passed: Rush build 7.60 s, lint 36.14 s, test typechecking
+6.68 s, and full default tests 101.8 s. The eight package logs report **2,925
+passed / 25 skipped**: host 1,212/20, utils 225/5, Codex 212/0, Claude 242/0,
+types 79/0, channel 762/0, transport 182/0 and bootstrap 11/0. The host
+daemon file passed 20 cases with its one live Scheduler skip.
+
+Build, lint and test typechecking left the synthetic temporary directory empty.
+The full suite returned zero, but its extra empty-temp assertion failed on the
+same five baseline `dx-spill-*` fixture parents documented below. Their contents
+were not inspected. The synthetic account and application sentinels remained
+unchanged, and the outer finally removed its captured root, including those
+five leftovers. The extra cleanup assertion is not a successful gate.
+
+Hosted CI for this correction is pending. No operator task, account password,
+real Scheduler fixture or authenticated model has been used for this correction.
+
+## Earlier correction: existing Windows task registration
 
 The operator reported a persistent console and manually changed the installed
 task's login mode. Read-only inspection found Password, Limited, Running and a
@@ -100,7 +175,12 @@ remained disabled. The full run again preserved the synthetic account but
 failed the extra empty-temp assertion on the same five baseline spill-parent
 fixtures described above; the outer finally removed its captured root.
 Knowledge and change-declaration checks passed. Independent review found no
-blocking issue; hosted checks of the resulting delivery remain pending.
+blocking issue. The resulting [PR CI](https://github.com/excitedjs/dreamux/actions/runs/39294884826)
+and [push CI](https://github.com/excitedjs/dreamux/actions/runs/39294874965)
+completed successfully on Windows, macOS and Ubuntu. All six complete platform
+logs confirmed eight successful test packages; model gates remained excluded.
+These results belong to the deadline revision, before the Password-default
+correction above.
 
 ## Vitest-native test isolation
 
@@ -406,17 +486,17 @@ does not change serialization or claim complete supervised-env equivalence.
 After the operator required Node/native capabilities outside platform-service
 management, the final Windows run passed the following gates:
 
-| Gate | Result |
-| --- | --- |
-| Rush update, build, source typecheck, lint and test typecheck | Passed across the workspace |
-| Full default suite | 2,867 passed, 36 platform/opt-in skips, zero failures; 93 seconds |
-| Built CLI smoke | Passed |
-| Real Task Scheduler lifecycle | Passed install, repeated restart, internal restart/resumed notice, internal stop, start, disabled-state preservation and uninstall using an isolated task |
-| Generated Node and batch-target service launchers | Passed Unicode paths, arguments, log output and target exit code |
-| Explicit authenticated model gate | Six tests passed across three files in 90 seconds after operator authorization |
-| Node repository tooling | Nine tests passed, including real commit hooks, content scans, author policy, KB checks and archive validation |
-| Native installer | Pinned Windows gitleaks download, checksum verification, extraction and version check passed |
-| Process-exit regression | 100 native-handle/cwd probes passed; unchanged Claude session tests passed |
+| Gate                                                          | Result                                                                                                                                                    |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Rush update, build, source typecheck, lint and test typecheck | Passed across the workspace                                                                                                                               |
+| Full default suite                                            | 2,867 passed, 36 platform/opt-in skips, zero failures; 93 seconds                                                                                         |
+| Built CLI smoke                                               | Passed                                                                                                                                                    |
+| Real Task Scheduler lifecycle                                 | Passed install, repeated restart, internal restart/resumed notice, internal stop, start, disabled-state preservation and uninstall using an isolated task |
+| Generated Node and batch-target service launchers             | Passed Unicode paths, arguments, log output and target exit code                                                                                          |
+| Explicit authenticated model gate                             | Six tests passed across three files in 90 seconds after operator authorization                                                                            |
+| Node repository tooling                                       | Nine tests passed, including real commit hooks, content scans, author policy, KB checks and archive validation                                            |
+| Native installer                                              | Pinned Windows gitleaks download, checksum verification, extraction and version check passed                                                              |
+| Process-exit regression                                       | 100 native-handle/cwd probes passed; unchanged Claude session tests passed                                                                                |
 
 The final process owner prohibits new Job members before collecting verified
 member handles, terminates only the retained Job, and waits for the native
@@ -480,18 +560,18 @@ reported the exact alpha version in the separate npm installation layout.
 
 The initial local run on 2026-10-19 used Node 22.23.3 and Rush 5.140.0.
 
-| Gate | Result |
-| --- | --- |
-| `rush update` | Passed; workspace dependencies installed through Rush |
-| `rush build` | Passed for the complete dependency graph |
-| `rush typecheck` | Passed in all eight applicable packages |
-| `rush lint` | Passed in all nine packages |
-| `rush typecheck:tests` | Passed in all eight applicable packages |
-| `rush test` | Passed: 2,848 tests, 32 platform/opt-in skips; zero failures |
-| `rush smoke-built-cli` | Passed |
-| Compiled foreground server and separate CLI status process | Passed in an isolated Windows home |
-| Real Task Scheduler lifecycle | Passed: install, start, restart, stop, disabled-state preservation and uninstall |
-| Installed Codex protocol | Passed: initialize and thread startup over stdio, then owned-process cleanup |
+| Gate                                                       | Result                                                                           |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `rush update`                                              | Passed; workspace dependencies installed through Rush                            |
+| `rush build`                                               | Passed for the complete dependency graph                                         |
+| `rush typecheck`                                           | Passed in all eight applicable packages                                          |
+| `rush lint`                                                | Passed in all nine packages                                                      |
+| `rush typecheck:tests`                                     | Passed in all eight applicable packages                                          |
+| `rush test`                                                | Passed: 2,848 tests, 32 platform/opt-in skips; zero failures                     |
+| `rush smoke-built-cli`                                     | Passed                                                                           |
+| Compiled foreground server and separate CLI status process | Passed in an isolated Windows home                                               |
+| Real Task Scheduler lifecycle                              | Passed: install, start, restart, stop, disabled-state preservation and uninstall |
+| Installed Codex protocol                                   | Passed: initialize and thread startup over stdio, then owned-process cleanup     |
 
 The full test run took 6 minutes 42 seconds. Its warnings identify the explicit
 live-model opt-in boundary and expected test logger output. After that run, only
@@ -554,17 +634,17 @@ test isolation, and worktree cleanup. The final filesystem publication fix was
 reviewed separately against both publication contracts; the final journal owner
 change was reviewed against ordering, privacy and recovery behavior.
 
-| Finding | Disposition and verification |
-| --- | --- |
-| HOME-only fixtures can reach the native Windows account home | Fixed in each affected fixture and in the package test launcher; success/failure isolation tests preserve an operator sentinel |
-| Unix socket, process, path and permission assumptions block Windows | Fixed at their owning boundaries; native named-pipe, ACL, process-tree, argument and junction tests pass |
-| Worktree removal can run with its own target as the Git subprocess cwd | Run removal from the shared Git directory; real managed-worktree lifecycle tests pass |
-| Journal appends launched repeated native permission preparation | Move preparation to the journal owner's creation/load boundary; ordered writes, existing-file tightening and missing-file refusal tests pass |
-| Elevated provider sessions leave Administrators-owned log directories or files | Providers prepare their own directories and open append files before output; native child observations and content-preservation regressions pass locally, with elevated cases assigned to Windows CI |
-| Case-insensitive PATH lookup disagrees with Node when duplicate key spellings exist | Apply Node's lexicographic key precedence; real executable and child-environment regressions pass |
-| A large Job queues more native waits than Koffi permits | Wait for the existing retained handles sequentially; a 256-member native tree is fully signaled when termination returns |
-| Closing a temporary file before hardlink publication can leave the Windows target refusing replacement | Keep its handle through publication and temporary-link cleanup; 800 concurrent fresh create/replace cases and the unchanged lifecycle suite pass |
-| Polling timeouts can race slower native I/O | Wait for actual submission, completion, settlement or error events; retain all behavioral assertions |
+| Finding                                                                                                | Disposition and verification                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HOME-only fixtures can reach the native Windows account home                                           | Fixed in each affected fixture and in the package test launcher; success/failure isolation tests preserve an operator sentinel                                                                       |
+| Unix socket, process, path and permission assumptions block Windows                                    | Fixed at their owning boundaries; native named-pipe, ACL, process-tree, argument and junction tests pass                                                                                             |
+| Worktree removal can run with its own target as the Git subprocess cwd                                 | Run removal from the shared Git directory; real managed-worktree lifecycle tests pass                                                                                                                |
+| Journal appends launched repeated native permission preparation                                        | Move preparation to the journal owner's creation/load boundary; ordered writes, existing-file tightening and missing-file refusal tests pass                                                         |
+| Elevated provider sessions leave Administrators-owned log directories or files                         | Providers prepare their own directories and open append files before output; native child observations and content-preservation regressions pass locally, with elevated cases assigned to Windows CI |
+| Case-insensitive PATH lookup disagrees with Node when duplicate key spellings exist                    | Apply Node's lexicographic key precedence; real executable and child-environment regressions pass                                                                                                    |
+| A large Job queues more native waits than Koffi permits                                                | Wait for the existing retained handles sequentially; a 256-member native tree is fully signaled when termination returns                                                                             |
+| Closing a temporary file before hardlink publication can leave the Windows target refusing replacement | Keep its handle through publication and temporary-link cleanup; 800 concurrent fresh create/replace cases and the unchanged lifecycle suite pass                                                     |
+| Polling timeouts can race slower native I/O                                                            | Wait for actual submission, completion, settlement or error events; retain all behavioral assertions                                                                                                 |
 
 No accepted blocking finding remains unresolved. Product behavior review is
 recorded in the final design. Knowledge links and task records are checked with

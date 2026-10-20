@@ -8,7 +8,7 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Deliver the three real-PowerShell fixtures' explicit deadline and verify hosted CI. Local required gates and independent review passed; the earlier same-head push timeout is recorded separately from that revision's successful PR CI. Merge remains paused at the operator's request.
+- Next action: Deliver the Password-default correction to the existing PR and verify hosted CI. Local isolated verification and all four Rush gates passed; the separate full-suite empty-temp assertion still found five baseline fixture parents, which the outer cleanup removed. Merge remains paused at the operator's request.
 - Coverage limit: Historical skill-publication, tarball-scan and managed-reporting timeouts remain unexplained. Later diagnostics observed a 4.16-second tar wait, but do not establish the historical cause. First-install console visibility and native Password credential reuse are not verified by this correction.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
@@ -28,7 +28,8 @@
 - On 2026-10-19 at 20:18 (UTC+08:00), the operator paused the previously requested merge to review the test-script changes.
 - On 2026-10-19 at 21:45 (UTC+08:00), the operator explicitly instructed using Vitest's native capabilities after reviewing the proposed replacement of the custom launcher. This authorizes configuration, lifecycle setup, regression verification and delivery to the existing PR; it does not resume the paused merge.
 - On 2026-10-19 at 21:49 (UTC+08:00), the operator required small-scope isolation verification before broader test execution to protect existing Dreamux and Codex configuration. The initial verification must itself use disposable account/application homes and sentinel files, with cleanup targets reviewed before execution.
-- On 2026-10-19 at 23:30 (UTC+08:00), the operator reported a persistent console window from the installed logon task and said they had changed it to run whether logged on or not. Read-only inspection found a Password principal with the existing logon trigger. The in-scope correction preserves an existing task's principal, triggers and settings when refreshing its action. This report does not establish a new first-install login mode or boot trigger; the operator's running task must not be changed for verification.
+- On 2026-10-19 at 23:30 (UTC+08:00), the operator reported a persistent console window from the installed logon task and said they had changed it to run whether logged on or not. The implementation initially interpreted this as preserving an existing task's manually selected Password mode. That interpretation was insufficient and is superseded by the explicit clarification below.
+- On 2026-10-20 at 21:36 (UTC+08:00), the operator clarified: "For the earlier black window issue, I meant installation should use Password mode, not continue installing in the original mode." This authorizes correcting the installation default to Password within the existing PR. It supersedes the Interactive default and the proposed console-hiding workaround. Credentials must be entered locally, never requested in chat or persisted by Dreamux; verification must not modify the operator's running task. The statement does not request a different trigger or resume merging.
 
 ## Delivery
 

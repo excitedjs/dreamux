@@ -142,9 +142,7 @@ describe.skipIf(process.platform !== 'win32')(
           }
           registered = true;
         },
-        capture: async () => {
-          throw new Error('unexpected task query');
-        },
+        capture: async () => 'null',
         check: async () => {
           throw new Error('unexpected task check');
         },

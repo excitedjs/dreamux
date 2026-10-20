@@ -726,10 +726,21 @@ when onboarding never created server state. A dry run records the planned
 creation in the transparent file ledger without touching the filesystem.
 
 Windows installs one `Dreamux-<current-user-SID>` Scheduled Task per account,
-independent of `DREAMUX_ROOT`. A new task has an interactive, limited principal
-and starts at user logon. Reinstallation updates only an existing task's action,
-preserving its principal, triggers and settings. An update failure propagates;
-installation does not replace it with the default registration. Before
+independent of `DREAMUX_ROOT`. A new task has a Password, limited principal
+and a user-logon trigger. Registration asks for the current Windows account
+password locally using PowerShell's masked secure prompt; a Windows Hello PIN
+is not the account password. The credential is passed directly to Task Scheduler,
+which stores it, and never enters Dreamux's generated files, arguments or
+environment. A new registration or login-mode conversion requires a terminal;
+non-interactive calls fail if a password is needed. Dry runs never prompt.
+Reinstallation updates only an existing Password task's action. Other login
+modes are converted to Password for the current user while preserving the
+remaining task definition, including triggers, settings, description and run
+level. An update failure propagates without an Interactive or S4U fallback.
+Before writing service installation files, the installer reads the actual registered
+launcher. If a running or queued task has a different Job identity, installation
+fails until it is stopped from a terminal outside that service.
+Before
 registering or updating the task, installation assigns the current user's
 ownership and private ACL to the log directory and existing log files, including
 the daemon output logs, so an elevated installation can start a limited task.
@@ -737,7 +748,8 @@ Dry runs leave those permissions unchanged.
 The generated `<DREAMUX_ROOT>/daemon.mjs` owns the captured environment,
 pinned Node command and log paths; rerun `dreamux daemon install` to change it,
 rather than hand-editing it. Task start/restart enables the task. Stop disables
-it while holding or reserving the launcher's named native Job, terminates and
+it while holding or reserving the launcher's named native Job in the `Global`
+namespace, shared across user sessions and protected by a current-user-only DACL, terminates and
 awaits its member process handles, then stops the task action before releasing
 the Job. It restores the task's previous enabled state. A restart invoked by a
 Dispatcher must survive termination of its own service Job: control checks

@@ -132,12 +132,12 @@ export function windowsServiceFile(): string {
   return join(dreamuxRoot(), 'daemon.mjs');
 }
 
-/** Kernel ownership for this installed launcher, recorded in its definition. */
+/** Same-user service ownership shared by the CLI and non-interactive sessions. */
 export function windowsServiceJobName(): string {
   const identity = createHash('sha256')
     .update(resolve(windowsServiceFile()).toLowerCase())
     .digest('hex');
-  return `Local\\Dreamux-service-${identity}`;
+  return `Global\\Dreamux-service-${identity}`;
 }
 
 /**
