@@ -18,6 +18,7 @@ const SCAN_SCRIPT = join(
   'scripts',
   'check-internal-content.mjs',
 );
+const TARBALL_SCAN_TIMEOUT_MS = 30_000;
 const SEP = '/';
 const MOUNT = `${SEP}data00${SEP}`;
 const home = (user: string): string => `${SEP}home${SEP}${user}${SEP}`;
@@ -117,45 +118,53 @@ describe('internal-content tarball scan', () => {
     return archive;
   }
 
-  it('rejects source-only placeholders and near matches in packed files', async () => {
-    return temporary(async (dir) => {
-      const archive = await pack(
-        dir,
-        'leaky',
-        [
-          home('volta'),
-          home('linuxbrew'),
-          home('linuxbrew2'),
-          home('example'),
-          home('someone'),
+  it(
+    'rejects source-only placeholders and near matches in packed files',
+    async () => {
+      return temporary(async (dir) => {
+        const archive = await pack(
+          dir,
+          'leaky',
+          [
+            home('volta'),
+            home('linuxbrew'),
+            home('linuxbrew2'),
+            home('example'),
+            home('someone'),
+            MOUNT,
+          ].join('\n'),
+        );
+        const result = await scan(['--tarball', archive]);
+        expect(result.exitCode).toBe(1);
+        expect(reported(result.stderr)).toEqual([
           MOUNT,
-        ].join('\n'),
-      );
-      const result = await scan(['--tarball', archive]);
-      expect(result.exitCode).toBe(1);
-      expect(reported(result.stderr)).toEqual([
-        MOUNT,
-        home('example'),
-        home('linuxbrew2'),
-        home('someone'),
-      ]);
-    });
-  });
+          home('example'),
+          home('linuxbrew2'),
+          home('someone'),
+        ]);
+      });
+    },
+    TARBALL_SCAN_TIMEOUT_MS,
+  );
 
-  it('accepts public install locations and rejects missing or invalid archives', async () => {
-    return temporary(async (dir) => {
-      const archive = await pack(
-        dir,
-        'clean',
-        [home('volta'), home('linuxbrew')].join('\n'),
-      );
-      expect((await scan(['--tarball', archive])).exitCode).toBe(0);
-      expect(
-        (await scan(['--tarball', join(dirname(archive), 'missing.tgz')]))
-          .exitCode,
-      ).toBe(2);
-      await writeFile(archive, 'not an archive');
-      expect((await scan(['--tarball', archive])).exitCode).toBe(2);
-    });
-  });
+  it(
+    'accepts public install locations and rejects missing or invalid archives',
+    async () => {
+      return temporary(async (dir) => {
+        const archive = await pack(
+          dir,
+          'clean',
+          [home('volta'), home('linuxbrew')].join('\n'),
+        );
+        expect((await scan(['--tarball', archive])).exitCode).toBe(0);
+        expect(
+          (await scan(['--tarball', join(dirname(archive), 'missing.tgz')]))
+            .exitCode,
+        ).toBe(2);
+        await writeFile(archive, 'not an archive');
+        expect((await scan(['--tarball', archive])).exitCode).toBe(2);
+      });
+    },
+    TARBALL_SCAN_TIMEOUT_MS,
+  );
 });

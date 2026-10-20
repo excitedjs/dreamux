@@ -8,7 +8,7 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Blockers: No unresolved product decision.
-- Next action: Deliver the Password-default correction to the existing PR and verify hosted CI. Local isolated verification and all four Rush gates passed; the separate full-suite empty-temp assertion still found five baseline fixture parents, which the outer cleanup removed. Merge remains paused at the operator's request.
+- Next action: Deliver the two tarball fixture budgets and verify hosted CI. All four local Rush gates passed again; scanner assertions, subprocesses and cleanup are unchanged. The separate empty-temp assertion still found five baseline fixture parents, removed by outer cleanup. Merge remains paused at the operator's request.
 - Coverage limit: Historical skill-publication, tarball-scan and managed-reporting timeouts remain unexplained. Later diagnostics observed a 4.16-second tar wait, but do not establish the historical cause. First-install console visibility and native Password credential reuse are not verified by this correction.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
 - Related tasks: None.
