@@ -42,6 +42,49 @@ use separate Dispatchers for unrelated private conversations. Workspace isolatio
 is off by default. Runtime sessions and identities persist, while unprocessed
 inbound messages do not survive a host restart.
 
+## Bundled skills
+
+The Dispatcher receives `dispatcher-workflow` and `dreamux-maintenance`; the
+TeamLeader receives `teamwork`, and both roles receive the shared
+`dynamic-workflow` skill. These roots are injected at runtime, not copied into
+the workspace during onboarding. For admin-created TeamLeaders, required-source
+normalization protects `teamwork` and `dynamic-workflow` from custom skill-root
+shadowing.
+
+## Configuration and upgrade notes
+
+For `builtin:codex`, every config field below has a default:
+
+| Field | Default |
+| --- | --- |
+| `bin` | `"codex"` |
+| `sandbox_mode` | `"workspace-write"` |
+| `extra_args` | `[]` |
+| `extra_env` | `{}` |
+| `initialize_timeout_ms` | `10000` |
+
+Older configurations may still contain `approval_policy` and `turn_timeout_ms`.
+Both keys are ignored by the current config reader. Dreamux supplies approval
+policy `never`; the old timeout setting (formerly documented with default
+`600000`) is not passed into `CodexRuntime` and currently has no runtime effect.
+Do not use either retired key to configure new installations.
+
+Claude Code agents use a different provider config: its `turn_timeout_ms` is an
+active stream-inactivity timeout. See the
+[configuration guide](https://github.com/excitedjs/dreamux/blob/next/docs/configuration.md)
+for both providers and complete examples.
+
+Feishu `access.json` remains version 3 and needs no rebuild for the trusted-group
+authorization change. Before upgrading from the earlier behavior,
+review every non-empty `group.allow_chats` entry under both `allowlist` and `follow-user`.
+Previously, `follow-user` ignored those entries and `allowlist` still applied
+`dm_policy` and `allow_users`. Listed groups now trust their human membership
+after the group block/mention checks, bypassing the user gate. Keep only groups
+whose human membership should be trusted and whose passive known-bot observation
+should remain enabled. The
+[access guide](https://github.com/excitedjs/dreamux/blob/next/docs/configuration.md#feishu-credentials-and-access)
+explains current policy and how to edit it while the host is stopped.
+
 ## Documentation
 
 | Guide | Read |
