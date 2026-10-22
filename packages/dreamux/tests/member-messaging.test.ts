@@ -71,7 +71,10 @@ for (const scope of ['team', 'dispatcher'] as const)
         Object.keys(catalog[0]!.inputSchema['properties'] as object),
       ).toEqual(['name', 'prompt']);
       expect(catalog[0]!.inputSchema['additionalProperties']).toBe(false);
-      a.runtime.context.results!(result('owner offline'));
+      a.runtime.context.events({
+        kind: 'turn.result',
+        completion: result('owner offline'),
+      });
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(f.provider.runtimes).toHaveLength(2);
       const address = f.owner.memberOwner().name;
@@ -123,7 +126,7 @@ for (const scope of ['team', 'dispatcher'] as const)
         `<task from="${a.name}">question</task>`,
       );
       expect(notices(ownerRuntime)).toEqual([]);
-      b.runtime.context.results!(native);
+      b.runtime.context.events({ kind: 'turn.result', completion: native });
       for (const submission of b.runtime.submissions)
         submission.settle({ kind: 'completion', completion: native });
       await vi.waitFor(() => expect(notices(ownerRuntime)).toHaveLength(1));
@@ -156,7 +159,10 @@ for (const scope of ['team', 'dispatcher'] as const)
       const reopened = f.provider.runtimes.at(-1)!;
       expect(reopened.context.identity.sessionId).toBe('retained-session');
       expect((await f.members.status(b.name)).name).toBe(b.name);
-      reopened.context.results!(result('reopened background'));
+      reopened.context.events({
+        kind: 'turn.result',
+        completion: result('reopened background'),
+      });
       await vi.waitFor(() => expect(notices(ownerRuntime)).toHaveLength(2));
       expect(notices(ownerRuntime)[1]).toContain('reopened background');
       expect(b.runtime.context.mcpServers).toHaveLength(1);
@@ -170,13 +176,17 @@ for (const scope of ['team', 'dispatcher'] as const)
         const a = await f.spawn('alice');
         const ownerRuntime = f.ownerRuntime!;
         const entity = f.members.materializedEntities()[0]!;
-        a.runtime.context.results!(result('background one'));
-        a.runtime.context.results!(
-          Object.freeze({
+        a.runtime.context.events({
+          kind: 'turn.result',
+          completion: result('background one'),
+        });
+        a.runtime.context.events({
+          kind: 'turn.result',
+          completion: Object.freeze({
             status: 'failed',
             error: new Error('native failed'),
           }),
-        );
+        });
         await vi.waitFor(() => expect(notices(ownerRuntime)).toHaveLength(2));
         expect(notices(ownerRuntime)[0]).toContain('background one');
         expect(notices(ownerRuntime)[1]).toContain('turn failed.');
@@ -196,7 +206,10 @@ for (const scope of ['team', 'dispatcher'] as const)
             };
           },
         );
-        a.runtime.context.results!(result('observed before close'));
+        a.runtime.context.events({
+          kind: 'turn.result',
+          completion: result('observed before close'),
+        });
         const closing =
           operation === 'close'
             ? entity.close({ note: 'close after terminal' })
@@ -212,7 +225,10 @@ for (const scope of ['team', 'dispatcher'] as const)
         await closing;
         expect(notices(ownerRuntime)).toHaveLength(3);
         expect(notices(ownerRuntime)[2]).toContain('observed before close');
-        a.runtime.context.results!(result('revoked result'));
+        a.runtime.context.events({
+          kind: 'turn.result',
+          completion: result('revoked result'),
+        });
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(notices(ownerRuntime)).toHaveLength(3);
       },
@@ -223,7 +239,7 @@ for (const scope of ['team', 'dispatcher'] as const)
       const a = await f.spawn('alice');
       const entity = f.members.materializedEntities()[0]!;
       const native = result('terminal before stop');
-      a.runtime.context.results!(native);
+      a.runtime.context.events({ kind: 'turn.result', completion: native });
       a.runtime.submissions[0]!.settle({
         kind: 'completion',
         completion: native,
@@ -234,7 +250,10 @@ for (const scope of ['team', 'dispatcher'] as const)
       await f.members.send({ name: a.name, prompt: 'new generation' });
       const next = f.provider.runtimes.at(-1)!;
       const stopping = entity.stopForHost();
-      next.context.results!(result('terminal after stop'));
+      next.context.events({
+        kind: 'turn.result',
+        completion: result('terminal after stop'),
+      });
       await stopping;
       expect(notices(f.ownerRuntime!)).toHaveLength(1);
     });
@@ -255,7 +274,7 @@ for (const scope of ['team', 'dispatcher'] as const)
       const runtime = f.provider.runtimes.at(-1)!;
       expect(runtime.context.mcpServers).toEqual([]);
       const native = result('script result');
-      runtime.context.results!(native);
+      runtime.context.events({ kind: 'turn.result', completion: native });
       runtime.submissions[0]!.settle({
         kind: 'completion',
         completion: native,
@@ -275,7 +294,10 @@ for (const scope of ['team', 'dispatcher'] as const)
       expect(reopened.context.mcpServers.map((server) => server.name)).toEqual([
         'teammate',
       ]);
-      reopened.context.results!(result('ordinary result'));
+      reopened.context.events({
+        kind: 'turn.result',
+        completion: result('ordinary result'),
+      });
       await vi.waitFor(() => expect(notices(f.ownerRuntime!)).toHaveLength(1));
     });
 

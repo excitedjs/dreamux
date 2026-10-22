@@ -4,7 +4,7 @@ import type { ClaudeActivityLine, ClaudeProtocolEvent } from './types.js';
 import type {
   JsonValue,
   RuntimeActivity,
-  AgentRuntimeActivitySink,
+  AgentRuntimeEventSink,
 } from '@excitedjs/dreamux-types';
 
 /** Resident activity is independent of request admission and settlement. */
@@ -14,7 +14,7 @@ export interface NativeActivityState {
 
 export interface ProtocolEventContext {
   activity: NativeActivityState;
-  activitySink: AgentRuntimeActivitySink;
+  events: AgentRuntimeEventSink;
 }
 
 /**
@@ -36,7 +36,7 @@ export interface ProtocolEventContext {
 export function endNativeTurn(
   status: 'completed' | 'failed' | 'interrupted',
   reason: string | null,
-  sink: AgentRuntimeActivitySink,
+  sink: AgentRuntimeEventSink,
 ): void {
   emitActivity(
     { kind: 'turn.ended', occurredAt: Date.now(), status, reason },
@@ -44,10 +44,10 @@ export function endNativeTurn(
   );
 }
 
-/** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
+/** The sink is Core's and never throws (`AgentRuntimeEventSink`). */
 function emitActivity(
   activity: RuntimeActivity,
-  sink: AgentRuntimeActivitySink,
+  sink: AgentRuntimeEventSink,
 ): void {
   sink(Object.freeze(activity));
 }
@@ -60,7 +60,7 @@ export function handleProtocolEvent(
     const interrupted = event.kind === 'interrupted';
     const id = event.uuid;
     if (interrupted && id !== null && id !== '') {
-      emitActivity(interruptedActivity(id), context.activitySink);
+      emitActivity(interruptedActivity(id), context.events);
     }
     const usage = event.outcome.tokenUsage;
     if (usage !== undefined && id !== null && id !== '') {
@@ -77,7 +77,7 @@ export function handleProtocolEvent(
               ? null
               : { usedTokens: contextTokens, windowTokens: null },
         },
-        context.activitySink,
+        context.events,
       );
     }
     // `result` is claude's native terminal, and the display line ends on it:
@@ -93,7 +93,7 @@ export function handleProtocolEvent(
       !interrupted && event.outcome.isError
         ? turnFailureMessage(event.outcome)
         : null,
-      context.activitySink,
+      context.events,
     );
     context.activity.tools.clear();
     return;
@@ -123,12 +123,11 @@ export function handleProtocolEvent(
  */
 function emitStreamActivity(
   line: ClaudeActivityLine,
-  { activity: activityState, activitySink }: ProtocolEventContext,
+  { activity: activityState, events }: ProtocolEventContext,
 ): void {
   if (line.kind === 'compact_boundary') {
     const id = stringValue(line.raw['uuid']);
-    if (id !== null && id !== '')
-      emitActivity(compactedActivity(id), activitySink);
+    if (id !== null && id !== '') emitActivity(compactedActivity(id), events);
     return;
   }
   if (line.raw['parent_tool_use_id'] != null) return;
@@ -143,7 +142,7 @@ function emitStreamActivity(
         ? assistantBlockActivity(activityState, lineUuid, block)
         : toolResultActivity(activityState, block);
     if (activity === null) continue;
-    emitActivity(activity, activitySink);
+    emitActivity(activity, events);
   }
 }
 

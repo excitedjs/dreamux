@@ -4,7 +4,7 @@
  *
  * `RuntimeActivity` (with its `NativeActivity`/`RuntimeToolAction` support
  * types) is the live, per-provider-detailed stream a runtime pushes through
- * {@link AgentRuntimeActivitySink} while a turn is running. `AgentActivityRecord`
+ * {@link AgentRuntimeEventSink} while a turn is running. `AgentActivityRecord`
  * (with `AgentActivityQuery`/`AgentActivityPage`/`AgentActivityReadContext`/
  * `AgentActivityError`) is the neutral, minimal contract
  * {@link AgentRuntimeProvider.readRecentActivity} replays from a cold

@@ -307,7 +307,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    endNativeTurn(status, reason, this.deps.activitySink);
+    endNativeTurn(status, reason, this.deps.events);
   }
 
   /** Ensure a live resident session exists, resuming after a child exit. */
@@ -364,7 +364,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             this.log('info', `claude-code remote control URL: ${url}`);
           }
         : undefined,
-      results: this.deps.resultSink,
+      events: this.deps.events,
       onProtocolEvent: (event) => this.onProtocolEvent(event, activity),
       logger: this.logger,
     });
@@ -431,7 +431,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     if (this.stopped) return;
     handleProtocolEvent(event, {
       activity,
-      activitySink: this.deps.activitySink,
+      events: this.deps.events,
     });
   }
 

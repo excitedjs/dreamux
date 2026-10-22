@@ -1,10 +1,9 @@
 import type {
   AgentRuntime,
-  AgentRuntimeActivitySink,
+  AgentRuntimeEventSink,
   AgentRuntimeCreateContext,
   AgentRuntimeMcpServer,
   AgentRuntimeProvider,
-  AgentRuntimeResultSink,
   AgentRuntimeStartOutcome,
 } from '@excitedjs/dreamux-types';
 
@@ -81,7 +80,7 @@ export class RuntimeGeneration {
     private readonly dispatcherId: string,
     private readonly state: AgentRuntimeStateStore,
     private readonly options: TeammateServiceOptions,
-    private readonly owner: { observeRuntimeResult: AgentRuntimeResultSink },
+    private readonly owner: { observeRuntimeEvent: AgentRuntimeEventSink },
   ) {}
 
   async ensureStarted(): Promise<void> {
@@ -294,44 +293,13 @@ export class RuntimeGeneration {
     }
   }
 
-  /**
-   * A generation-scoped activity closure.
-   *
-   * Activity shares the state lease's generation, so a replaced runtime cannot
-   * publish into its successor's conversation stream — including the stream's
-   * `turn.ended` terminal, which would otherwise finish its successor's card.
-   * The sink is synchronous and non-throwing by contract, so a stale write is
-   * dropped and logged (fail-open) rather than raised back into the provider.
-   *
-   * The activity goes straight to the display projection. This entity's turn
-   * bookkeeping is not consulted: a provider folds any number of submissions
-   * into one native turn, so there is no submission to attribute the fact to,
-   * and the Agent is the only subject it honestly has.
-   */
-  private generationActivitySink(
+  /** Admit observations synchronously while this runtime owns the generation. */
+  private generationEventSink(
     lease: AgentRuntimeGenerationLease,
-  ): AgentRuntimeActivitySink {
-    return (activity) => {
-      if (!lease.isCurrent()) {
-        this.deps.log.debug(
-          { teammate: this.state.current().name },
-          'dropped Agent Runtime activity from a revoked runtime generation',
-        );
-        return;
-      }
-      this.deps.conversationProjection.projectActivity(
-        { identity: this.state.current(), role: this.options.role },
-        activity,
-      );
-    };
-  }
-
-  private generationResultSink(
-    lease: AgentRuntimeGenerationLease,
-  ): AgentRuntimeResultSink {
-    return (completion) => {
+  ): AgentRuntimeEventSink {
+    return (event) => {
       if (!lease.isCurrent()) return;
-      this.owner.observeRuntimeResult(completion);
+      this.owner.observeRuntimeEvent(event);
     };
   }
 
@@ -362,8 +330,7 @@ export class RuntimeGeneration {
         ...(this.options.outputSchema !== undefined
           ? { outputSchema: this.options.outputSchema }
           : {}),
-        activity: this.generationActivitySink(lease),
-        results: this.generationResultSink(lease),
+        events: this.generationEventSink(lease),
         ...(this.options.systemPrompt !== undefined
           ? { systemPrompt: this.options.systemPrompt }
           : {}),

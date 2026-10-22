@@ -49,7 +49,9 @@ function harness(options: Partial<ClaudeCodeStreamRpcOptions> = {}) {
   };
   const rpc = new ClaudeCodeStreamRpc(stdin as unknown as Writable, {
     sessionId: 'session',
-    results: (completion) => published.push(completion),
+    events: (event) => {
+      if (event.kind === 'turn.result') published.push(event.completion);
+    },
     turnTimeoutMs: 1_000,
     reapOnTimeout: reap,
     onProtocolEvent: (event) => events.push(event),

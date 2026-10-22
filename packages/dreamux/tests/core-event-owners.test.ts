@@ -334,7 +334,7 @@ it('drops revoked runtime activity and state while a replacement generation stil
   });
   const old = f.provider.runtimes[0]!;
   f.events.length = 0;
-  old.context.activity({
+  old.context.events({
     kind: 'assistant.message',
     id: 'first',
     occurredAt: Date.now(),
@@ -354,7 +354,7 @@ it('drops revoked runtime activity and state while a replacement generation stil
   const current = f.provider.runtimes[1]!;
   f.events.length = 0;
   expect(() =>
-    old.context.activity({
+    old.context.events({
       kind: 'assistant.message',
       id: 'late',
       occurredAt: Date.now(),
@@ -367,7 +367,7 @@ it('drops revoked runtime activity and state while a replacement generation stil
     ),
   ).rejects.toMatchObject({ name: 'AgentRuntimeStateLeaseRevokedError' });
   expect(f.events).toEqual([]);
-  current.context.activity({
+  current.context.events({
     kind: 'assistant.message',
     id: 'current',
     occurredAt: Date.now(),

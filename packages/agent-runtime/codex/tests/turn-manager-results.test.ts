@@ -45,8 +45,9 @@ function fixture(codec = false) {
       false,
       '/fake/cwd',
     ),
-    activitySink: () => undefined,
-    resultSink: (completion) => published.push(completion),
+    events: (event) => {
+      if (event.kind === 'turn.result') published.push(event.completion);
+    },
     logger,
   });
   // C has a live late-admission consumer only while its native request is in flight.

@@ -2,7 +2,7 @@
  * AgentRuntime push-only state sink, system-prompt semantics, and opaque
  * session-id identity (issue #209 minimize-provider-boundaries).
  *
- * Every runtime fact flows OUT through {@link AgentRuntimeStateSink}; nothing
+ * Durable identity facts flow OUT through {@link AgentRuntimeStateSink}; nothing
  * is pulled back off the handle (see agent-runtime-handle-contract.test.ts for
  * the handle-shape half of that invariant). This file covers the sink itself,
  * the lease-revocation error it can reject with, the neutral system-prompt
@@ -11,12 +11,18 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  AgentRuntimeCreateContext,
+  AgentRuntimeEvent,
+  AgentRuntimeEventSink,
   AgentRuntimeIdentity,
+  RuntimeCompletion,
   AgentRuntimeStateLeaseRevokedError,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
   AgentRuntimeSystemPrompt,
 } from '../src/agent-runtime.js';
+
+import type { RuntimeActivity } from '../src/activity.js';
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
@@ -30,6 +36,35 @@ function assertType<T extends true>(_proof?: T): void {
 function assertNever(value: never): never {
   throw new Error(`unreachable union member: ${JSON.stringify(value)}`);
 }
+
+describe('AgentRuntimeEventSink is the required synchronous observation seam', () => {
+  it('carries exactly activity, session titles and original runtime completions', () => {
+    assertType<
+      Equal<
+        AgentRuntimeEvent,
+        | RuntimeActivity
+        | { readonly kind: 'session.title.changed'; readonly title: string }
+        | {
+            readonly kind: 'turn.result';
+            readonly completion: RuntimeCompletion;
+          }
+      >
+    >();
+    assertType<
+      Equal<AgentRuntimeCreateContext<unknown>['events'], AgentRuntimeEventSink>
+    >();
+    assertType<Equal<ReturnType<AgentRuntimeEventSink>, void>>();
+    assertType<
+      Equal<
+        Extract<
+          keyof AgentRuntimeCreateContext<unknown>,
+          'activity' | 'results'
+        >,
+        never
+      >
+    >();
+  });
+});
 
 describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else', () => {
   it('the sink exposes no pull counterpart alongside publish', () => {

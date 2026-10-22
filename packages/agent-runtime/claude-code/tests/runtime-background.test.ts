@@ -61,7 +61,7 @@ async function harness(
       }),
       {
         sessionId: spec.sessionId,
-        results: spec.results,
+        events: spec.events,
         outputSchemaEnabled: spec.outputSchemaEnabled,
         turnTimeoutMs: 5_000,
         reapOnTimeout: reap,
@@ -106,15 +106,13 @@ async function harness(
     },
     state: { publish: async () => undefined },
     logger,
-    ...(observe
-      ? {
-          results: (completion: RuntimeCompletion) =>
-            published.push(completion),
-        }
-      : {}),
-    activity: (event) => {
-      activity.push(event);
-      onActivity?.(event);
+    events: (event) => {
+      if (event.kind === 'turn.result') {
+        if (observe) published.push(event.completion);
+      } else if (event.kind !== 'session.title.changed') {
+        activity.push(event);
+        onActivity?.(event);
+      }
     },
   });
   runtimes.push(runtime);
@@ -773,16 +771,16 @@ it('wires the provider result sink for both bound and unbound normal/failed nati
   expect(h.published).toHaveLength(3);
 });
 
-it('retains per-input result values when an older host omits native observation', async () => {
+it('retains per-input result values when the host ignores result events', async () => {
   const h = await harness(undefined, false);
   expect(h.published).toEqual([]);
-  const submission = await h.submit('legacy host input');
+  const submission = await h.submit('input with ignored results');
   h.lifecycle(h.writes.at(-1)!.uuid, 'started');
-  h.result('legacy input answer');
+  h.result('input answer');
   expect(await h.completion(submission)).toEqual({
     status: 'completed',
-    resultText: 'legacy input answer',
+    resultText: 'input answer',
   });
-  h.result('unbound background with no observer');
+  h.result('unbound background with ignored results');
   expect(h.published).toEqual([]);
 });

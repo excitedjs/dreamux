@@ -47,13 +47,14 @@ it('keeps managed Teams request-only: member reports stop at leaders, explicit c
     const name = (created.structured as { team_name: string }).team_name;
     const team = await f.teams.open(name);
     const leader = f.provider.runtimes.at(-1)!;
-    leader.context.results!(
-      result('unbound leader while a request is pending'),
-    );
+    leader.context.events({
+      kind: 'turn.result',
+      completion: result('unbound leader while a request is pending'),
+    });
     await tick();
     expect(notices()).toHaveLength(index * 3);
     const createAnswer = result(`create-answer-${index}`);
-    leader.context.results!(createAnswer);
+    leader.context.events({ kind: 'turn.result', completion: createAnswer });
     leader.submissions[0]!.settle({
       kind: 'completion',
       completion: createAnswer,
@@ -67,7 +68,7 @@ it('keeps managed Teams request-only: member reports stop at leaders, explicit c
     });
     const member = f.provider.runtimes.at(-1)!;
     const memberAnswer = result(`internal-member-${index}`);
-    member.context.results!(memberAnswer);
+    member.context.events({ kind: 'turn.result', completion: memberAnswer });
     member.submissions[0]!.settle({
       kind: 'completion',
       completion: memberAnswer,
@@ -78,9 +79,10 @@ it('keeps managed Teams request-only: member reports stop at leaders, explicit c
       ).toHaveLength(1),
     );
     expect(leader.inputs.at(-1)).toContain(`internal-member-${index}`);
-    leader.context.results!(
-      result('leader continuation after internal activity'),
-    );
+    leader.context.events({
+      kind: 'turn.result',
+      completion: result('leader continuation after internal activity'),
+    });
     await tick();
     expect(notices()).toHaveLength(index * 3 + 1);
     for (const prompt of ['request-one', 'request-two']) {
@@ -93,7 +95,7 @@ it('keeps managed Teams request-only: member reports stop at leaders, explicit c
     }
     const requestInputs = leader.submissions.slice(-2);
     const folded = foldSubmissions(requestInputs, `equal-answer-${index}`);
-    leader.context.results!(folded);
+    leader.context.events({ kind: 'turn.result', completion: folded });
     await vi.waitFor(() => expect(notices()).toHaveLength(index * 3 + 2));
     expect(notices().at(-1)).toContain(`equal-answer-${index}`);
     expect(
@@ -105,15 +107,19 @@ it('keeps managed Teams request-only: member reports stop at leaders, explicit c
     const separate = leader.submissions
       .at(-1)!
       .complete(`equal-answer-${index}`);
-    leader.context.results!(separate);
+    leader.context.events({ kind: 'turn.result', completion: separate });
     await vi.waitFor(() => expect(notices()).toHaveLength(index * 3 + 3));
-    leader.context.results!(
-      Object.freeze({
+    leader.context.events({
+      kind: 'turn.result',
+      completion: Object.freeze({
         status: 'failed',
         error: new Error('unrelated leader background failure'),
       }),
-    );
-    leader.context.results!(result('later autonomous leader turn'));
+    });
+    leader.context.events({
+      kind: 'turn.result',
+      completion: result('later autonomous leader turn'),
+    });
     await tick();
     expect(notices()).toHaveLength(index * 3 + 3);
   }
@@ -140,7 +146,7 @@ it('a Channel-originated Team request retains its value without acquiring a Disp
     throw new Error('Channel request not admitted');
   const leader = f.provider.runtimes.at(-1)!;
   const answer = result('Channel answer');
-  leader.context.results!(answer);
+  leader.context.events({ kind: 'turn.result', completion: answer });
   leader.submissions[0]!.settle({ kind: 'completion', completion: answer });
   expect(await accepted.turn.settled).toEqual({
     status: 'completed',

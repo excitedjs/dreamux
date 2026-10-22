@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeEvent,
   AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
@@ -71,7 +72,10 @@ import type { RunningLaunch } from './types.js';
 
 /** One canonical Agent entity and the sole owner of its live lifecycle. */
 export class AgentService {
-  readonly events = new EventEmitter<{ state: [AgentEntityIdentity] }>();
+  readonly events = new EventEmitter<{
+    state: [AgentEntityIdentity];
+    'session.title.changed': [string];
+  }>();
   private state: AgentRuntimeStateStore;
   private readonly runtimeGeneration: RuntimeGeneration;
   /**
@@ -408,12 +412,39 @@ export class AgentService {
     return this.phase === 'active' && this.hostStop === null;
   }
 
-  observeRuntimeResult(completion: RuntimeCompletion): void {
-    this.reportOutcome(
-      this.nativeResultRecipient ?? null,
-      completion,
-      completion,
-    );
+  observeRuntimeEvent(event: AgentRuntimeEvent): void {
+    try {
+      switch (event.kind) {
+        case 'turn.result':
+          return this.reportOutcome(
+            this.nativeResultRecipient ?? null,
+            event.completion,
+            event.completion,
+          );
+        case 'session.title.changed':
+          this.events.emit('session.title.changed', event.title);
+          return;
+        case 'assistant.message':
+        case 'context.compacted':
+        case 'turn.interrupted':
+        case 'tool.call':
+        case 'token.usage':
+        case 'turn.ended':
+          return this.deps.conversationProjection.projectActivity(
+            { identity: this.current(), role: this.role },
+            event,
+          );
+        default: {
+          const exhaustive: never = event;
+          return exhaustive;
+        }
+      }
+    } catch (error) {
+      this.deps.log.error(
+        { teammate: this.name, kind: event.kind, error: errorMessage(error) },
+        'Agent Runtime event observer failed',
+      );
+    }
   }
 
   /** The sole notification owner, shared by native observation and request replies. */

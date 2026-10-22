@@ -27,6 +27,7 @@ import { TEAM_ID_PATTERN, validateTeamId, type TeamRecord } from './types.js';
 
 /** The merge {@link TeamRecordHandle.update} accepts. */
 export interface TeamRecordUpdate {
+  intent?: string;
   status?: TeamStatus;
   closedAt?: number | null;
   closeNote?: string | null;
@@ -48,6 +49,8 @@ export interface TeamRecordHandle {
   readonly current: TeamRecord | null;
   /** Retain this initialized owner for independently settling work. */
   retain(): TeamRecordHandle;
+  /** Join writes already accepted by this record owner without releasing it. */
+  drain(): Promise<void>;
   /** Release this acquisition after its queued writes settle. Call once. */
   release(): Promise<void>;
   create(
@@ -114,6 +117,7 @@ export class TeamStore {
       create: (input) => this.publishRecord(store, input),
       update: (input) => this.mergeRecord(id, store, input),
       retain: () => this.retain(id, entry),
+      drain: () => store.drain(),
       release: async () => {
         // Child destruction and Git cleanup do not drain a late running patch
         // queued behind closed. Keep this hold through the record queue barrier.
@@ -268,6 +272,7 @@ export class TeamStore {
         current.status === 'closed' ? current.status : input.status;
       updated = {
         ...current,
+        ...(input.intent !== undefined ? { intent: input.intent } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
         ...(input.closeNote !== undefined

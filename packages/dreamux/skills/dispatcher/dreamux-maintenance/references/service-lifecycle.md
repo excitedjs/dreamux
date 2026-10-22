@@ -78,6 +78,21 @@ check for leftover runtime processes after such an exit.
 
 ## Agent Identity And Recent Activity
 
+- A Team's server-owned `team/<team>/record.json` holds its display `intent`.
+  Its own Codex leader's native session title replaces that intent after a
+  nonblank `thread/name/updated` observation is accepted and its queued write
+  commits. Events received before runtime revocation retain their place in the
+  Team write queue; late events from revoked runtimes are ignored. A failed
+  write is logged, preserves the prior committed intent, and leaves the runtime
+  running. Host shutdown stops runtime producers and drains the existing Team
+  record writer before returning. Member and Dispatcher titles do not change
+  Team intent; title events leave the existing
+  leader identity's `intent` unchanged. If that identity is missing, ordinary
+  reconstruction uses the current Team record's intent. `/teams` reads the
+  current value on the next invocation; previously sent cards remain snapshots.
+  There is no title generation or polling, and Claude titles are not integrated. Do not edit these records
+  directly; inspect Team list/status and the owning runtime's notifications.
+
 - Every dispatcher root agent, TeamMate, TeamLeader, and Team member has a
   server-owned `identity.json` in its role-scoped entity directory. It owns
   identity/lifecycle/worktree facts and one nullable `session_id` string: the

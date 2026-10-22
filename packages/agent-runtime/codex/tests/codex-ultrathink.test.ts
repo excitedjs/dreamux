@@ -47,8 +47,8 @@ function createRuntime(
     {
       cwd: '/fake/cwd',
       state: noopStateSink(),
-      resultSink: () => undefined,
-      activitySink: () => undefined,
+
+      events: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
       skillSources: [],

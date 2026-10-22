@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Verify that each teams card reads the current Team intent while previously sent cards remain snapshots.",
+      "type": "none",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

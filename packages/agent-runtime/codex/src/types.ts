@@ -114,6 +114,11 @@ export interface ThreadTokenUsageUpdatedNotification {
   tokenUsage: ThreadTokenUsage;
 }
 
+export interface ThreadNameUpdatedNotification {
+  threadId: string;
+  threadName?: string | null;
+}
+
 export interface TurnCompletedNotification {
   threadId: string;
   turn: {

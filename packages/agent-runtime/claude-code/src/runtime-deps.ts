@@ -1,6 +1,5 @@
 import type {
-  AgentRuntimeActivitySink,
-  AgentRuntimeResultSink,
+  AgentRuntimeEventSink,
   AgentRuntimeMcpServer,
   AgentRuntimePathContext,
   AgentRuntimeSkillSource,
@@ -26,6 +25,5 @@ export interface ClaudeCodeRuntimeDeps {
    */
   outputSchema?: Record<string, unknown> | undefined;
   logger: DreamuxLogger;
-  activitySink: AgentRuntimeActivitySink;
-  resultSink?: AgentRuntimeResultSink | undefined;
+  events: AgentRuntimeEventSink;
 }

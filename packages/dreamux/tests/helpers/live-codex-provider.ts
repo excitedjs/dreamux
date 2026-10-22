@@ -129,8 +129,12 @@ export async function liveCodexProvider() {
           updates.push(update);
         },
       },
-      results: () => undefined,
-      activity: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         activities.push(activity);
       },
       logger,

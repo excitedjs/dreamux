@@ -113,8 +113,8 @@ The public runtime boundary returns one `RuntimeSubmission` handle per accepted
 send; submissions folded into the active native turn settle with the same
 immutable `RuntimeCompletion`, and queued submissions settle with distinct
 completions in native order. Every normally completed or observed-failed native
-terminal also publishes once through `context.results`, including unbound turns.
-The sink and all bound settlements receive the same frozen object. The existing
+terminal also publishes once as `turn.result` through `context.events`, including unbound turns.
+The event completion and all bound settlements carry the same frozen object. The existing
 terminal callback order determines publication; codec restoration and assistant
 extraction apply equally to bound and unbound terminals. Scoped fatal errors and
 codec failures produce failed results. Interrupted terminals keep bound partial-output
@@ -161,11 +161,12 @@ See
 for the complete current lifecycle and failure contract.
 
 
-The result observer is optional for old-host compatibility: native per-input
-values still resolve when `context.results` is absent. When present, this provider
-must publish each normal/failed terminal in finalization order with the same C
-returned to every answered input, including late admissions against an already
-finalized native record. Current Core always supplies it. Old provider/new Core
-keeps bound answers and requested replies, without certification of background
-report coverage or ordering; loading successfully is not conformity. There is no
-capability negotiation or fallback queue.
+The required `context.events` sink receives activity and results synchronously.
+Each result carries the original completion returned to every answered input,
+including late admissions against an already finalized native record.
+
+Native `thread/name/updated` notifications for this runtime's own thread emit
+`session.title.changed` through that same sink. Missing, null, and blank
+`threadName` values are ignored. This consumer neither generates titles nor
+starts model turns. The owning Team observes its leader's event and queues an
+intent write; the runtime does not await or depend on that persistence.

@@ -59,24 +59,26 @@ started has settled and no such call can later return `submitted`. Providers
 must terminate or release their own pending native requests before satisfying
 that convergence contract.
 
-## Native result contract
+## Runtime event contract
 
-`AgentRuntimeCreateContext.results` is an optional `AgentRuntimeResultSink` beside
-state and activity. Current Core always supplies it. When supplied, publish every observed normal or failed native terminal once,
-synchronously in terminal-finalization order, including turns with no host
-submission. The immutable `RuntimeCompletion` passed to the sink must be the
-same object passed to every settlement that answers that result. Identity is the
-host's folding key; cloning can duplicate reports. The sink never throws or
-applies backpressure, and revoked generation writes drop.
+`AgentRuntimeCreateContext.events` is the required synchronous
+`AgentRuntimeEventSink` for live activity, `session.title.changed`, and
+`turn.result`. The separate `state` sink persists identity and fences startup;
+events are observations without a durable acknowledgement. Core admits events
+only while their generation is current. Owners may enqueue accepted facts for
+persistence, and catch and log observer failures without stopping the provider.
+
+Publish every normal or failed native terminal once as `turn.result`, in native
+terminal-finalization order and before submission settlement, including turns
+with no host submission. Its `completion` must be the original immutable
+`RuntimeCompletion` shared by every settlement answering that result. Object
+identity is the host's folding key; cloning can duplicate reports.
 
 Interrupted terminals, refusal, transport/connection loss and teardown do not
 manufacture native results. Their existing bound settlements remain available.
-Live activity remains display-only. A new provider with an older host calls the
-observer optionally and retains per-input admission and settled values when it is
-absent. An older provider with new Core can ignore the added context property;
-bound values and requested replies remain, but unbound coverage and native report
-ordering are not certified. Loading is not feature conformity. There is no
-capability negotiation or fallback queue.
+Live activity remains display-only. Providers and hosts must implement the
+required event sink; there are no separate activity/result sinks or compatibility
+fallbacks.
 
 ## Native transcript contract
 

@@ -52,7 +52,7 @@ unanswered requests and settles them directly from native results or command
 cancellation/refusal. There is no enclosing request window or aggregate drainage.
 
 Every non-interrupted native result creates one immutable `RuntimeCompletion`,
-published synchronously through `context.results` and shared by its answered
+published synchronously as `turn.result` through `context.events` and shared by its answered
 requests, including a result that answers no host request. Folded inputs share that object; queued inputs wait
 for their own result. Consumption lifecycle and a matching submitted result UUID
 are positive attribution evidence. A completed lifecycle frame may precede or
@@ -96,12 +96,15 @@ live process; transcript discovery never controls request settlement.
 It returns neutral assistant/tool activity records and provider-owned opaque
 cursors. It is not a completion source.
 
+Activity and results share the required event sink. This provider emits no
+session title events.
+
 ## Native session contract
 
 The native session implements `submit()` returning
 `RuntimeAdmission`; accepted submissions carry their own settlement promises.
 The old `submitTurn()`/`steerTurn()` window interface is removed. Session specs
-provide the pinned `sessionId`, optional `results` sink and optional
+provide the pinned `sessionId`, required `events` sink and optional
 `outputSchemaEnabled` result contract;
 the exit handler receives its failure cause.
 
@@ -137,7 +140,7 @@ Compatibility tests and real native captures are distinguished in the task's
 verification record.
 
 
-The result sink and every answered settlement receive the same frozen completion
+The result event and every answered settlement carry the same frozen completion
 object. Session pinning, structured-output validation and failure mapping apply
 to unbound results too. All normal/failed results publish on the parser's result
 stack before settlement continuations, preserving order in multi-line batches.

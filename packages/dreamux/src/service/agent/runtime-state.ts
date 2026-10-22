@@ -43,8 +43,8 @@ export class AgentRuntimeSessionIdInvalid extends Error {
 /**
  * One runtime generation's push-only write authority.
  *
- * State and activity share the generation: revoking it both fences the state
- * writer and silences the activity of a runtime that has been replaced.
+ * State and events share the generation: revoking it both fences the state
+ * writer and silences the events of a runtime that has been replaced.
  */
 export interface AgentRuntimeGenerationLease {
   /** The leased state sink handed to this generation's create context. */
@@ -138,7 +138,7 @@ export class AgentRuntimeStateStore {
   /**
    * Revoke the current generation without opening a new one (runtime stopped, or
    * a start that failed and released everything it took). It fences both leased
-   * sinks at once: the state writer starts rejecting, and the activity closure
+   * sinks at once: the state writer starts rejecting, and the event closure
    * bound to this generation stops being current.
    */
   revokeRuntimeGeneration(): void {

@@ -233,7 +233,7 @@ it('a turn still projects submitted/settled facts to a well-behaved sibling list
     });
     if (result.status !== 'submitted') throw new Error('turn was not admitted');
     const runtime = f.provider.runtimes[0]!;
-    runtime.context.activity({
+    runtime.context.events({
       kind: 'turn.ended',
       occurredAt: Date.now(),
       status: 'completed',
