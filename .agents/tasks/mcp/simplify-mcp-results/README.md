@@ -8,7 +8,7 @@
 - Final solution: [Technical solution](/.agents/tasks/mcp/simplify-mcp-results/technical-design/final.md)
 - Solution review Issue: Not created.
 - Blockers: None.
-- Next action: Submit the reviewed change to `next`; GitHub owns PR and CI state.
+- Delivery: [PR #480](https://github.com/excitedjs/dreamux/pull/480) targets `next`; GitHub owns review, CI and merge state.
 - Related tasks: Builds on `refine-model-facing-surfaces`, `strengthen-dispatch-and-compaction-text`, `enable-team-member-messaging`, and `architecture/unify-team-command-projections`.
 
 ## Development approval
