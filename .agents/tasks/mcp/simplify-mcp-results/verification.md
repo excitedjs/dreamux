@@ -57,10 +57,30 @@ member-scope extraction and Claude reader change. Accepted findings were fixed:
    sleep or product-lifecycle change is added. The adjacent workflow test already
    uses this completion boundary.
 
-The final source review found no remaining product blocker. Domain/Command facts,
+The first whole-diff review found no remaining product blocker. Domain/Command facts,
 owner admission, cleanup/lifecycle checks and stated errors retain their tests;
 MCP expectations are independent explicit projections rather than comparisons
 that could let both adapters be wrong together.
+
+The subsequent external review found two gaps in the delivered draft, both fixed:
+
+- Bound Leader status now checks Team openness inside its existing Leader-tool
+  admission. A deterministic test holds the second worktree assessment after
+  dissolve admission and before the closed write: Leader status and member
+  list/send all reject, repeated dissolve still joins, and Dispatcher detail
+  reads still work before and after closure. Shared `TeamService.status()` stays
+  a projection because creation may legitimately return a Team whose initial
+  Leader already self-dissolved; its existing regression test remains intact.
+- The shim now preserves `text: ''`, which earlier layers already retained.
+  A real admin-socket/shim/SDK test confirms JSON-only content and absent
+  structuredContent; the previous adapter-only test missed this loss boundary.
+  The SDK client transport in this test is in-memory, not child-process stdio.
+
+A follow-up source review accepted both corrections without a new blocker.
+
+The operator's request for the detailed plan is answered by the exact field
+matrix in the final solution, alongside the historical evidence rather than
+an unmeasured token-savings percentage.
 
 ## Validation boundary
 

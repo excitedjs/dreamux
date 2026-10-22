@@ -19,7 +19,7 @@
 ## Verification and delivery
 
 - Evidence: [Historical audit and independent review](/.agents/tasks/mcp/simplify-mcp-results/verification.md).
-- Local gates: Rush build, lint, test and typecheck:tests passed. Tests: 2,899 passed; six opt-in real-model cases were not enabled. SDK/shim tests prove wire behavior, not live model consumption.
+- Local gates: Rush build, lint, test and typecheck:tests passed again after the external-review corrections. Tests: 2,901 passed; six opt-in real-model cases were not enabled. SDK/shim tests prove wire behavior, not live model consumption.
 - Knowledge closeout: Updated the product catalog, MCP writing/channel/orchestration/topology/runtime owners, provider author documentation and configuration maintenance reference. The full KB check passed (58 task records; 392 reachable files).
 - Release notes: Ordinary minor changes; no persisted-file migration or schema bump. External Channel tools that can return text must omit outputSchema; an unadapted tool can execute before the SDK rejects its result.
 - Publication boundary: No live configuration replacement, deployment, or merge was performed. Separate operator authority is required for merge.

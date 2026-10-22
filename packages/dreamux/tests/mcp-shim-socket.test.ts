@@ -116,6 +116,38 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
     }
   });
 
+  it('keeps an empty success text on the content-only projection', async () => {
+    const harness = createCommandHarness();
+    const admin = await startHarnessAdminSocket(harness);
+    try {
+      const spy = spyDelegate({
+        call: async (call) => ({
+          ok: true,
+          structured: { echoed: call.arguments['value'] },
+          text: '',
+        }),
+      });
+      const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
+
+      const connection = await connectMcpClient(
+        serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+      );
+      try {
+        const result = await callTool(connection.client, 'echo_tool', {
+          value: 'hi',
+        });
+        expect(result).toEqual({
+          content: [{ type: 'text', text: '{"echoed":"hi"}' }],
+        });
+        expect(result).not.toHaveProperty('structuredContent');
+      } finally {
+        await connection.close();
+      }
+    } finally {
+      await admin.close();
+    }
+  });
+
   it('surfaces a delegate-approved refusal verbatim through mcp.toolcall', async () => {
     const harness = createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);

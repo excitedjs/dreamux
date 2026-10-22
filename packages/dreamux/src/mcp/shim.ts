@@ -155,9 +155,11 @@ async function callTool(
   }
   const structured = asRecord(envelope['structured'], `tool '${name}' value`);
   const text = envelope['text'];
+  // Presence, not truthiness: an empty string is still the server saying this
+  // call has content, and the projector emits it as JSON-only content.
   return {
     structured,
-    ...(typeof text === 'string' && text !== '' ? { text } : {}),
+    ...(typeof text === 'string' ? { text } : {}),
   };
 }
 

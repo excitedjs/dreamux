@@ -14,6 +14,7 @@ import type { TeamDissolveCommand, TeamDissolveReceipt } from './types.js';
 /** This Team owns access to its leader's status and dissolve tools. */
 export function createLeaderTeamMcpDelegate(team: {
   admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
+  assertOpen(): void;
   status(): Promise<TeamSummary>;
   dissolve(input: TeamDissolveCommand): Promise<TeamDissolveReceipt>;
 }): McpServerDelegate {
@@ -67,7 +68,10 @@ export function createLeaderTeamMcpDelegate(team: {
       runDelegateTool(async () => {
         if (call.name === 'status') {
           return {
-            structured: await team.admitLeaderTools(() => team.status()),
+            structured: await team.admitLeaderTools(() => {
+              team.assertOpen();
+              return team.status();
+            }),
           };
         }
         const note = mustNonBlankString(call.arguments, 'note');
