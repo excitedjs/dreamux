@@ -51,6 +51,10 @@ queued authority check, failure semantics, and tests. A follow-up review
 confirmed compatibility with the optional `threadName` field at Codex's
 supported 0.137 minimum. The knowledge check (`.agents/scripts/check.sh`)
 passed after linking this evidence and completing the task record.
+Rush generated the package change files, and
+`node common/scripts/install-run-rush.js change --verify --target-branch origin/next --no-fetch`
+passed after those files were committed. The commit ran the repository's
+staged lint, author, gitleaks, and internal-content gates successfully.
 
 ## Coverage boundary
 

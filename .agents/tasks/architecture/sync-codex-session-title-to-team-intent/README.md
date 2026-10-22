@@ -19,4 +19,5 @@
 
 ## Delivery
 
+- Pull request: [#478](https://github.com/excitedjs/dreamux/pull/478).
 - Knowledge closeout: Updated the [runtime contract](/.agents/domains/provider-runtime.md), [state ownership](/.agents/domains/state-config-and-files.md), [service topology](/.agents/domains/service-topology.md), [product behavior](/.agents/product/README.md), and the shipped maintenance reference.
