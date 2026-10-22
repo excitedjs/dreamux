@@ -41,7 +41,8 @@ The final full-repository Rush run passed `build`, `lint`, `test`, and
 `typecheck:tests`, including installed-CLI contract checks. The optional live
 model-behavior gate was not enabled; the separate native reasoning probes above
 are the live upstream evidence for this change. No implementation source changed
-after these four gates.
+after these four gates. The KB check, Rush change verification, and mandatory
+pre-commit lint/author/anti-leak checks also passed.
 
 Additional Channel tests cover:
 

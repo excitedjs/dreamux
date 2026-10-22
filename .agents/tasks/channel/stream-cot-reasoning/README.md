@@ -8,12 +8,12 @@
 - Final solution: [Technical solution](/.agents/tasks/channel/stream-cot-reasoning/technical-design/final.md)
 - Verification: [Evidence and coverage limits](/.agents/tasks/channel/stream-cot-reasoning/verification.md)
 - Scope authority: The operator requested the four changes on 2026-10-22; the direct request is quoted in the requirement. No separate authorization card was sent.
-- Next action: Submit the reviewed change to `next` and verify required CI.
+- Next action: Follow the delivery PR in GitHub, which owns CI, review, and merge status.
 - Related tasks: Builds on [conversation cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md) and [member messaging](/.agents/tasks/mcp/enable-team-member-messaging/README.md).
 
 ## Delivery
 
-- Pull request: Prepared for submission to `next`.
+- Pull request: [#479](https://github.com/excitedjs/dreamux/pull/479), targeting `next`.
 - Knowledge closeout: Provider, Channel, product, maintenance, and public configuration/usage documentation updated; independent review and repository gates passed.
 
 ## Historical baseline
