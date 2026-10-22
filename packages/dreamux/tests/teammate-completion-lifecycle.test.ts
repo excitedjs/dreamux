@@ -164,6 +164,7 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     );
     const leaderRuntime = await runtimeAt(provider, leaderIndex);
     const team = await creating;
+    const service = await openTeam(dispatcher, team.team_name);
     await spawnTeamMember(
       dispatcher,
       provider,
@@ -188,6 +189,8 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
       expect(row?.status).toBe('closed');
     });
 
+    // The record closes before child teardown; join the owner before cleanup.
+    await service.closed;
     expect(completionInputs(leaderRuntime)).toEqual([]);
     expect(completionInputs(dispatcherRuntime)).toEqual([]);
   });

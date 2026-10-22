@@ -50,6 +50,12 @@ member-scope extraction and Claude reader change. Accepted findings were fixed:
 3. Status fixtures include real timestamps without a double type assertion.
 4. Descriptor checks cover both owner and member send tools, despite their
    identical public names.
+5. Linux CI exposed an existing lifecycle-test teardown race: persisted Team
+   `closed` precedes child destruction. The reuse-cwd test now also awaits the
+   existing `TeamService.closed` signal before checking completion suppression
+   and removing its files. Receipt/status assertions remain, and no retry,
+   sleep or product-lifecycle change is added. The adjacent workflow test already
+   uses this completion boundary.
 
 The final source review found no remaining product blocker. Domain/Command facts,
 owner admission, cleanup/lifecycle checks and stated errors retain their tests;
