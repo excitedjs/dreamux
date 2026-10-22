@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Update Team intent from its Codex leader's native session title without changing the leader identity's recovery intent.",
+      "comment": "Route runtime observations through their Agent owner and update Team intent from its leader session-title events. Reuse the Team record queue, drain accepted writes on host shutdown, and log title-write failures without stopping the runtime.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

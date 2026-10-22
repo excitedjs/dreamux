@@ -185,3 +185,11 @@ change-note verification and full KB checks. Independent review must inspect the
 whole diff and altered tests against the product contract. Report authenticated
 model/live acceptance separately from protocol replays; passing replay tests is
 not live evidence. No production daemon restart or release is part of this task.
+
+## Since this was recorded — 2026-10-22
+
+The earlier optional-observer compatibility choice is superseded by the
+[unified runtime event interface](/.agents/tasks/architecture/sync-codex-session-title-to-team-intent/technical-design/final.md).
+Hosts and providers migrate together to its required `events` sink. Native result
+ordering, completion identity, and owner delivery convergence remain unchanged.
+The original compatibility section above preserves the earlier adoption rationale.

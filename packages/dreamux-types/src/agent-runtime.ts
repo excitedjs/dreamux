@@ -140,19 +140,16 @@ export type AgentRuntimeStateUpdate =
       readonly lastError?: string;
     }
   | { readonly kind: 'session'; readonly sessionId: string }
-  | { readonly kind: 'session.title.changed'; readonly title: string }
   | { readonly kind: 'session_lost'; readonly reason: string };
 
 /**
  * Push-only state sink, leased to exactly one runtime generation.
  *
  * Core creates a distinct sink per generation; the generation is not a public
- * field and the provider supplies no sequence number. Each state owner serializes
- * its updates in call-receipt order; `publish` resolves after its write is durable.
- * Session titles go to the agent's owner when it consumes titles, otherwise they
- * are ignored. There is no transaction across owners' records and no pull
- * counterpart: awaiting the provider's
- * own initial `publish` calls is the start fence.
+ * field and the provider supplies no sequence number. Identity updates are
+ * serialized in call-receipt order; `publish` resolves after the write is durable.
+ * There is no pull counterpart: awaiting the provider's own initial `publish`
+ * calls is the start fence.
  *
  * After Core revokes the lease (runtime replaced or stopped), `publish` rejects
  * with an {@link AgentRuntimeStateLeaseRevokedError} so the provider terminates
@@ -187,37 +184,32 @@ export type RuntimeCompletion =
       readonly error: Error;
     };
 
+/** Native observations, independent of host submission attribution. */
+export type AgentRuntimeEvent =
+  | RuntimeActivity
+  | { readonly kind: 'session.title.changed'; readonly title: string }
+  | { readonly kind: 'turn.result'; readonly completion: RuntimeCompletion };
+
 /**
- * When the optional observer is supplied, publish each observed normal or failed
- * native terminal once, synchronously in
- * terminal-finalization order, including turns with no host submission. The
- * immutable object is also used by every settlement for that result: its
- * identity folds observation and settlement into one owner report.
+ * Required synchronous, nonthrowing observation sink. Core drops events from
+ * revoked generations. Accepted observations are not durable acknowledgements:
+ * their owners may enqueue persistence without delaying the native runtime.
  *
- * Interruptions and connection/transport failures do not manufacture results.
- * Core's leased sink never throws or applies backpressure; revoked writes drop.
+ * Publish each normal or failed native terminal once as `turn.result`, including
+ * turns with no host submission, before settling its submissions. The original
+ * completion object is shared by the event and every settlement for that result;
+ * its identity folds observation and settlement into one owner report.
+ * Interruptions and transport failures do not manufacture results.
+ *
+ * Live activity is transient input to Core's conversation projection. It never
+ * replays, or is replayed by, {@link AgentRuntimeProvider.readRecentActivity}.
  */
-export type AgentRuntimeResultSink = (completion: RuntimeCompletion) => void;
+export type AgentRuntimeEventSink = (event: AgentRuntimeEvent) => void;
 
 export type RuntimeSubmissionSettlement =
   | { readonly kind: 'completion'; readonly completion: RuntimeCompletion }
   | { readonly kind: 'failed'; readonly error: Error }
   | { readonly kind: 'stopped' };
-
-/**
- * Optional, synchronous, non-backpressuring sink for live native activity. It
- * is transient input to the Core conversation projection, not a progress view:
- * Core drops writes from a revoked generation, and its absence changes only
- * presentation. The stable progress view is
- * {@link AgentRuntimeProvider.readRecentActivity}, which never replays this
- * sink and is never replayed by it.
- *
- * The sink never throws. A projection failure is caught and logged inside
- * Core, so a provider calls it bare and holds no guard of its own.
- */
-export interface AgentRuntimeActivitySink {
-  (activity: RuntimeActivity): void;
-}
 
 /**
  * The single input shape a live runtime accepts.
@@ -314,14 +306,8 @@ export interface AgentRuntimeCreateContext<TConfig> {
   readonly paths: AgentRuntimePathContext;
   /** Leased, push-only state sink for this runtime generation. */
   readonly state: AgentRuntimeStateSink;
-  /** Leased, push-only sink for this runtime generation's live activity. */
-  readonly activity: AgentRuntimeActivitySink;
-  /**
-   * Optional leased native observation, independent of submission attribution.
-   * Current Core supplies it. Absence retains per-input values for older hosts;
-   * an older provider ignoring it lacks background coverage and native ordering.
-   */
-  readonly results?: AgentRuntimeResultSink;
+  /** Leased synchronous observations from this runtime generation. */
+  readonly events: AgentRuntimeEventSink;
   readonly logger: AgentRuntimeLogger;
 }
 
@@ -337,7 +323,7 @@ export interface AgentRuntimeInterruptOutcome {
 
 /**
  * The live runtime handle. Nothing is pulled from it: every runtime fact flows
- * out through the leased state and activity sinks.
+ * out through the leased state and event sinks.
  */
 export interface AgentRuntime {
   /**

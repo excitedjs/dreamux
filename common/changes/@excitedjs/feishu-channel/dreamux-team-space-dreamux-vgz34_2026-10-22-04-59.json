@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Cover refreshed Team intent and snapshot behavior in /teams card tests.",
+      "comment": "Verify that each teams card reads the current Team intent while previously sent cards remain snapshots.",
       "type": "none",
       "packageName": "@excitedjs/feishu-channel"
     }

@@ -21,9 +21,9 @@ This confirms the native event is usable by a non-TUI client. It does not prove
 that bare app-server generates titles, or that another app-server instance
 forwards its events to Dreamux.
 
-## Implementation checks
+## Revised implementation checks
 
-On 2026-10-22, the completed implementation passed these monorepo commands:
+On 2026-10-22, the unified-event implementation passed these monorepo commands:
 
 - `node common/scripts/install-run-rush.js build`
 - `node common/scripts/install-run-rush.js lint`
@@ -31,33 +31,48 @@ On 2026-10-22, the completed implementation passed these monorepo commands:
 - `node common/scripts/install-run-rush.js typecheck:tests`
 - `node common/scripts/install-run-rush.js smoke-built-cli`
 
-The test run passed 2,841 tests across 186 files. Six existing opt-in model
+The test run passed 2,842 tests across 186 files. Six existing opt-in model
 tests in three files were skipped because `DREAMUX_RUN_LIVE_MODEL_GATE` was not
-enabled. `DREAMUX_SKIP_LIVE_CODEX` was not set. The built CLI smoke loaded the
-compiled Server graph and executed the launcher with `--version`.
+enabled. `DREAMUX_SKIP_LIVE_CODEX` was not set; installed-Codex tests that need
+no model turn ran. The built CLI smoke loaded the compiled Server graph and
+executed the launcher with `--version`.
 
-Four new provider cases cover native thread ownership, missing/null/blank
-names, and fatal persistence/lease failures. Five new Core cases use real
-state owners and filesystem writes to cover leader/member/dispatcher
-isolation, unchanged identity content, both reconstruction paths, awaited
-durability, rejection after queued lease revocation, and write failure without
-changing the committed topic. A Feishu test verifies each `/teams` reads the
-current intent and earlier cards remain unchanged. The neutral exact-union
-test and exhaustive switch include the new event without weakening their
-assertions.
+The Codex tests cover own-thread filtering, missing/null/blank names, event
+publication without an identity-state write, and original completion identity
+and finalization order. Both provider suites now use the required event sink;
+Claude's title capability is unchanged. Existing interruption, background
+result, late admission, and stop/reopen contracts remain exercised.
 
-An independent read-only implementation review approved the ownership,
-queued authority check, failure semantics, and tests. A follow-up review
-confirmed compatibility with the optional `threadName` field at Codex's
-supported 0.137 minimum. The knowledge check (`.agents/scripts/check.sh`)
-passed after linking this evidence and completing the task record.
-Rush generated the package change files, and
-`node common/scripts/install-run-rush.js change --verify --target-branch origin/next --no-fetch`
-passed after those files were committed. The commit ran the repository's
-staged lint, author, gitleaks, and internal-content gates successfully.
+Seven Core title cases use real state owners and filesystem writes to cover
+leader/member/dispatcher isolation, unchanged identity content, both recovery
+paths, accepted-before-revocation FIFO order, late-event rejection, failed
+writes retaining the committed topic and live runtime, shutdown drain despite
+native stop failure, and nonthrowing observation. The existing native-order
+suite passed all 28 cases. A Feishu test verifies each `/teams` reads the current
+intent and earlier cards remain snapshots. Exact-union contracts now separate
+the three durable identity kinds from runtime observations and prohibit the
+removed activity/results fields.
+
+An initial run failed both immediate-close recovery cases: normal host shutdown
+retained the record handle and therefore did not use its release-time drain.
+The fix drains the same writer after stopping producers. The recovery tests
+still emit a title, immediately await host close, and then reconstruct; no
+extra polling or delay was added before closing to mask this failure.
+
+The title callback and guard plumbing were removed. Two single-use TeamService
+wrappers were also deleted without moving ownership or changing the line-limit
+rule. The broader file-cohesion candidate is recorded in the design.
+
+A fresh independent read-only boundary review approved shutdown ordering,
+failure-isolated record draining, synchronous FIFO admission, and the unchanged
+completion identity/report-failure convergence paths. It did not rerun the
+suite. The first implementation's approval is not used as evidence for this
+replacement.
 
 ## Coverage boundary
 
-The native probe verifies Codex's actual transport. Provider/core tests verify
+The native probe verifies Codex's actual transport. Provider/Core tests verify
 the integration and existing list/card projection. No production daemon has
-been upgraded and no deployed Feishu client acceptance is claimed.
+been upgraded and no deployed Feishu client acceptance is claimed. There is no
+added title producer, replay, polling, or model summary request. Dropped events
+or failed title writes may leave the prior topic until a later rename.

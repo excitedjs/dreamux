@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add the provider-neutral session.title.changed durable state update.",
+      "comment": "Replace the activity and optional results create-context callbacks with a required events sink for native activities, turn.result, and session.title.changed. External hosts and providers must migrate together; completion identity and synchronous result ordering are preserved.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux-types"
     }

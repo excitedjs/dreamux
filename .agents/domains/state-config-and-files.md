@@ -263,10 +263,15 @@ inputs, the workspace, `status`, `closed_at` / `close_note`, the accepted
 identity, and `worktree_cleanup_force`. Do not edit or manufacture it by hand.
 
 Its `intent` starts with the creation topic and is replaced when the Team's
-leader reports a native session title through the neutral runtime state sink.
+leader reports a native session title through the neutral runtime event sink.
 Codex provides this notification; ordinary member titles do not change Team
 intent. The leader's own identity `intent` remains a separate recovery subject.
 This changes the value of an existing field, not the record's shape.
+The Team queues accepted titles in its existing record writer. A failed title
+write leaves the committed topic intact and is logged without stopping the
+leader's runtime.
+Host shutdown drains that writer after stopping the Team's producers; releasing
+a record acquisition also waits for its queued writes.
 
 The record is also the Team's own name claim. Publishing it is a serialized
 load-decide-write inside the one canonical `TransactionalStore` the collection

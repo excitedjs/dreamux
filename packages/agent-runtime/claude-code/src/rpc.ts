@@ -11,7 +11,7 @@ import {
 import { ClaudeCodeControlRpc } from './control-rpc.js';
 import type { ParsedLine, TurnOutcome } from './types.js';
 import type {
-  AgentRuntimeResultSink,
+  AgentRuntimeEventSink,
   DreamuxLogger,
   RuntimeAdmission,
   RuntimeCompletion,
@@ -28,7 +28,7 @@ interface PendingRequest {
 
 export interface ClaudeCodeStreamRpcOptions {
   sessionId: string | null;
-  results?: AgentRuntimeResultSink | undefined;
+  events: AgentRuntimeEventSink;
   outputSchemaEnabled?: boolean | undefined;
   turnTimeoutMs: number;
   logger?: DreamuxLogger | undefined;
@@ -320,7 +320,8 @@ export class ClaudeCodeStreamRpc {
             ? { kind: 'interrupted', uuid: line.uuid, outcome }
             : { kind: 'result', uuid: line.uuid, outcome },
         );
-        if (completion !== null) this.options.results?.(completion);
+        if (completion !== null)
+          this.options.events({ kind: 'turn.result', completion });
         for (const request of answered) {
           this.acceptRequest(request);
           request.settle(

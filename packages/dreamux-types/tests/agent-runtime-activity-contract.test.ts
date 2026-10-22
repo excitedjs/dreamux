@@ -2,7 +2,7 @@
  * Neutral recent-Activity read contract (issue #209 minimize-provider-boundaries).
  *
  * `AgentActivityRecord` is the ONE stable progress view a provider owes Core —
- * distinct from the transient, optional live {@link AgentRuntimeActivitySink}.
+ * distinct from the transient live {@link AgentRuntimeEventSink}.
  * It is deliberately thin: an assistant-message text fact, or a tool name plus
  * status. Tool arguments, tool results, and provider-native lines never cross
  * this boundary; those stayed on the deleted `readTranscript` /

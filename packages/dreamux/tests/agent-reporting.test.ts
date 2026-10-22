@@ -276,9 +276,9 @@ describe('AgentService owns requested result reports', () => {
       .find((member) => member.name === spawned.teammate.name)!;
     const first = native('same');
     const second = native('same');
-    runtime.context.results!(first);
+    runtime.context.events({ kind: 'turn.result', completion: first });
     runtime.submissions[0]!.settle({ kind: 'completion', completion: first });
-    runtime.context.results!(second);
+    runtime.context.events({ kind: 'turn.result', completion: second });
     await vi.waitFor(() =>
       expect(
         f.runtime.inputs.filter((text) =>

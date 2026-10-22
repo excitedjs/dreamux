@@ -3,6 +3,7 @@ import { Writable } from 'node:stream';
 import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
+  AgentRuntimeEvent,
   RuntimeCompletion,
   RuntimeSubmission,
 } from '@excitedjs/dreamux-types';
@@ -38,9 +39,9 @@ class ReplayProvider extends ControlledRuntimeProvider {
     const originalStop = runtime.stop;
     const observed: RuntimeCompletion[] = [];
     const submissions: RuntimeSubmission[] = [];
-    const results = (completion: RuntimeCompletion) => {
-      observed.push(completion);
-      context.results!(completion);
+    const events = (event: AgentRuntimeEvent) => {
+      if (event.kind === 'turn.result') observed.push(event.completion);
+      context.events(event);
     };
     const uuids: string[] = [];
     const rpc = new ClaudeCodeStreamRpc(
@@ -52,7 +53,7 @@ class ReplayProvider extends ControlledRuntimeProvider {
       }),
       {
         sessionId: null,
-        results,
+        events,
         turnTimeoutMs: 5000,
         reapOnTimeout: () => undefined,
       },
@@ -69,8 +70,7 @@ class ReplayProvider extends ControlledRuntimeProvider {
         false,
         context.cwd,
       ),
-      activitySink: context.activity,
-      resultSink: results,
+      events,
       logger: context.logger,
     });
     runtime.submit = async (input) => {

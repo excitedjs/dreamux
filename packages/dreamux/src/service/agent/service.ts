@@ -1,4 +1,5 @@
 import type {
+  AgentRuntimeEvent,
   AgentRuntimeInterruptOutcome,
   AgentRuntimeStartOutcome,
   AgentRuntimeStatus,
@@ -71,7 +72,10 @@ import type { RunningLaunch } from './types.js';
 
 /** One canonical Agent entity and the sole owner of its live lifecycle. */
 export class AgentService {
-  readonly events = new EventEmitter<{ state: [AgentEntityIdentity] }>();
+  readonly events = new EventEmitter<{
+    state: [AgentEntityIdentity];
+    'session.title.changed': [string];
+  }>();
   private state: AgentRuntimeStateStore;
   private readonly runtimeGeneration: RuntimeGeneration;
   /**
@@ -140,11 +144,7 @@ export class AgentService {
       teamId: identity.team_id,
       name: identity.name,
     };
-    this.state = new AgentRuntimeStateStore(
-      deps.identities,
-      identity,
-      options.onSessionTitleChanged,
-    );
+    this.state = new AgentRuntimeStateStore(deps.identities, identity);
     deps.identities.committed.on('committed', (identity) =>
       this.events.emit('state', identity),
     );
@@ -412,7 +412,30 @@ export class AgentService {
     return this.phase === 'active' && this.hostStop === null;
   }
 
-  observeRuntimeResult(completion: RuntimeCompletion): void {
+  observeRuntimeEvent(event: AgentRuntimeEvent): void {
+    try {
+      switch (event.kind) {
+        case 'turn.result':
+          this.observeRuntimeResult(event.completion);
+          break;
+        case 'session.title.changed':
+          this.events.emit('session.title.changed', event.title);
+          break;
+        default:
+          this.deps.conversationProjection.projectActivity(
+            { identity: this.current(), role: this.role },
+            event,
+          );
+      }
+    } catch (error) {
+      this.deps.log.error(
+        { teammate: this.name, kind: event.kind, error: errorMessage(error) },
+        'Agent Runtime event observer failed',
+      );
+    }
+  }
+
+  private observeRuntimeResult(completion: RuntimeCompletion): void {
     this.reportOutcome(
       this.nativeResultRecipient ?? null,
       completion,

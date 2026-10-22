@@ -207,7 +207,7 @@ it('rolls back a failed start in reverse-acquisition order, keeps Channel subscr
       stop = runtime.stop.bind(runtime);
     vi.spyOn(runtime, 'stop').mockImplementation(async () => {
       order.push('runtime.stop');
-      context.activity({
+      context.events({
         kind: 'assistant.message',
         id: 'last-word',
         occurredAt: Date.now(),

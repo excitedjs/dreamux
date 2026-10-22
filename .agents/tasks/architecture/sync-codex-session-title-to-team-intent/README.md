@@ -9,13 +9,14 @@
 - Verification: [Evidence and coverage](/.agents/tasks/architecture/sync-codex-session-title-to-team-intent/verification.md).
 - Solution review Issue: None; the operator directly selected the native-event integration.
 - Blockers: None.
-- Next action: Review the submitted change for merge.
-- Related tasks: None.
+- Next action: Follow review and CI on the existing PR; merge requires separate operator authority.
+- Related tasks: [Data-flow ownership](/.agents/tasks/architecture/code-organization-refactor/README.md) and [native result reporting](/.agents/tasks/mcp/enable-team-member-messaging/README.md).
 
 ## Development approval
 
 - Status: The operator directly requested implementation on 2026-10-22 and subsequently limited this delivery to Codex. No approval card is claimed.
 - Approved implementation boundary: Codex native title notifications, the neutral runtime contract, Core-owned Team intent persistence, and the existing Team-list display. Claude support and additional title generation are excluded.
+- Architecture revision: On 2026-10-22 the operator criticized the callback-based implementation and explicitly requested changing the surrounding architecture when the existing structure cannot support the feature cleanly. This reopens implementation within the same feature scope; the earlier review does not approve the replacement design.
 
 ## Delivery
 

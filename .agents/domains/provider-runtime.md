@@ -88,7 +88,7 @@ Agent Runtime providers implement `AgentRuntimeProvider` and return one
 `AgentRuntime` instance per launched agent. The runtime interface is
 single-instance and has exactly four methods: `start`, `submit`, `interrupt`,
 and `stop`. Nothing is pulled from the handle — every runtime fact flows out
-through the leased state and activity sinks Core supplied when it created the
+through the leased state and event sinks Core supplied when it created the
 instance — so
 there is no status, checkpoint, capability, or liveness method to call on it.
 Everything that is a read rather than a live handle hangs off the provider
@@ -213,6 +213,9 @@ only through it:
 - effective `skillSources`, composed by core from required role roots and any
   authorized custom roots;
 - `disabledFeatures`, the neutral feature names to disable;
+- `events`, the synchronous, non-throwing stream of native activities, selected
+  results, and session-title observations; Core rejects stale generations at
+  this boundary, before routing observations to the Agent's consumers;
 - neutral logger, path, state, and environment injection seams.
 
 Core should not call provider-specific factories, classes, or package imports
@@ -227,7 +230,7 @@ usage is unknown; embedding callers cannot supply these removed overrides.
 Claude session and RPC diagnostic inputs accept an optional `DreamuxLogger`
 object through `logger`, rather than a positional `log` callback.
 Core still supplies only the neutral context above. Native protocol callbacks,
-leased activity/state sinks, and actual deterministic test seams are distinct
+leased event/state sinks, and actual deterministic test seams are distinct
 from the removed construction overrides.
 
 Source:
@@ -239,7 +242,7 @@ Source:
 
 ### Native session titles
 
-The durable neutral state update `session.title.changed` carries a `title`.
+The neutral runtime event `session.title.changed` carries a `title`.
 Codex emits it for its own thread's usable `thread/name/updated` notification;
 the native method and `threadName` field stay inside the provider package.
 Claude does not emit this update. This integration listens to existing title
@@ -247,17 +250,22 @@ changes; it does not create titles or request another model summary.
 Dreamux's private app-server has no automatic title producer; a client must
 write a name through that instance for this notification to arrive.
 
-Core routes the update through the runtime generation's leased state sink to
-the owning Team's leader handler. The Team writes its existing `intent` through
-its record owner, and the sink resolves after that write is durable. The
-generation fence also applies at the queued write boundary. Other Agent roles
+Core accepts the observation through the generation-scoped `events` sink.
+AgentService publishes it on its own event emitter, and the owning Team listens
+to its leader. The listener synchronously queues an ordinary `intent` patch in
+the Team's record owner. An already accepted title may commit after revocation;
+later accepted titles enter the same FIFO queue afterward. Events arriving from
+a revoked generation are dropped before reaching the Agent. Other Agent roles
 have no Team-title consumer. No title is stored in the Agent identity, and the
 title update does not rewrite the leader's existing identity intent.
-A failed title write follows the existing fatal runtime state-fence behavior.
+A failed Team write retains the committed topic and is logged without stopping
+the native runtime. Title delivery has no persistence acknowledgment; the
+separate identity state sink retains its durable, fatal-on-failure contract.
 
 Source: `/packages/dreamux-types/src/agent-runtime.ts`,
 `/packages/agent-runtime/codex/src/runtime.ts`,
-`/packages/dreamux/src/service/agent/runtime-state.ts`,
+`/packages/dreamux/src/service/agent/runtime-generation.ts`,
+`/packages/dreamux/src/service/agent/service.ts`,
 `/packages/dreamux/src/service/team/service.ts`.
 
 ### System Prompt
@@ -487,22 +495,23 @@ native identifiers.
 - Result observation does not wait for complete input association. Each admitted
   input resolves its provider-selected value; late inputs answering an already
   observed result use that same C.
-- The optional `AgentRuntimeCreateContext.results` sink publishes each selected
-  normal/failed native terminal once, synchronously in terminal-finalization order,
-  with the same immutable completion object used by answered submissions. Current
-  Core always supplies it; emission is mandatory when supplied. Generation-revoked
-  writes drop and the callback never throws or applies backpressure. This is
-  delivery evidence, separate from durable `state` and presentation `activity`.
+- The required `AgentRuntimeCreateContext.events` sink publishes each selected
+  normal/failed native terminal once as `turn.result`, synchronously in
+  terminal-finalization order. Its `completion` is the same immutable object used
+  by answered submissions. Generation-revoked events drop and the sink never
+  throws or applies backpressure. Results and display activities share this live
+  event stream while retaining their distinct meanings; durable `state` stays
+  separate.
 - Interrupted ends do not publish new native results. Bound Codex interruptions
   retain the selected completed/failed value (including null/partial output and
   codec failure); Claude retains stopped. Transport/connection failure settles
   accepted inputs without a selected answer, without fabricating native terminals
   or ambiguous-input replies. A selected Codex C remains the late positive
   admission's answer after failure or stop.
-- New provider/old host retains the request contract through an optional observer
-  call. Old provider/new host retains bound values but lacks unbound coverage and
-  mixed result-order assurance. Loading is not conformity; tests must assert
-  delivered results, object identity and actual native order.
+- Hosts and providers implement the required event sink together. Integrations
+  using the former `activity`/`results` fields must migrate; there is no optional
+  observer fallback. Tests assert delivered results, object identity, and actual
+  native order, rather than treating successful loading as conformity.
 - Core owns the source-deduplication reservation, not the provider: the seam
   carries only text, so a provider has no source identity to deduplicate with,
   and one Dispatcher-wide `AdmissionLedger` reserves `[entity, source id]`
@@ -1175,4 +1184,4 @@ Source:
 - **Provider-native identifiers do not cross the neutral boundary.** They may
   exist inside a provider package, but Core never correlates on them.
 
-History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md)
+History: [Architecture tasks](/.agents/tasks/architecture/README.md) (runtime ownership and display); [MCP tasks](/.agents/tasks/mcp/README.md) (native-result reporting and completion identity).

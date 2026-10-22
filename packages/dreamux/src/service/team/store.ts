@@ -49,6 +49,8 @@ export interface TeamRecordHandle {
   readonly current: TeamRecord | null;
   /** Retain this initialized owner for independently settling work. */
   retain(): TeamRecordHandle;
+  /** Join writes already accepted by this record owner without releasing it. */
+  drain(): Promise<void>;
   /** Release this acquisition after its queued writes settle. Call once. */
   release(): Promise<void>;
   create(
@@ -57,11 +59,7 @@ export interface TeamRecordHandle {
       'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
     >,
   ): Promise<TeamRecord | null>;
-  /** Re-check a runtime writer's authority inside this record's write queue. */
-  update(
-    input: TeamRecordUpdate,
-    assertWritable?: () => void,
-  ): Promise<TeamRecord>;
+  update(input: TeamRecordUpdate): Promise<TeamRecord>;
 }
 
 export class TeamStore {
@@ -117,9 +115,9 @@ export class TeamStore {
         return store.current;
       },
       create: (input) => this.publishRecord(store, input),
-      update: (input, assertWritable) =>
-        this.mergeRecord(id, store, input, assertWritable),
+      update: (input) => this.mergeRecord(id, store, input),
       retain: () => this.retain(id, entry),
+      drain: () => store.drain(),
       release: async () => {
         // Child destruction and Git cleanup do not drain a late running patch
         // queued behind closed. Keep this hold through the record queue barrier.
@@ -259,7 +257,6 @@ export class TeamStore {
     teamId: string,
     store: TransactionalStore<TeamRecord | null>,
     input: TeamRecordUpdate,
-    assertWritable?: () => void,
   ): Promise<TeamRecord> {
     let updated!: TeamRecord;
     await store.update((current) => {
@@ -268,7 +265,6 @@ export class TeamStore {
           `Team ${JSON.stringify(teamId)} no longer has a readable record`,
         );
       }
-      assertWritable?.();
       // `closed` is terminal. A leader turn admitted before a dissolve can
       // queue its `starting` → `running` write behind the dissolve's `closed`
       // write; merging it would reopen a Team the dissolve already destroyed.

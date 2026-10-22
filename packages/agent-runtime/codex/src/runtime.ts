@@ -286,12 +286,7 @@ export class CodexRuntime implements AgentRuntime {
         threadName.trim() === ''
       )
         return;
-      this.fence.publishDetached(() =>
-        this.state.publish({
-          kind: 'session.title.changed',
-          title: threadName,
-        }),
-      );
+      this.deps.events({ kind: 'session.title.changed', title: threadName });
     });
 
     this.turnManager = new TurnManager({
@@ -299,8 +294,7 @@ export class CodexRuntime implements AgentRuntime {
       client: this.client,
       codec: this.deps.codec,
       logger: this.deps.logger,
-      activitySink: this.deps.activitySink,
-      resultSink: this.deps.resultSink,
+      events: this.deps.events,
       reasoning: new CodexReasoningEffort(
         this.client,
         thread,

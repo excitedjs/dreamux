@@ -36,6 +36,7 @@ import type {
   AgentRuntimeProvider,
   AgentRuntimeCreateContext,
   DreamuxLogger,
+  AgentRuntimeEvent,
   AgentRuntimeIdentity,
   AgentRuntimeMcpServer,
   RuntimeActivity,
@@ -93,8 +94,8 @@ function makeDeps(
   const deps: CodexRuntimeDeps = {
     cwd: '/fake/cwd',
     state: noopStateSink(),
-    resultSink: () => undefined,
-    activitySink: () => undefined,
+
+    events: () => undefined,
     codec: null,
     paths: FAKE_PATHS,
     skillSources: [],
@@ -160,10 +161,14 @@ describe('CodexRuntime start() continuity', () => {
 
 describe('CodexRuntime native session titles', () => {
   it.each([null, 'existing-thread'])(
-    'publishes only usable titles for its own thread (prior session: %s)',
+    'observes only usable titles for its own thread (prior session: %s)',
     async (sessionId) => {
       const state = new RecordingStateSink();
-      const { deps, client } = makeDeps({ state });
+      const events: AgentRuntimeEvent[] = [];
+      const { deps, client } = makeDeps({
+        state,
+        events: (event) => events.push(event),
+      });
       const runtime = new CodexRuntime(identity(sessionId), deps);
       await runtime.start();
       const threadId = sessionId ?? 'fresh-thread-1';
@@ -173,43 +178,22 @@ describe('CodexRuntime native session titles', () => {
       client.emitThreadNameUpdated(threadId);
       for (const title of [null, '', ' \n\t '])
         client.emitThreadNameUpdated(threadId, title);
-      expect(state.updates).toEqual(before);
+      expect(events).toEqual([]);
 
       client.emitThreadNameUpdated(threadId, 'Review release readiness');
       client.emitThreadNameUpdated(threadId, 'Ship the release');
-      expect(state.updates.slice(before.length)).toEqual([
+      expect(events).toEqual([
         { kind: 'session.title.changed', title: 'Review release readiness' },
         { kind: 'session.title.changed', title: 'Ship the release' },
       ]);
+      expect(state.updates).toEqual(before);
       expect(client.methods).not.toContain('turn/start');
-      await runtime.stop();
-    },
-  );
-
-  it.each(['AgentRuntimeStateLeaseRevokedError', 'Error'])(
-    'terminates and refuses more work when title persistence fails with %s',
-    async (name) => {
-      const state = new RecordingStateSink();
-      const error = new Error('title write rejected');
-      error.name = name;
-      state.rejectWhen(
-        (update) => update.kind === 'session.title.changed',
-        error,
+      // The observation does not require a state write or delay later work.
+      const submission = requireSubmitted(
+        await runtime.submit({ text: 'More work' }),
       );
-      const { deps, client, process } = makeDeps({ state });
-      const runtime = new CodexRuntime(identity(null), deps);
-      await runtime.start();
-
-      client.emitThreadNameUpdated('fresh-thread-1', 'Cannot persist');
-      await waitFor(() => process.reapCalls === 1);
-      expect(await runtime.submit({ text: 'More work' })).toMatchObject({
-        status: 'stopped',
-      });
+      await submission.settled;
       await runtime.stop();
-      expect(client.methods).not.toContain('turn/start');
-      expect(
-        state.updates.some((update) => update.kind === 'session.title.changed'),
-      ).toBe(false);
     },
   );
 });
@@ -290,8 +274,8 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     const deps: CodexRuntimeDeps = {
       cwd: '/fake/cwd',
       state,
-      resultSink: () => undefined,
-      activitySink: () => undefined,
+
+      events: () => undefined,
       codec: null,
       paths: FAKE_PATHS,
       skillSources: [],
@@ -518,7 +502,12 @@ describe('CodexRuntime submit() and settlement', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -556,7 +545,12 @@ describe('CodexRuntime submit() and settlement', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -761,7 +755,12 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -818,7 +817,12 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -859,7 +863,12 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -890,7 +899,12 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -918,7 +932,12 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -940,7 +959,12 @@ describe('CodexRuntime token usage', () => {
     const activity: RuntimeActivity[] = [];
     const { deps, client } = makeDeps({
       client: new FakeCodexWsClient({ autoComplete: false }),
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -983,7 +1007,12 @@ describe('CodexRuntime native turn end', () => {
     });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1015,7 +1044,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1041,7 +1075,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1064,7 +1103,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1086,7 +1130,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -1134,7 +1183,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -1184,7 +1238,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -1227,7 +1286,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (fact) => {
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
         activity.push(fact);
       },
     });
@@ -1276,7 +1340,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1305,7 +1374,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1337,7 +1411,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1369,7 +1448,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         events.push(activity);
       },
     });
@@ -1401,7 +1485,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1421,7 +1510,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         events.push(activity);
       },
     });
@@ -1455,7 +1549,12 @@ describe('CodexRuntime native turn end', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1526,7 +1625,12 @@ describe('CodexRuntime outputSchema binding', () => {
     const { deps } = makeDeps({
       client,
       codec,
-      activitySink: (activity) => {
+      events: (activity) => {
+        if (
+          activity.kind === 'turn.result' ||
+          activity.kind === 'session.title.changed'
+        )
+          return;
         if (activity.kind === 'turn.ended') nativeEnds.push(activity);
       },
     });
@@ -1601,8 +1705,8 @@ describe('MCP server list passthrough encoding', () => {
       disabledFeatures: [],
       paths: FAKE_PATHS,
       state: noopStateSink(),
-      results: () => undefined,
-      activity: () => undefined,
+
+      events: () => undefined,
       logger,
     };
     const runtime = await provider.createRuntime(context);
@@ -1671,8 +1775,8 @@ describe('AgentRuntimeProvider public surface', () => {
         disabledFeatures: [],
         paths: FAKE_PATHS,
         state: noopStateSink(),
-        results: () => undefined,
-        activity: () => undefined,
+
+        events: () => undefined,
         logger,
       });
     expect(typeof runtimeHandle.start).toBe('function');
@@ -1692,7 +1796,9 @@ describe('CodexRuntime ordered native results', () => {
       const { deps } = makeDeps({
         client,
         state,
-        resultSink: (completion) => published.push(completion),
+        events: (event) => {
+          if (event.kind === 'turn.result') published.push(event.completion);
+        },
       });
       const runtime = new CodexRuntime(identity(null), deps);
       await runtime.start();
@@ -1745,7 +1851,9 @@ describe('CodexRuntime ordered native results', () => {
       const { deps } = makeDeps({
         client,
         codec,
-        resultSink: (completion) => published.push(completion),
+        events: (event) => {
+          if (event.kind === 'turn.result') published.push(event.completion);
+        },
       });
       const runtime = new CodexRuntime(identity(null), deps);
       await runtime.start();
@@ -1777,7 +1885,9 @@ describe('CodexRuntime ordered native results', () => {
     });
     const { deps } = makeDeps({
       client,
-      resultSink: (result) => published.push(result),
+      events: (event) => {
+        if (event.kind === 'turn.result') published.push(event.completion);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -1837,7 +1947,9 @@ describe('CodexRuntime ordered native results', () => {
     const client = new FakeCodexWsClient({ autoComplete: false });
     const { deps } = makeDeps({
       client,
-      resultSink: (completion) => published.push(completion),
+      events: (event) => {
+        if (event.kind === 'turn.result') published.push(event.completion);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -1878,7 +1990,9 @@ describe('CodexRuntime ordered native results', () => {
     const { deps } = makeDeps({
       client,
       codec,
-      resultSink: (result) => published.push(result),
+      events: (event) => {
+        if (event.kind === 'turn.result') published.push(event.completion);
+      },
     });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -1905,7 +2019,7 @@ it('keeps new-provider/old-host input values when the public context omits resul
     config: defaultDispatcherCodexConfig(),
     cwd: '/fake/cwd',
     state: noopStateSink(),
-    activity: () => undefined,
+    events: () => undefined,
     paths: FAKE_PATHS,
     mcpServers: [],
     skillSources: [],

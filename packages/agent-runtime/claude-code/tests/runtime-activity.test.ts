@@ -2,7 +2,10 @@
 import { describe, expect, it } from 'vitest';
 import { endNativeTurn, handleProtocolEvent } from '../src/runtime-activity.js';
 import type { ClaudeProtocolEvent, TurnOutcome } from '../src/types.js';
-import type { RuntimeActivity } from '@excitedjs/dreamux-types';
+import type {
+  AgentRuntimeEvent,
+  RuntimeActivity,
+} from '@excitedjs/dreamux-types';
 
 type NativeTurnEnd = Extract<RuntimeActivity, { kind: 'turn.ended' }>;
 function outcome(overrides: Partial<TurnOutcome> = {}): TurnOutcome {
@@ -27,7 +30,12 @@ function makeHarness() {
     fire(event: ClaudeProtocolEvent) {
       handleProtocolEvent(event, {
         activity,
-        activitySink: (item) => {
+        events: (item) => {
+          if (
+            item.kind === 'turn.result' ||
+            item.kind === 'session.title.changed'
+          )
+            return;
           if (item.kind === 'turn.ended') nativeEnds.push(item);
           else activityEvents.push(item);
         },
@@ -393,8 +401,9 @@ describe('handleProtocolEvent live activity', () => {
 describe('handleProtocolEvent token usage', () => {
   it('emits the cumulative usage snapshot immediately before native end', () => {
     const events: RuntimeActivity[] = [];
-    const activitySink = (fact: RuntimeActivity): void => {
-      events.push(fact);
+    const eventSink = (fact: AgentRuntimeEvent): void => {
+      if (fact.kind !== 'turn.result' && fact.kind !== 'session.title.changed')
+        events.push(fact);
     };
     const value = outcome({
       tokenUsage: { inputTokens: 28_531, outputTokens: 69 },
@@ -402,7 +411,7 @@ describe('handleProtocolEvent token usage', () => {
     });
     handleProtocolEvent(resultEvent(value), {
       activity: { tools: new Map() },
-      activitySink,
+      events: eventSink,
     });
     expect(events.map((fact) => fact.kind)).toEqual([
       'token.usage',
@@ -417,7 +426,7 @@ describe('handleProtocolEvent token usage', () => {
       context: { usedTokens: 14_500, windowTokens: null },
     });
     expect(value.text).toBe('answer');
-    endNativeTurn('interrupted', null, activitySink);
+    endNativeTurn('interrupted', null, eventSink);
     expect(events.map((fact) => fact.kind)).toEqual([
       'token.usage',
       'turn.ended',
@@ -505,7 +514,12 @@ describe('handleProtocolEvent token usage', () => {
       },
       {
         activity: { tools: new Map() },
-        activitySink: (fact) => {
+        events: (fact) => {
+          if (
+            fact.kind === 'turn.result' ||
+            fact.kind === 'session.title.changed'
+          )
+            return;
           events.push(fact);
         },
       },
@@ -554,7 +568,12 @@ describe('handleProtocolEvent native turn end', () => {
       };
       handleProtocolEvent(event, {
         activity: { tools: new Map() },
-        activitySink: (fact) => {
+        events: (fact) => {
+          if (
+            fact.kind === 'turn.result' ||
+            fact.kind === 'session.title.changed'
+          )
+            return;
           events.push(fact);
         },
       });
@@ -575,7 +594,12 @@ describe('handleProtocolEvent native turn end', () => {
       { kind: 'interrupted', uuid: 'result-uuid', outcome: outcome() },
       {
         activity: { tools: new Map() },
-        activitySink: (fact) => {
+        events: (fact) => {
+          if (
+            fact.kind === 'turn.result' ||
+            fact.kind === 'session.title.changed'
+          )
+            return;
           events.push(fact);
         },
       },

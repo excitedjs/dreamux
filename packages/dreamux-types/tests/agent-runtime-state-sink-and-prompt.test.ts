@@ -2,7 +2,7 @@
  * AgentRuntime push-only state sink, system-prompt semantics, and opaque
  * session-id identity (issue #209 minimize-provider-boundaries).
  *
- * Every runtime fact flows OUT through {@link AgentRuntimeStateSink}; nothing
+ * Durable identity facts flow OUT through {@link AgentRuntimeStateSink}; nothing
  * is pulled back off the handle (see agent-runtime-handle-contract.test.ts for
  * the handle-shape half of that invariant). This file covers the sink itself,
  * the lease-revocation error it can reject with, the neutral system-prompt
@@ -11,12 +11,18 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  AgentRuntimeCreateContext,
+  AgentRuntimeEvent,
+  AgentRuntimeEventSink,
   AgentRuntimeIdentity,
+  RuntimeCompletion,
   AgentRuntimeStateLeaseRevokedError,
   AgentRuntimeStateSink,
   AgentRuntimeStateUpdate,
   AgentRuntimeSystemPrompt,
 } from '../src/agent-runtime.js';
+
+import type { RuntimeActivity } from '../src/activity.js';
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 0) extends <T>() => T extends B ? 1 : 0
@@ -31,16 +37,45 @@ function assertNever(value: never): never {
   throw new Error(`unreachable union member: ${JSON.stringify(value)}`);
 }
 
+describe('AgentRuntimeEventSink is the required synchronous observation seam', () => {
+  it('carries exactly activity, session titles and original runtime completions', () => {
+    assertType<
+      Equal<
+        AgentRuntimeEvent,
+        | RuntimeActivity
+        | { readonly kind: 'session.title.changed'; readonly title: string }
+        | {
+            readonly kind: 'turn.result';
+            readonly completion: RuntimeCompletion;
+          }
+      >
+    >();
+    assertType<
+      Equal<AgentRuntimeCreateContext<unknown>['events'], AgentRuntimeEventSink>
+    >();
+    assertType<Equal<ReturnType<AgentRuntimeEventSink>, void>>();
+    assertType<
+      Equal<
+        Extract<
+          keyof AgentRuntimeCreateContext<unknown>,
+          'activity' | 'results'
+        >,
+        never
+      >
+    >();
+  });
+});
+
 describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else', () => {
   it('the sink exposes no pull counterpart alongside publish', () => {
     assertType<Equal<keyof AgentRuntimeStateSink, 'publish'>>();
   });
 
-  it('AgentRuntimeStateUpdate is exactly status | session | session_lost | session.title.changed', () => {
+  it('AgentRuntimeStateUpdate is exactly status | session | session_lost', () => {
     assertType<
       Equal<
         AgentRuntimeStateUpdate['kind'],
-        'status' | 'session' | 'session_lost' | 'session.title.changed'
+        'status' | 'session' | 'session_lost'
       >
     >();
   });
@@ -59,9 +94,6 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
           case 'session_lost':
             received.push(`session_lost:${update.reason}`);
             return;
-          case 'session.title.changed':
-            received.push(`session.title.changed:${update.title}`);
-            return;
           default:
             return assertNever(update);
         }
@@ -71,10 +103,6 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
     await sink.publish({ kind: 'status', status: 'ready' });
     await sink.publish({ kind: 'session', sessionId: 'sess-1' });
     await sink.publish({
-      kind: 'session.title.changed',
-      title: 'Release readiness',
-    });
-    await sink.publish({
       kind: 'session_lost',
       reason: 'native process exited',
     });
@@ -82,7 +110,6 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
     expect(received).toEqual([
       'status:ready',
       'session:sess-1',
-      'session.title.changed:Release readiness',
       'session_lost:native process exited',
     ]);
   });

@@ -356,10 +356,11 @@ the same change that touches it.
   `team.history` remains the compact paginated recovery view.
   (Decision: [unify Team command projections](/.agents/tasks/architecture/unify-team-command-projections/README.md).)
 - **A Codex leader's session title updates its Team intent.** When the native
-  title notification arrives, Core persists it as the Team's topic and the next
-  `/teams` invocation displays it. The creation topic remains until a usable
-  title arrives. Ordinary member titles do not overwrite the Team topic, and
-  this requires no additional summary work from the leader. Claude is not
+  title notification arrives, Core queues it as the Team's topic; after that
+  write commits, `/teams` displays it. A failed title write retains the previous
+  topic and is logged without stopping the leader. The creation topic remains
+  until a usable title commits. Ordinary member titles do not overwrite the Team
+  topic, and this requires no additional summary work from the leader. Claude is not
   included. This does not add automatic naming to Dreamux's private app-server;
   a name must be written through that instance before an update arrives.
   Previously sent Team-list cards remain snapshots.

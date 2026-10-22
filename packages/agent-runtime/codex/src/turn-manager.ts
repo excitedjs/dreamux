@@ -15,8 +15,7 @@ import type { CodexWsClient } from './rpc.js';
 import { toolDisplay } from './tool-display.js';
 import type { ThreadItem, ThreadTokenUsage } from './types.js';
 import type {
-  AgentRuntimeActivitySink,
-  AgentRuntimeResultSink,
+  AgentRuntimeEventSink,
   AgentRuntimeInterruptOutcome,
   AgentRuntimeSubmissionInput,
   DreamuxLogger,
@@ -49,8 +48,7 @@ export interface TurnManagerOptions {
    */
   codec: CodexOutputSchemaCodec | null;
   reasoning: CodexReasoningEffort;
-  activitySink: AgentRuntimeActivitySink;
-  resultSink?: AgentRuntimeResultSink | undefined;
+  events: AgentRuntimeEventSink;
   logger: DreamuxLogger;
 }
 
@@ -259,7 +257,7 @@ export class TurnManager {
     // Interrupted terminals retain their existing partial-output settlements,
     // but never publish a new native result (bound or unbound).
     if (terminal instanceof Error || terminal.status !== 'interrupted')
-      this.opts.resultSink?.(completion);
+      this.opts.events({ kind: 'turn.result', completion });
     for (const member of record.members)
       member.settle({ kind: 'completion', completion });
     record.members.length = 0;
@@ -328,9 +326,9 @@ export class TurnManager {
     if (activity !== null) this.emitActivity(activity);
   }
 
-  /** The sink is Core's and never throws (`AgentRuntimeActivitySink`). */
+  /** The sink is Core's and never throws (`AgentRuntimeEventSink`). */
   private emitActivity(activity: RuntimeActivity): void {
-    this.opts.activitySink(Object.freeze(activity));
+    this.opts.events(Object.freeze(activity));
   }
 
   /**

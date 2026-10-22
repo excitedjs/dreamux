@@ -43,8 +43,8 @@ export class AgentRuntimeSessionIdInvalid extends Error {
 /**
  * One runtime generation's push-only write authority.
  *
- * State and activity share the generation: revoking it both fences the state
- * writer and silences the activity of a runtime that has been replaced.
+ * State and events share the generation: revoking it both fences the state
+ * writer and silences the events of a runtime that has been replaced.
  */
 export interface AgentRuntimeGenerationLease {
   /** The leased state sink handed to this generation's create context. */
@@ -61,8 +61,8 @@ export interface AgentRuntimeGenerationLease {
  * generation gets its own lease from {@link leaseRuntimeGeneration}; opening a
  * new one revokes the previous, so a stale writer that survived a replacement
  * fails loudly instead of overwriting its successor's facts. Writes are
- * serialized by their state owner and each `publish` resolves only after the
- * owner's write is durable, which is what lets a provider treat awaiting its
+ * serialized in call-receipt order and each `publish` resolves only after the
+ * identity write is durable, which is what lets a provider treat awaiting its
  * own publishes as the start fence.
  */
 export class AgentRuntimeStateStore {
@@ -81,10 +81,6 @@ export class AgentRuntimeStateStore {
   constructor(
     private readonly store: AgentIdentityStore,
     identity: AgentEntityIdentity,
-    private readonly onSessionTitleChanged?: (
-      title: string,
-      assertCurrent: () => void,
-    ) => Promise<void>,
   ) {
     this.entityName = identity.name;
   }
@@ -142,7 +138,7 @@ export class AgentRuntimeStateStore {
   /**
    * Revoke the current generation without opening a new one (runtime stopped, or
    * a start that failed and released everything it took). It fences both leased
-   * sinks at once: the state writer starts rejecting, and the activity closure
+   * sinks at once: the state writer starts rejecting, and the event closure
    * bound to this generation stops being current.
    */
   revokeRuntimeGeneration(): void {
@@ -154,17 +150,8 @@ export class AgentRuntimeStateStore {
     lease: number,
     update: AgentRuntimeStateUpdate,
   ): Promise<void> {
-    const assertCurrent = (): void => {
-      if (lease !== this.currentLease) {
-        throw new AgentRuntimeStateLeaseRevoked(this.entityName);
-      }
-    };
-    assertCurrent();
-    if (update.kind === 'session.title.changed') {
-      return (
-        this.onSessionTitleChanged?.(update.title, assertCurrent) ??
-        Promise.resolve()
-      );
+    if (lease !== this.currentLease) {
+      throw new AgentRuntimeStateLeaseRevoked(this.entityName);
     }
     // Reject before anything is queued: a session id Core cannot resume from is
     // a persistence failure the provider must see synchronously.
@@ -177,7 +164,9 @@ export class AgentRuntimeStateStore {
         // was queued behind an earlier one on the store's own serialized
         // tail. `identityPatch(update)` reads no `current`, so the check is
         // the only reason this callback runs at all.
-        assertCurrent();
+        if (lease !== this.currentLease) {
+          throw new AgentRuntimeStateLeaseRevoked(this.entityName);
+        }
         return identityPatch(update);
       })
       .then(() => {
@@ -187,7 +176,7 @@ export class AgentRuntimeStateStore {
 }
 
 function identityPatch(
-  update: Exclude<AgentRuntimeStateUpdate, { kind: 'session.title.changed' }>,
+  update: AgentRuntimeStateUpdate,
 ): AgentIdentityUpdateInput {
   if (update.kind === 'session') {
     return { sessionId: update.sessionId };

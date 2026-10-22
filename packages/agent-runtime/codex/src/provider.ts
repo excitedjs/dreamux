@@ -127,8 +127,7 @@ export function createCodexAgentRuntimeProvider(
       const deps: CodexRuntimeDeps = {
         cwd: context.cwd,
         state: context.state,
-        activitySink: context.activity,
-        resultSink: context.results,
+        events: context.events,
         codec,
         paths,
         codexBinPath: resolveCodexBinPath(codexConfig.bin),

@@ -594,7 +594,12 @@ export class TeamService implements Team {
     // hand the same hold to the accepted task.
     const record = this.deps.record.retain();
     try {
-      if (!input.force) await this.requireReclaimableWorktree();
+      if (!input.force) {
+        const assessment = await this.assessWorktree();
+        if (assessment.status === 'blocked') {
+          throw new TeamDissolveBlockedError(assessment.reason);
+        }
+      }
     } catch (error) {
       await record.release();
       throw error;
@@ -737,13 +742,6 @@ export class TeamService implements Team {
     }
   }
 
-  private async requireReclaimableWorktree(): Promise<void> {
-    const assessment = await this.assessWorktree();
-    if (assessment.status === 'blocked') {
-      throw new TeamDissolveBlockedError(assessment.reason);
-    }
-  }
-
   /**
    * Destroy every resource this Team holds, once its own closed record
    * already makes it unreachable: Workflows first (stop runs, release held
@@ -786,8 +784,9 @@ export class TeamService implements Team {
    * Only Agents this process actually materialized are reached: a Team's
    * durable members that never ran hold nothing to release, and materializing
    * them here would make a host stop touch entities it never started. Nothing
-   * durable is written — a Team is closed by dissolve, never by a process
-   * stopping. One failure never prevents the remaining resources from being
+   * new is written — a Team is closed by dissolve, never by a process
+   * stopping. After stopping producers, drain their accepted record writes.
+   * One failure never prevents the remaining resources from being
    * released. The leader is `null` only for a Team whose creation failed
    * before it ever existed, in which case this Team is never tracked and
    * never reached here.
@@ -804,6 +803,7 @@ export class TeamService implements Team {
     if (leader !== null) {
       await collectShutdownFailure(failures, () => leader.stopForHost());
     }
+    await collectShutdownFailure(failures, () => this.deps.record.drain());
     throwShutdownFailures(
       failures,
       `multiple runtimes in Team ${JSON.stringify(this.id)} failed to stop`,
@@ -908,13 +908,8 @@ export class TeamService implements Team {
       teamName: team.team_id,
       leaderName: team.leader_name,
       status: team.status,
-      teammates: this.summary(),
+      teammates: [...this.rosterMembers.values()],
     });
-  }
-
-  /** This Team's contained Agents, as a fresh summary per publication. */
-  private summary(): readonly TeamStateTeammateSummary[] {
-    return [...this.rosterMembers.values()];
   }
 
   /**
@@ -957,8 +952,8 @@ export class TeamService implements Team {
   }
 
   private async buildLeader(unbuilt: UnbuiltAgent): Promise<AgentService> {
-    const leader = unbuilt.build({
-      ...(await teamLeaderOptions(
+    const leader = unbuilt.build(
+      await teamLeaderOptions(
         {
           team: this,
           workspace: this.mustRecord().worktree,
@@ -966,10 +961,16 @@ export class TeamService implements Team {
           fence: this.deps.fence,
         },
         unbuilt.identity,
-      )),
-      onSessionTitleChanged: async (title, assertCurrent) => {
-        await this.updateRecord({ intent: title }, assertCurrent);
-      },
+      ),
+    );
+    leader.events.on('session.title.changed', (title) => {
+      // Enqueue before returning to the runtime so receipt order is write order.
+      void this.updateRecord({ intent: title }).catch((error: unknown) => {
+        this.deps.log.error(
+          { team_id: this.id, error: errorMessage(error) },
+          'failed to persist Team intent from session title',
+        );
+      });
     });
     leader.events.on('state', (identity) =>
       this.publish(identity, 'team_leader'),
@@ -988,12 +989,9 @@ export class TeamService implements Team {
    * dissolve or abandoned creation can destroy its children before anything
    * evicts this Team.
    */
-  private async updateRecord(
-    patch: TeamRecordUpdate,
-    assertCurrent?: () => void,
-  ): Promise<TeamRecord> {
+  private async updateRecord(patch: TeamRecordUpdate): Promise<TeamRecord> {
     const previous = this.mustRecord();
-    const updated = await this.deps.record.update(patch, assertCurrent);
+    const updated = await this.deps.record.update(patch);
     // No separate field to assign: `updated` is already what
     // `deps.record.current` holds, published through it by the
     // `TeamRecordHandle.update` call above.

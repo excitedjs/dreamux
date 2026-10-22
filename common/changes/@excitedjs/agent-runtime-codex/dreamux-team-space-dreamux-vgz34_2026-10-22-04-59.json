@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Forward native thread name updates as session.title.changed for the active Codex thread.",
+      "comment": "Publish observations through the required runtime events sink and translate native thread/name/updated notifications into neutral session.title.changed events. This consumes title changes without adding automatic title generation.",
       "type": "minor",
       "packageName": "@excitedjs/agent-runtime-codex"
     }
