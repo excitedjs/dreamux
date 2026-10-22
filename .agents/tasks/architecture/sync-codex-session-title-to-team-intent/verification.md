@@ -63,11 +63,17 @@ The title callback and guard plumbing were removed. Two single-use TeamService
 wrappers were also deleted without moving ownership or changing the line-limit
 rule. The broader file-cohesion candidate is recorded in the design.
 
-A fresh independent read-only boundary review approved shutdown ordering,
-failure-isolated record draining, synchronous FIFO admission, and the unchanged
-completion identity/report-failure convergence paths. It did not rerun the
-suite. The first implementation's approval is not used as evidence for this
-replacement.
+Fresh independent full-diff and boundary reviews approved the revised ownership,
+synchronous FIFO admission, failure-isolated shutdown draining, completion
+identity/report-failure convergence, test assertions, and the documented API
+migration. Both were static source/test reviews and did not rerun the suite.
+The first implementation's approval is not used as evidence for this replacement.
+
+The KB check passed with all task records valid and all files reachable. Rush
+change verification passed after the new Claude adapter change file was
+committed; existing package notes were reconciled with the required event API.
+The implementation commit passed staged lint, author, gitleaks, and
+internal-content gates.
 
 ## Coverage boundary
 

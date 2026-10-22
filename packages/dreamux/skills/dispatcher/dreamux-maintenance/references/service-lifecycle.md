@@ -89,8 +89,8 @@ check for leftover runtime processes after such an exit.
   Team intent; title events leave the existing
   leader identity's `intent` unchanged. If that identity is missing, ordinary
   reconstruction uses the current Team record's intent. `/teams` reads the
-  current value on the next invocation; previously sent cards remain snapshots. There is no title generation or
-  polling, and Claude titles are not integrated. Do not edit these records
+  current value on the next invocation; previously sent cards remain snapshots.
+  There is no title generation or polling, and Claude titles are not integrated. Do not edit these records
   directly; inspect Team list/status and the owning runtime's notifications.
 
 - Every dispatcher root agent, TeamMate, TeamLeader, and Team member has a
