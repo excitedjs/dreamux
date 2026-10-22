@@ -27,6 +27,7 @@ import { TEAM_ID_PATTERN, validateTeamId, type TeamRecord } from './types.js';
 
 /** The merge {@link TeamRecordHandle.update} accepts. */
 export interface TeamRecordUpdate {
+  intent?: string;
   status?: TeamStatus;
   closedAt?: number | null;
   closeNote?: string | null;
@@ -56,7 +57,11 @@ export interface TeamRecordHandle {
       'version' | 'created_at' | 'updated_at' | 'worktree_cleanup_force'
     >,
   ): Promise<TeamRecord | null>;
-  update(input: TeamRecordUpdate): Promise<TeamRecord>;
+  /** Re-check a runtime writer's authority inside this record's write queue. */
+  update(
+    input: TeamRecordUpdate,
+    assertWritable?: () => void,
+  ): Promise<TeamRecord>;
 }
 
 export class TeamStore {
@@ -112,7 +117,8 @@ export class TeamStore {
         return store.current;
       },
       create: (input) => this.publishRecord(store, input),
-      update: (input) => this.mergeRecord(id, store, input),
+      update: (input, assertWritable) =>
+        this.mergeRecord(id, store, input, assertWritable),
       retain: () => this.retain(id, entry),
       release: async () => {
         // Child destruction and Git cleanup do not drain a late running patch
@@ -253,6 +259,7 @@ export class TeamStore {
     teamId: string,
     store: TransactionalStore<TeamRecord | null>,
     input: TeamRecordUpdate,
+    assertWritable?: () => void,
   ): Promise<TeamRecord> {
     let updated!: TeamRecord;
     await store.update((current) => {
@@ -261,6 +268,7 @@ export class TeamStore {
           `Team ${JSON.stringify(teamId)} no longer has a readable record`,
         );
       }
+      assertWritable?.();
       // `closed` is terminal. A leader turn admitted before a dissolve can
       // queue its `starting` → `running` write behind the dissolve's `closed`
       // write; merging it would reopen a Team the dissolve already destroyed.
@@ -268,6 +276,7 @@ export class TeamStore {
         current.status === 'closed' ? current.status : input.status;
       updated = {
         ...current,
+        ...(input.intent !== undefined ? { intent: input.intent } : {}),
         ...(status !== undefined ? { status } : {}),
         ...(input.closedAt !== undefined ? { closed_at: input.closedAt } : {}),
         ...(input.closeNote !== undefined

@@ -61,8 +61,8 @@ export interface AgentRuntimeGenerationLease {
  * generation gets its own lease from {@link leaseRuntimeGeneration}; opening a
  * new one revokes the previous, so a stale writer that survived a replacement
  * fails loudly instead of overwriting its successor's facts. Writes are
- * serialized in call-receipt order and each `publish` resolves only after the
- * identity write is durable, which is what lets a provider treat awaiting its
+ * serialized by their state owner and each `publish` resolves only after the
+ * owner's write is durable, which is what lets a provider treat awaiting its
  * own publishes as the start fence.
  */
 export class AgentRuntimeStateStore {
@@ -81,6 +81,10 @@ export class AgentRuntimeStateStore {
   constructor(
     private readonly store: AgentIdentityStore,
     identity: AgentEntityIdentity,
+    private readonly onSessionTitleChanged?: (
+      title: string,
+      assertCurrent: () => void,
+    ) => Promise<void>,
   ) {
     this.entityName = identity.name;
   }
@@ -150,8 +154,17 @@ export class AgentRuntimeStateStore {
     lease: number,
     update: AgentRuntimeStateUpdate,
   ): Promise<void> {
-    if (lease !== this.currentLease) {
-      throw new AgentRuntimeStateLeaseRevoked(this.entityName);
+    const assertCurrent = (): void => {
+      if (lease !== this.currentLease) {
+        throw new AgentRuntimeStateLeaseRevoked(this.entityName);
+      }
+    };
+    assertCurrent();
+    if (update.kind === 'session.title.changed') {
+      return (
+        this.onSessionTitleChanged?.(update.title, assertCurrent) ??
+        Promise.resolve()
+      );
     }
     // Reject before anything is queued: a session id Core cannot resume from is
     // a persistence failure the provider must see synchronously.
@@ -164,9 +177,7 @@ export class AgentRuntimeStateStore {
         // was queued behind an earlier one on the store's own serialized
         // tail. `identityPatch(update)` reads no `current`, so the check is
         // the only reason this callback runs at all.
-        if (lease !== this.currentLease) {
-          throw new AgentRuntimeStateLeaseRevoked(this.entityName);
-        }
+        assertCurrent();
         return identityPatch(update);
       })
       .then(() => {
@@ -176,7 +187,7 @@ export class AgentRuntimeStateStore {
 }
 
 function identityPatch(
-  update: AgentRuntimeStateUpdate,
+  update: Exclude<AgentRuntimeStateUpdate, { kind: 'session.title.changed' }>,
 ): AgentIdentityUpdateInput {
   if (update.kind === 'session') {
     return { sessionId: update.sessionId };

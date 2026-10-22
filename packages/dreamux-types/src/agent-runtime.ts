@@ -140,15 +140,18 @@ export type AgentRuntimeStateUpdate =
       readonly lastError?: string;
     }
   | { readonly kind: 'session'; readonly sessionId: string }
+  | { readonly kind: 'session.title.changed'; readonly title: string }
   | { readonly kind: 'session_lost'; readonly reason: string };
 
 /**
  * Push-only state sink, leased to exactly one runtime generation.
  *
  * Core creates a distinct sink per generation; the generation is not a public
- * field and the provider supplies no sequence number. Core serializes updates
- * in call-receipt order and resolves `publish` only after the authoritative
- * state write is durable. There is no pull counterpart: awaiting the provider's
+ * field and the provider supplies no sequence number. Each state owner serializes
+ * its updates in call-receipt order; `publish` resolves after its write is durable.
+ * Session titles go to the agent's owner when it consumes titles, otherwise they
+ * are ignored. There is no transaction across owners' records and no pull
+ * counterpart: awaiting the provider's
  * own initial `publish` calls is the start fence.
  *
  * After Core revokes the lease (runtime replaced or stopped), `publish` rejects

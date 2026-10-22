@@ -237,6 +237,29 @@ Source:
 - `/packages/dreamux/src/service/agent/factory.ts`
 - `/packages/dreamux/tests/package-boundary-guards.test.ts`
 
+### Native session titles
+
+The durable neutral state update `session.title.changed` carries a `title`.
+Codex emits it for its own thread's usable `thread/name/updated` notification;
+the native method and `threadName` field stay inside the provider package.
+Claude does not emit this update. This integration listens to existing title
+changes; it does not create titles or request another model summary.
+Dreamux's private app-server has no automatic title producer; a client must
+write a name through that instance for this notification to arrive.
+
+Core routes the update through the runtime generation's leased state sink to
+the owning Team's leader handler. The Team writes its existing `intent` through
+its record owner, and the sink resolves after that write is durable. The
+generation fence also applies at the queued write boundary. Other Agent roles
+have no Team-title consumer. No title is stored in the Agent identity, and the
+title update does not rewrite the leader's existing identity intent.
+A failed title write follows the existing fatal runtime state-fence behavior.
+
+Source: `/packages/dreamux-types/src/agent-runtime.ts`,
+`/packages/agent-runtime/codex/src/runtime.ts`,
+`/packages/dreamux/src/service/agent/runtime-state.ts`,
+`/packages/dreamux/src/service/team/service.ts`.
+
 ### System Prompt
 
 `systemPrompt` is the single provider-facing prompt surface. It carries two

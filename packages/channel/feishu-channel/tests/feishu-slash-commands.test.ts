@@ -404,6 +404,37 @@ describe('Feishu slash command dispatch', () => {
     expect(rendered).not.toContain('closed');
   });
 
+  it('renders the current Team intent on each invocation and leaves earlier cards unchanged', async () => {
+    let intent = 'Review the implementation';
+    const invoke = vi.fn(async () => ({
+      teams: [
+        {
+          team_name: 'alpha',
+          status: 'running',
+          intent,
+          source_repo: null,
+          leader_agent_runtime: 'codex',
+        },
+      ],
+    }));
+    const input: DispatchFixture = {
+      plan: { kind: 'dispatcher', reason: 'no_binding' },
+      bindings: [],
+      invoke,
+    };
+    const first = await dispatch('teams', input);
+    intent = 'Ship the release';
+    const second = await dispatch('teams', input);
+    expect(invoke.mock.calls).toEqual([
+      ['team.list', {}],
+      ['team.list', {}],
+    ]);
+    expect(JSON.stringify(first)).toContain('Review the implementation');
+    expect(JSON.stringify(first)).not.toContain('Ship the release');
+    expect(JSON.stringify(second)).toContain('Ship the release');
+    expect(JSON.stringify(second)).not.toContain('Review the implementation');
+  });
+
   it('falls back to the chat id when one current-name lookup fails', async () => {
     const reply = await dispatch('teams', {
       plan: { kind: 'dispatcher', reason: 'no_binding' },

@@ -261,6 +261,13 @@ export class FakeCodexWsClient {
     });
   }
 
+  emitThreadNameUpdated(threadId: string, threadName?: string | null): void {
+    this.emit({
+      method: 'thread/name/updated',
+      params: { threadId, ...(threadName === undefined ? {} : { threadName }) },
+    });
+  }
+
   emitCompleted(threadId: string, turnId: string, text: string): void {
     this.emit({
       method: 'item/completed',

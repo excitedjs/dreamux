@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the provider-neutral session.title.changed durable state update.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

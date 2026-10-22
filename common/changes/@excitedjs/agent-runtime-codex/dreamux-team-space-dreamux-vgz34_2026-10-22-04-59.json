@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Forward native thread name updates as session.title.changed for the active Codex thread.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

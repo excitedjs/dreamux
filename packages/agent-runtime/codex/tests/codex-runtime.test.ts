@@ -158,6 +158,62 @@ describe('CodexRuntime start() continuity', () => {
   });
 });
 
+describe('CodexRuntime native session titles', () => {
+  it.each([null, 'existing-thread'])(
+    'publishes only usable titles for its own thread (prior session: %s)',
+    async (sessionId) => {
+      const state = new RecordingStateSink();
+      const { deps, client } = makeDeps({ state });
+      const runtime = new CodexRuntime(identity(sessionId), deps);
+      await runtime.start();
+      const threadId = sessionId ?? 'fresh-thread-1';
+      const before = [...state.updates];
+
+      client.emitThreadNameUpdated('foreign-thread', 'Another Team');
+      client.emitThreadNameUpdated(threadId);
+      for (const title of [null, '', ' \n\t '])
+        client.emitThreadNameUpdated(threadId, title);
+      expect(state.updates).toEqual(before);
+
+      client.emitThreadNameUpdated(threadId, 'Review release readiness');
+      client.emitThreadNameUpdated(threadId, 'Ship the release');
+      expect(state.updates.slice(before.length)).toEqual([
+        { kind: 'session.title.changed', title: 'Review release readiness' },
+        { kind: 'session.title.changed', title: 'Ship the release' },
+      ]);
+      expect(client.methods).not.toContain('turn/start');
+      await runtime.stop();
+    },
+  );
+
+  it.each(['AgentRuntimeStateLeaseRevokedError', 'Error'])(
+    'terminates and refuses more work when title persistence fails with %s',
+    async (name) => {
+      const state = new RecordingStateSink();
+      const error = new Error('title write rejected');
+      error.name = name;
+      state.rejectWhen(
+        (update) => update.kind === 'session.title.changed',
+        error,
+      );
+      const { deps, client, process } = makeDeps({ state });
+      const runtime = new CodexRuntime(identity(null), deps);
+      await runtime.start();
+
+      client.emitThreadNameUpdated('fresh-thread-1', 'Cannot persist');
+      await waitFor(() => process.reapCalls === 1);
+      expect(await runtime.submit({ text: 'More work' })).toMatchObject({
+        status: 'stopped',
+      });
+      await runtime.stop();
+      expect(client.methods).not.toContain('turn/start');
+      expect(
+        state.updates.some((update) => update.kind === 'session.title.changed'),
+      ).toBe(false);
+    },
+  );
+});
+
 describe('CodexRuntime developerInstructions re-supply', () => {
   const append = ['TeamLeader identity fragment'];
 

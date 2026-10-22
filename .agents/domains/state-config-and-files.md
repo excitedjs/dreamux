@@ -262,6 +262,12 @@ inputs, the workspace, `status`, `closed_at` / `close_note`, the accepted
 `team.create` request identity and payload hash, the one shared worktree
 identity, and `worktree_cleanup_force`. Do not edit or manufacture it by hand.
 
+Its `intent` starts with the creation topic and is replaced when the Team's
+leader reports a native session title through the neutral runtime state sink.
+Codex provides this notification; ordinary member titles do not change Team
+intent. The leader's own identity `intent` remains a separate recovery subject.
+This changes the value of an existing field, not the record's shape.
+
 The record is also the Team's own name claim. Publishing it is a serialized
 load-decide-write inside the one canonical `TransactionalStore` the collection
 holds for that Team id, and that create is the whole acceptance

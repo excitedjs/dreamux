@@ -36,11 +36,11 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
     assertType<Equal<keyof AgentRuntimeStateSink, 'publish'>>();
   });
 
-  it('AgentRuntimeStateUpdate is exactly status | session | session_lost', () => {
+  it('AgentRuntimeStateUpdate is exactly status | session | session_lost | session.title.changed', () => {
     assertType<
       Equal<
         AgentRuntimeStateUpdate['kind'],
-        'status' | 'session' | 'session_lost'
+        'status' | 'session' | 'session_lost' | 'session.title.changed'
       >
     >();
   });
@@ -59,6 +59,9 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
           case 'session_lost':
             received.push(`session_lost:${update.reason}`);
             return;
+          case 'session.title.changed':
+            received.push(`session.title.changed:${update.title}`);
+            return;
           default:
             return assertNever(update);
         }
@@ -68,6 +71,10 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
     await sink.publish({ kind: 'status', status: 'ready' });
     await sink.publish({ kind: 'session', sessionId: 'sess-1' });
     await sink.publish({
+      kind: 'session.title.changed',
+      title: 'Release readiness',
+    });
+    await sink.publish({
       kind: 'session_lost',
       reason: 'native process exited',
     });
@@ -75,6 +82,7 @@ describe('AgentRuntimeStateSink is push-only: publish(update) and nothing else',
     expect(received).toEqual([
       'status:ready',
       'session:sess-1',
+      'session.title.changed:Release readiness',
       'session_lost:native process exited',
     ]);
   });

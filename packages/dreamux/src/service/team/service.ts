@@ -957,8 +957,8 @@ export class TeamService implements Team {
   }
 
   private async buildLeader(unbuilt: UnbuiltAgent): Promise<AgentService> {
-    const leader = unbuilt.build(
-      await teamLeaderOptions(
+    const leader = unbuilt.build({
+      ...(await teamLeaderOptions(
         {
           team: this,
           workspace: this.mustRecord().worktree,
@@ -966,8 +966,11 @@ export class TeamService implements Team {
           fence: this.deps.fence,
         },
         unbuilt.identity,
-      ),
-    );
+      )),
+      onSessionTitleChanged: async (title, assertCurrent) => {
+        await this.updateRecord({ intent: title }, assertCurrent);
+      },
+    });
     leader.events.on('state', (identity) =>
       this.publish(identity, 'team_leader'),
     );
@@ -985,9 +988,12 @@ export class TeamService implements Team {
    * dissolve or abandoned creation can destroy its children before anything
    * evicts this Team.
    */
-  private async updateRecord(patch: TeamRecordUpdate): Promise<TeamRecord> {
+  private async updateRecord(
+    patch: TeamRecordUpdate,
+    assertCurrent?: () => void,
+  ): Promise<TeamRecord> {
     const previous = this.mustRecord();
-    const updated = await this.deps.record.update(patch);
+    const updated = await this.deps.record.update(patch, assertCurrent);
     // No separate field to assign: `updated` is already what
     // `deps.record.current` holds, published through it by the
     // `TeamRecordHandle.update` call above.

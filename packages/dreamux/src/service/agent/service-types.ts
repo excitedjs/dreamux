@@ -118,6 +118,11 @@ export interface TeammateAgentMcp {
 }
 
 export interface TeammateServiceOptions {
+  /** Owner's durable title write; re-check the lease inside its write queue. */
+  onSessionTitleChanged?: (
+    title: string,
+    assertCurrent: () => void,
+  ) => Promise<void>;
   mcp?: TeammateAgentMcp;
   /** Stable actual owner, armed only for ordinary collection members. */
   nativeResultRecipient?: CompletionInitiator;

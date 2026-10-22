@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Update Team intent from its Codex leader's native session title without changing the leader identity's recovery intent.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

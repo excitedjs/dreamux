@@ -25,6 +25,7 @@ import { codexThreadInstructions } from './system-prompt.js';
 import { TurnManager } from './turn-manager.js';
 import type {
   ServerRequest,
+  ThreadNameUpdatedNotification,
   ThreadResumeParams,
   ThreadResumeResponse,
   ThreadStartParams,
@@ -270,6 +271,28 @@ export class CodexRuntime implements AgentRuntime {
 
     const thread = await this.resolveThread(generation, options);
     this.assertGeneration(generation);
+
+    client.onNotification((notification) => {
+      if (
+        this.client !== client ||
+        notification.method !== 'thread/name/updated'
+      )
+        return;
+      const { threadId, threadName } =
+        notification.params as ThreadNameUpdatedNotification;
+      if (
+        threadId !== thread.thread.id ||
+        threadName == null ||
+        threadName.trim() === ''
+      )
+        return;
+      this.fence.publishDetached(() =>
+        this.state.publish({
+          kind: 'session.title.changed',
+          title: threadName,
+        }),
+      );
+    });
 
     this.turnManager = new TurnManager({
       threadId: thread.thread.id,

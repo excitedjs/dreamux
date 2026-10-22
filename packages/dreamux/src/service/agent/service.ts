@@ -140,7 +140,11 @@ export class AgentService {
       teamId: identity.team_id,
       name: identity.name,
     };
-    this.state = new AgentRuntimeStateStore(deps.identities, identity);
+    this.state = new AgentRuntimeStateStore(
+      deps.identities,
+      identity,
+      options.onSessionTitleChanged,
+    );
     deps.identities.committed.on('committed', (identity) =>
       this.events.emit('state', identity),
     );
