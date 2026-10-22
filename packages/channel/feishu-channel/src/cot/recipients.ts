@@ -18,7 +18,12 @@
  */
 import type { FeishuCotEventInput } from '@excitedjs/feishu-transport';
 
-import { appendBatchFits, cotEventBytes, outboxAdmits } from './bytes.js';
+import {
+  appendBatchFits,
+  cotEventBytes,
+  outboxAbsorbs,
+  outboxAdmits,
+} from './bytes.js';
 import type { FeishuCotTerminal } from './card.js';
 import { sameTarget, targetKey, type FeishuTarget } from '../routing/target.js';
 
@@ -52,13 +57,40 @@ export type CotOutboxAdmission =
       readonly bufferedBytes: number;
     };
 
+/**
+ * How one incoming event joins the queue's current tail, when it can.
+ *
+ * An increment of the same block merges into the tail it continues; whether
+ * two adjacent events are one display fact is the projector's rule, so the
+ * outbox is handed the decision rather than knowing event kinds.
+ */
+export type CotAdjacentMerge = (
+  tail: FeishuCotEventInput,
+  next: FeishuCotEventInput,
+) => FeishuCotEventInput | null;
+
 /** Bounded buffering and append-batch selection for one COT presentation. */
 export class CotOutbox {
   private readonly queue: FeishuCotEventInput[] = [];
   private byteTotal = 0;
   droppedEvents = 0;
 
-  admit(events: readonly FeishuCotEventInput[]): CotOutboxAdmission {
+  admit(
+    events: readonly FeishuCotEventInput[],
+    mergeAdjacent?: CotAdjacentMerge,
+  ): CotOutboxAdmission {
+    if (
+      mergeAdjacent !== undefined &&
+      events.length === 1 &&
+      this.queue.length > 0
+    ) {
+      const merged = this.mergeInto(
+        this.queue[this.queue.length - 1]!,
+        events[0]!,
+        mergeAdjacent,
+      );
+      if (merged !== null) return merged;
+    }
     const check = outboxAdmits(this.queue.length, this.byteTotal, events);
     if (!check.fits) {
       const firstDrop = this.droppedEvents === 0;
@@ -72,6 +104,34 @@ export class CotOutbox {
     }
     this.queue.push(...events);
     this.byteTotal += check.incomingBytes;
+    return { accepted: true };
+  }
+
+  /**
+   * Replace the tail with the merged event when the projector allowed it and
+   * the extra bytes fit. An increment whose merge would overflow the queue
+   * cannot fit as its own event either, so it is refused the same way.
+   */
+  private mergeInto(
+    tail: FeishuCotEventInput,
+    next: FeishuCotEventInput,
+    mergeAdjacent: CotAdjacentMerge,
+  ): CotOutboxAdmission | null {
+    const merged = mergeAdjacent(tail, next);
+    if (merged === null) return null;
+    const extraBytes = cotEventBytes(merged) - cotEventBytes(tail);
+    if (!outboxAbsorbs(this.byteTotal, extraBytes)) {
+      const firstDrop = this.droppedEvents === 0;
+      this.droppedEvents += 1;
+      return {
+        accepted: false,
+        firstDrop,
+        bufferedEvents: this.queue.length,
+        bufferedBytes: this.byteTotal,
+      };
+    }
+    this.queue[this.queue.length - 1] = merged;
+    this.byteTotal += extraBytes;
     return { accepted: true };
   }
 
@@ -99,6 +159,16 @@ export class CotOutbox {
   }
 }
 
+/**
+ * The native reasoning parts this card has opened and not yet completed.
+ *
+ * Per presentation, never per recipient: a replacement card starts with no
+ * entries, so its first increment opens a block and writes the prefix again
+ * instead of inheriting the abandoned card's display state. A part is removed
+ * only by its own completion or by the card stopping.
+ */
+export type CotOpenReasoningParts = Set<string>;
+
 export interface CotPresentation {
   readonly id: string;
   readonly generation: number;
@@ -108,6 +178,9 @@ export interface CotPresentation {
   cotId: string | null;
   messageId: string | null;
   readonly outbox: CotOutbox;
+  readonly reasoningParts: CotOpenReasoningParts;
+  /** When this presentation's last append call started; null before the first. */
+  lastAppendStartedAt: number | null;
   terminalIntent: FeishuCotTerminal | null;
   flushQueued: boolean;
   closed: boolean;

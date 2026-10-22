@@ -789,9 +789,11 @@ the spawning `Agent` call in `parent_tool_use_id` (main-agent lines carry
 tool calls, and their results. The main agent's own `Agent` call and its result
 are the main agent's and stay. Observed on 2.1.272, a background subagent's text
 arrives without `--forward-subagent-text`, which the documentation says it
-needs. Every other stdout line — `init`,
-`command_lifecycle`, control traffic, every other `system` notice,
-`stream_event`, `rate_limit_event` — is excluded from Core display activity.
+needs. Partial `stream_event` envelopes supply only reasoning increments and
+their native message/block lifecycle; ordinary text deltas remain undisplayed.
+Every other stdout line — `init`, `command_lifecycle`, control traffic,
+every other `system` notice, `rate_limit_event` — is excluded from Core display
+activity.
 RPC still uses protocol events for lifecycle, session setup and control handling,
 and exposes its Claude-specific observation callback. Incoming lines also
 refresh the idle deadline while requests remain unanswered. Core displays the operator's
@@ -977,13 +979,24 @@ Dreamux submissions into one native turn, so an activity cannot honestly name
 the submission that caused it, and inventing one made a display pick an
 arbitrary member — and, when no member could be picked, drop the fact entirely.
 The agent is the subject, and it is known before any submission binds. The union
-has six members: `assistant.message`, `tool.call`, `token.usage`,
+has seven members: `assistant.message`, `assistant.reasoning`, `tool.call`, `token.usage`,
 `context.compacted`, `turn.interrupted`, and `turn.ended` — the runtime stopped
 producing, with a completed, failed or interrupted status and its own reason
 text when it has one. `token.usage`, `context.compacted`, and
 `turn.interrupted` are not conversation content and carry no display text: the
 display layer owns the line it shows for each.
 
+- `assistant.reasoning` carries append-only `text`, native `partIndex`, and
+  `streaming`/`completed` status. Completion closes one part, not the whole turn.
+  Codex selects one carrier per native item (first nonempty delta, otherwise
+  completed summary before content) and preserves its native indices. Claude
+  observes `stream_event` with partial messages enabled; its API message ID
+  and native block index correlate increments with singleton completed
+  envelopes. A snapshot without partial context uses its native envelope UUID
+  and content-array position. Completed snapshots fill parts that did not
+  stream; streamed parts are not replayed. The ordinary assistant message
+  contract remains completed-block text. No signatures or encrypted values
+  enter this activity, and the cold reader does not emit it.
 - `token.usage` carries the turn's cumulative counters (see
   [Native Turn Usage Activity](#native-turn-usage-activity)).
 - `context.compacted` says the runtime compacted its context — Claude Code on
@@ -1006,12 +1019,15 @@ taken whole — no prefix, suffix, counter, or composition:
 | Activity                          | Claude Code                          | Codex                        |
 | --------------------------------- | ------------------------------------ | ---------------------------- |
 | `assistant.message`               | the assistant line's `uuid`          | agent message item id        |
+| `assistant.reasoning` | API message id; envelope UUID without partial context | reasoning item id |
 | `tool.call` (start and result)    | `tool_use.id`                        | tool item id (its `call_id`) |
 | `context.compacted`               | the `compact_boundary` line's `uuid` | compaction item id           |
 | `token.usage`, `turn.interrupted` | the `result` line's own `uuid`       | `turnId`                     |
 
 So an id is not unique per activity: a call's start and result share one, and
-so do one turn's usage and interrupt marker. A consumer that needs one
+so do one turn's usage and interrupt marker. Reasoning increments share their
+item/message id and distinguish native parts with `partIndex`, never by
+concatenating an invented provider id. A consumer that needs one
 identity per row derives it from the kind (and a call's status) together with
 the id; the Feishu CoT does exactly that. `tool.call` has no separate call id.
 `turn.ended` has no id, because teardown and Core's own end for an input no
@@ -1025,8 +1041,9 @@ always carried one content block, so one line is one text id. Operator ruling,
 做法是直接用原生 Provider 生成的 ID，比如 toolcall 就用 toolcall ID。」
 
 A Channel receives this same type. `teammate.activity` carries
-`RuntimeActivity` with every text and JSON payload member redacted by Core and
-nothing reshaped; there is no second, channel-shaped activity type (operator,
+`RuntimeActivity` with text and JSON payloads redacted by Core, except reasoning
+append fragments, which pass unchanged (operator, 2026-10-22: "chunk 先不脱敏了，麻烦").
+Nothing is reshaped; there is no second, channel-shaped activity type (operator,
 2026-09-18: 「这两个类型可以合并吗？」, then 「合并成一份」). See
 [the channel domain](/.agents/domains/channel.md#dispatcher-scoped-core-events).
 
@@ -1084,8 +1101,8 @@ or absent query/action fields are omitted; when neither is present, arguments
 remain null.
 Anything outside those tables — every MCP tool — reports
 `null` for descriptive facts and an empty item list, and displays as its name.
-Core redacts summaries/items/results but preserves argument/invocation values
-without redaction under the operator's current display policy; see
+Core redacts summaries, items, arguments, invocations, results, and errors;
+only reasoning append fragments are exempt from that policy. See
 [Channel projection](channel.md).
 
 A normal native turn ends at its provider-native terminal: Claude Code `result`

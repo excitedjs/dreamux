@@ -380,10 +380,27 @@ describe('parseLine', () => {
 
   it('classifies unmodelled JSON as other and non-JSON as parse_error', () => {
     expect(
-      parseLine(JSON.stringify({ type: 'stream_event', event: {} })).kind,
+      parseLine(JSON.stringify({ type: 'future_event', event: {} })).kind,
     ).toBe('other');
     expect(parseLine('not json').kind).toBe('parse_error');
     expect(parseLine('[1,2,3]').kind).toBe('parse_error');
+  });
+
+  it('keeps native partial identity and indices for the live projection', () => {
+    const raw = {
+      type: 'stream_event',
+      uuid: 'envelope',
+      event: {
+        type: 'content_block_delta',
+        index: 7,
+        delta: { type: 'thinking_delta', thinking: 'fragment' },
+      },
+      api_message_id: 'api-message',
+    };
+    expect(parseLine(JSON.stringify(raw))).toEqual({
+      kind: 'stream_event',
+      raw,
+    });
   });
 });
 

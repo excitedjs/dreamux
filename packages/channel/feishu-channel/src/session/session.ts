@@ -99,6 +99,12 @@ export interface FeishuChannelSessionOptions {
   attachmentCacheDir: string;
   /** The host's neutral logger, handed straight to the transport. */
   log: DreamuxLogger;
+  /**
+   * Whether native reasoning reaches this channel's COT cards. The provider
+   * normalizes the operator's `cot.reasoning`; a direct constructor that omits
+   * it gets the product default, which is off.
+   */
+  cotReasoning?: boolean;
   /** The Feishu extensions this session runs; none when omitted. */
   extensions?: FeishuExtensionRegistry;
 }
@@ -175,6 +181,7 @@ export class FeishuChannelSession {
       log: opts.log,
       cotClient: this.bot.cot,
       lifecycle: this.lifecycle,
+      cotReasoning: opts.cotReasoning === true,
     });
     this.commands = new FeishuCoreCommands();
     const submitter = new FeishuTeamSubmitter({

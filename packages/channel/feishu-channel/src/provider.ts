@@ -29,10 +29,52 @@ import { FeishuChannelSession } from './session/session.js';
 import { feishuToolRegistrations } from './tools/registry.js';
 import { createFeishuSessionMcp } from './tools/session-mcp.js';
 
-/** Validated Feishu channel config the neutral session is constructed from. */
+/**
+ * The optional COT display switches this channel accepts.
+ *
+ * `reasoning` is opt-in. Runtimes publish native reasoning regardless; this
+ * only decides whether this Channel's card shows it.
+ */
+export interface FeishuCotConfig {
+  readonly reasoning: boolean;
+}
+
+/**
+ * Validated Feishu channel config the neutral session is constructed from.
+ *
+ * `read` always returns `cot`; it stays optional on the type because an
+ * embedder may construct this object directly, and the product default is off.
+ */
 export interface FeishuChannelConfig {
   appId: string;
   appSecret: string;
+  readonly cot?: FeishuCotConfig;
+}
+
+const DEFAULT_COT: FeishuCotConfig = { reasoning: false };
+
+/**
+ * The operator's `cot` object, normalized to its defaults.
+ *
+ * Omission and an empty object both mean "every switch off"; a value of the
+ * wrong type fails loading rather than silently reverting a switch the operator
+ * meant to set.
+ */
+function readCotConfig(raw: unknown): FeishuCotConfig {
+  if (raw === undefined) return DEFAULT_COT;
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new RuleViolation(
+      'feishu channel config field cot must be an object',
+    );
+  }
+  const reasoning = (raw as Record<string, unknown>)['reasoning'];
+  if (reasoning === undefined) return DEFAULT_COT;
+  if (typeof reasoning !== 'boolean') {
+    throw new RuleViolation(
+      'feishu channel config field cot.reasoning must be a boolean',
+    );
+  }
+  return { reasoning };
 }
 
 /** A Feishu channel provider with no extensions (tests and embedders). */
@@ -55,9 +97,10 @@ export function buildFeishuChannelProvider(
         // The Feishu channel owns its config validation: the host no longer
         // pre-validates Feishu app credentials. The bot secret is
         // config-sourced, so a non-empty app_secret is required at config-load
-        // time to preserve fail-loud — not deferred to session start. Unknown
-        // fields are tolerated, not rejected (R21): only a missing or
-        // wrong-type app_id/app_secret fails loading.
+        // time to preserve fail-loud — not deferred to session start. Each
+        // recognized field is validated on its own (`app_id`, `app_secret`,
+        // and `cot.reasoning`); unknown fields are tolerated, not rejected
+        // (R21).
         const appId = obj['app_id'];
         const appSecret = obj['app_secret'];
         if (typeof appId !== 'string' || appId.trim() === '') {
@@ -70,7 +113,7 @@ export function buildFeishuChannelProvider(
             'feishu channel config requires a non-empty app_secret',
           );
         }
-        return { appId, appSecret };
+        return { appId, appSecret, cot: readCotConfig(obj['cot']) };
       },
     },
     identity: {
@@ -147,6 +190,7 @@ export function buildFeishuChannelProvider(
         // per-dispatcher cache root. Effective path is unchanged.
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
+        cotReasoning: context.config.cot?.reasoning ?? false,
         extensions,
       });
       return {

@@ -17,6 +17,7 @@ export type JsonObject = Record<string, unknown>;
  * CLI's `type` — it groups the wire types by how the runtime reacts.
  */
 export type ParsedLine =
+  | { kind: 'stream_event'; raw: JsonObject }
   | {
       kind: 'init';
       sessionId: string | null;
@@ -178,8 +179,8 @@ export interface ClaudeCodeSessionSpec {
 }
 
 /**
- * The three envelopes the display line reads: what claude said and did
- * (`assistant`), what its tools returned (`user`), and the CLI's notice that
+ * The envelopes the display line reads: native partial blocks (`stream_event`),
+ * what claude said and did (`assistant`), what its tools returned (`user`), and the CLI's notice that
  * it compacted its context (`system` with subtype `compact_boundary`). Every
  * other stdout line — `init`, command lifecycle, control traffic, every other
  * `system` notice, hook and rate-limit notices — is the RPC's own business
@@ -187,7 +188,7 @@ export interface ClaudeCodeSessionSpec {
  */
 export type ClaudeActivityLine = Extract<
   ParsedLine,
-  { kind: 'assistant' | 'user' | 'compact_boundary' }
+  { kind: 'assistant' | 'user' | 'compact_boundary' | 'stream_event' }
 >;
 
 export type ClaudeProtocolEvent =

@@ -164,6 +164,14 @@ Provider: `builtin:feishu`. Its provider config has two required fields:
 `app_id` and `app_secret`. Access policies and conversation bindings do **not**
 belong in this block.
 
+To display reasoning in the Feishu COT card, add `"cot": { "reasoning": true }`
+inside this channel's `config`. Omission, an empty `cot` object, and an explicit
+`false` keep reasoning hidden. Enabled reasoning uses native reasoning events
+with a `Thinking...` prefix. Reasoning fragments pass through without redaction;
+other activity retains its existing redaction. COT updates are spaced at least
+500ms apart, and ordinary assistant text still appears as completed blocks.
+Some upstreams deliver reasoning increments only near block completion.
+
 The default access state pairs unapproved users, requires a group @-mention,
 and lets unlisted groups follow the sender's user authorization. Pairing is the
 normal way to approve a user. See [first-message setup](getting-started.md#5-pair-and-send-your-first-task).

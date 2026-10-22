@@ -179,6 +179,17 @@ export function outboxAdmits(
   return { fits, incomingBytes };
 }
 
+/**
+ * Whether an outbox can absorb `extraBytes` without gaining an event — the
+ * case an increment merged into the queued tail rather than queued beside it.
+ */
+export function outboxAbsorbs(
+  bufferedBytes: number,
+  extraBytes: number,
+): boolean {
+  return bufferedBytes + extraBytes <= FEISHU_COT_OUTBOX_MAX_BYTES;
+}
+
 /** Whether one append call carrying `events` fits Feishu's per-append bounds. */
 export function appendBatchFits(
   cotId: string,

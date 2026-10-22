@@ -3,9 +3,18 @@
 Accepted `dispatchers[].channels[].config` fields:
 
 - `app_id`: required non-empty string identifying this Channel config;
-- `app_secret`: required non-empty string authenticating the Feishu app.
+- `app_secret`: required non-empty string authenticating the Feishu app;
+- `cot`: optional object with one switch, `reasoning` (boolean, default
+  `false`). When `true`, the Channel shows the runtime's native reasoning
+  blocks on its COT cards, each headed once by `Thinking...`, with card updates
+  paced to at most one append every 500 ms. When `false` or absent, reasoning
+  is not displayed; final answers, tool rows, and every other card element are
+  unchanged. This switch does not stop any runtime from producing reasoning —
+  it only controls this Channel's display.
 
-There are no credential defaults and no other built-in Feishu config fields.
+There are no credential defaults. An absent or empty `cot` object means every
+switch is off; a `cot` or `cot.reasoning` value of the wrong type fails config
+loading rather than being ignored.
 
 ## Feishu-Owned Routing State
 

@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add append-only reasoning activity with native part indices and explicit teammate-message provenance.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

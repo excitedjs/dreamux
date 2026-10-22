@@ -229,6 +229,8 @@ export function parseLine(line: string): ParsedLine {
         sessionId: str(parsed['session_id']),
         raw: parsed,
       };
+    case 'stream_event':
+      return { kind: 'stream_event', raw: parsed };
     case 'user':
       return { kind: 'user', raw: parsed };
     case 'result':

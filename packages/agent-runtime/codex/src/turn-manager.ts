@@ -7,6 +7,7 @@ import {
   type TurnCollector,
 } from './events.js';
 import type { CodexOutputSchemaCodec } from './output-schema-codec.js';
+import { CodexReasoningActivity } from './reasoning-activity.js';
 import type {
   CodexReasoningEffort,
   SubmissionEffort,
@@ -53,6 +54,9 @@ export interface TurnManagerOptions {
 }
 
 export class TurnManager {
+  private readonly reasoningActivity = new CodexReasoningActivity((activity) =>
+    this.emitActivity(activity),
+  );
   private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
   private readonly inFlightNativeAdmissions = new Set<number>();
   private nextNativeAdmission = 0;
@@ -91,6 +95,7 @@ export class TurnManager {
     this.stopped = true;
     this.collector?.dispose();
     this.collector = null;
+    this.reasoningActivity.close();
     while (this.pendingAdmissions.size > 0)
       await Promise.allSettled([...this.pendingAdmissions]);
     // The collector is gone, so nothing will ever report a turn codex started
@@ -179,8 +184,12 @@ export class TurnManager {
         },
         onItemStarted: (_turnId, item) =>
           this.observeItem(item, 'started', Date.now()),
-        onItemCompleted: (_turnId, item, occurredAt) =>
-          this.observeItem(item, 'completed', occurredAt),
+        onItemCompleted: (turnId, item, occurredAt) => {
+          if (item.type === 'reasoning')
+            this.reasoningActivity.complete(turnId, item, occurredAt);
+          else this.observeItem(item, 'completed', occurredAt);
+        },
+        onReasoningDelta: (delta) => this.reasoningActivity.delta(delta),
         onTerminal: (turnId, terminal) =>
           this.observeTerminal(turnId, terminal),
         onUnscopedFailure: (error) => this.failProtocol(error),
@@ -217,6 +226,7 @@ export class TurnManager {
     turnId: string,
     terminal: CollectedTurn | Error,
   ): void {
+    this.reasoningActivity.closeTurn(turnId);
     // An accepted interrupt is not a terminal of its own: codex answers it with
     // an ordinary `turn/completed` whose only mark is `status: "interrupted"`
     // (measured against codex-cli 0.153.4; see `TurnStatus`). Both the marker
@@ -265,6 +275,7 @@ export class TurnManager {
   }
 
   private failProtocol(error: Error): void {
+    this.reasoningActivity.close();
     const first = this.protocolFailure === null;
     this.protocolFailure ??= error;
     this.opts.logger.error({ err: error }, 'codex turn protocol failed');

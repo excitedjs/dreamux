@@ -63,6 +63,21 @@ import {
 
 let dir: string;
 const adapters: FeishuCotAdapter[] = [];
+
+/**
+ * The least interval the Channel keeps between two COT append starts.
+ *
+ * This suite uses a real clock because it also drives real fs commits, so a
+ * turn is the ordinary event-loop yield plus one cadence window: enough for a
+ * fact just published to reach a legal append start before the card is read.
+ */
+const COT_APPEND_INTERVAL_MS = 500;
+
+async function nextAppendTurn(): Promise<void> {
+  await nextTurn();
+  await new Promise((resolve) => setTimeout(resolve, COT_APPEND_INTERVAL_MS));
+  await nextTurn();
+}
 const log: DreamuxLogger = {
   error: () => undefined,
   warn: () => undefined,
@@ -125,6 +140,7 @@ async function harness(
     log,
     cotClient,
     lifecycle,
+    cotReasoning: false,
   });
   adapters.push(cot);
   const release = cot.onRouteReleased.bind(cot);
@@ -583,7 +599,7 @@ async function submitAt(
   expect(outcome.status).toBe('submitted');
   // All recording-client operations resolve immediately. The next event-loop
   // turn follows the adapter's queued promise work, including card appends.
-  await nextTurn();
+  await nextAppendTurn();
 }
 
 function speak(h: Harness, teamName: string, text: string): void {
@@ -609,7 +625,7 @@ describe('COT route retirement through routing, submission, and binding owners',
     expect(await h.ops.unbindChannel(topic)).toEqual({
       team_name: 'same-team',
     });
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.routing.plan(topic, false)).toEqual({
       kind: 'bound',
       teamName: 'same-team',
@@ -618,11 +634,11 @@ describe('COT route retirement through routing, submission, and binding owners',
     expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
     expect(cotTerminalCount(h.cotClient.cards[0]!)).toBe(1);
     speak(h, 'same-team', 'late from exact route');
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.cotClient.cards).toHaveLength(1);
     await submitAt(h, topic, 'om_inherited');
     speak(h, 'same-team', 'new inherited output');
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.cotClient.cards).toHaveLength(2);
     expect(h.cotClient.cards[1]!.originMessageId).toBe('om_inherited');
     expect(cotTexts(h.cotClient.cards[1]!)).toContain('new inherited output');
@@ -630,7 +646,7 @@ describe('COT route retirement through routing, submission, and binding owners',
       'late from exact route',
     );
     await h.ops.unbindChannel(parent);
-    await nextTurn();
+    await nextAppendTurn();
     expect(cotTerminal(h.cotClient.cards[1]!)).toBe('interrupted');
   });
 
@@ -657,7 +673,7 @@ describe('COT route retirement through routing, submission, and binding owners',
             reason: null,
           },
         });
-        await nextTurn();
+        await nextAppendTurn();
       }
       h.setStatus('new-team', 'running');
       expect(
@@ -670,7 +686,7 @@ describe('COT route retirement through routing, submission, and binding owners',
         team_name: 'new-team',
         previous_team_name: null,
       });
-      await nextTurn();
+      await nextAppendTurn();
       expect(h.routing.bindingFor(parent)?.team_name).toBe('old-team');
       expect(cotTerminal(h.cotClient.cards[0]!)).toBe(
         phase === 'active' ? 'interrupted' : 'done',
@@ -680,22 +696,22 @@ describe('COT route retirement through routing, submission, and binding owners',
         'Previous Team',
       );
       speak(h, 'old-team', 'late displaced inherited output');
-      await nextTurn();
+      await nextAppendTurn();
       expect(h.cotClient.cards).toHaveLength(1);
       expect(cotTexts(h.cotClient.cards[0]!)).not.toContain(
         'late displaced inherited output',
       );
       await submitAt(h, topic, 'om_new');
       speak(h, 'new-team', 'new exact output');
-      await nextTurn();
+      await nextAppendTurn();
       expect(h.cotClient.cards).toHaveLength(2);
       expect(cotTexts(h.cotClient.cards[1]!)).toContain('new exact output');
       await h.ops.unbindChannel(topic);
-      await nextTurn();
+      await nextAppendTurn();
       expect(cotTerminal(h.cotClient.cards[1]!)).toBe('interrupted');
       await submitAt(h, topic, 'om_restored');
       speak(h, 'old-team', 'restored inherited output');
-      await nextTurn();
+      await nextAppendTurn();
       expect(h.cotClient.cards).toHaveLength(3);
       expect(h.cotClient.cards[2]!.originMessageId).toBe('om_restored');
       expect(cotTexts(h.cotClient.cards[2]!)).toContain(
@@ -717,13 +733,13 @@ describe('COT route retirement through routing, submission, and binding owners',
     });
     expect(h.cotCalls).toEqual([{ op: 'claimed', teamName: 'same-team' }]);
     speak(h, 'same-team', 'continues original presentation');
-    await nextTurn();
+    await nextAppendTurn();
     expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
     expect(cotTexts(h.cotClient.cards[0]!)).toContain(
       'continues original presentation',
     );
     await h.ops.unbindChannel(parent);
-    await nextTurn();
+    await nextAppendTurn();
     expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
     await submitAt(h, topic, 'om_exact');
     expect(h.cotClient.cards).toHaveLength(2);
@@ -731,7 +747,7 @@ describe('COT route retirement through routing, submission, and binding owners',
     await seedRoute(h, parent, 'same-team');
     await h.ops.unbindChannel(parent);
     speak(h, 'same-team', 'exact survives parent removal');
-    await nextTurn();
+    await nextAppendTurn();
     expect(cotTerminal(h.cotClient.cards[1]!)).toBeNull();
     expect(cotTexts(h.cotClient.cards[1]!)).toContain(
       'exact survives parent removal',
@@ -779,7 +795,7 @@ describe('COT route retirement through routing, submission, and binding owners',
       expect(h.cotCalls).toEqual([]);
       expect(h.notifications).toEqual([]);
       speak(h, 'old-team', 'still active after failure');
-      await nextTurn();
+      await nextAppendTurn();
       expect(h.cotClient.cards).toHaveLength(1);
       expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
       expect(cotTexts(h.cotClient.cards[0]!)).toContain(
@@ -842,7 +858,7 @@ describe('COT route retirement through routing, submission, and binding owners',
         });
         await submitAt(h, target, 'manual-B');
         speak(h, manualTeam, 'manual output before A commits');
-        await nextTurn();
+        await nextAppendTurn();
         expect(h.cotClient.cards).toHaveLength(1);
         expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
         expect(
@@ -856,7 +872,7 @@ describe('COT route retirement through routing, submission, and binding owners',
         }
         release();
         const outcome = await pending;
-        await nextTurn();
+        await nextAppendTurn();
         if (scenario === 'failed-commit') {
           expect(outcome.status).toBe('unsubmitted');
           expect(h.routing.bindingFor(target)?.team_name).toBe(manualTeam);
@@ -864,7 +880,7 @@ describe('COT route retirement through routing, submission, and binding owners',
           expect(h.notifications).toEqual([]);
           expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
           speak(h, manualTeam, 'still active after failed commit');
-          await nextTurn();
+          await nextAppendTurn();
           expect(h.cotClient.cards).toHaveLength(1);
           expect(cotTexts(h.cotClient.cards[0]!)).toContain(
             'still active after failed commit',
@@ -892,7 +908,7 @@ describe('COT route retirement through routing, submission, and binding owners',
           if (scenario === 'displaced')
             speak(h, manualTeam, 'late displaced output');
           speak(h, 'created-team', 'created owner can display');
-          await nextTurn();
+          await nextAppendTurn();
           expect(h.cotClient.cards).toHaveLength(2);
           expect(h.cotClient.cards[1]!.originMessageId).toBe('create-A');
           expect(cotTexts(h.cotClient.cards[1]!)).toContain(
@@ -944,13 +960,13 @@ describe('COT route retirement through routing, submission, and binding owners',
           display: null,
         });
       }
-      await nextTurn();
+      await nextAppendTurn();
       expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
       expect(cotTerminalCount(h.cotClient.cards[0]!)).toBe(1);
       expect(cotTerminal(h.cotClient.cards[1]!)).toBeNull();
       speak(h, 'parent-team', 'late parent output');
       speak(h, 'exact-team', 'exact route still active');
-      await nextTurn();
+      await nextAppendTurn();
       expect(h.cotClient.cards).toHaveLength(2);
       expect(cotTexts(h.cotClient.cards[1]!)).toContain(
         'exact route still active',
@@ -972,13 +988,13 @@ describe('COT route retirement through routing, submission, and binding owners',
     });
     await submitAt(h, topic, 'om_new');
     await h.ops.unbindChannel(parent);
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.cotClient.cards).toHaveLength(2);
     expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
     expect(cotTerminal(h.cotClient.cards[1]!)).toBeNull();
     speak(h, 'old-team', 'must not appear');
     speak(h, 'new-team', 'still exact');
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.cotClient.cards).toHaveLength(2);
     expect(cotTexts(h.cotClient.cards[1]!)).toContain('still exact');
   });
@@ -990,7 +1006,7 @@ describe('COT route retirement through routing, submission, and binding owners',
     await seedRoute(h, parent, 'gone-team');
     await submitAt(h, topic, 'om_before_remove');
     await h.ops.forgetTeamRoutes('gone-team', 'silent');
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.routing.bindingFor(parent)).toBeUndefined();
     expect(
       (
@@ -1005,7 +1021,7 @@ describe('COT route retirement through routing, submission, and binding owners',
     expect(cotTerminal(h.cotClient.cards[0]!)).toBe('interrupted');
     expect(cotTerminalCount(h.cotClient.cards[0]!)).toBe(1);
     speak(h, 'gone-team', 'late after silent removal');
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.cotClient.cards).toHaveLength(1);
   });
 
@@ -1031,7 +1047,7 @@ describe('COT route retirement through routing, submission, and binding owners',
       rmSync(path, { recursive: true, force: true });
       renameSync(preserved, path);
     }
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.routing.bindingFor(parent)?.team_name).toBe('live-team');
     expect((await readRoutingDocument(options)).bindings[0]?.team_name).toBe(
       'live-team',
@@ -1040,7 +1056,7 @@ describe('COT route retirement through routing, submission, and binding owners',
     expect(h.notifications).toEqual([]);
     expect(cotTerminal(h.cotClient.cards[0]!)).toBeNull();
     speak(h, 'live-team', 'continued after failed removal');
-    await nextTurn();
+    await nextAppendTurn();
     expect(h.cotClient.cards).toHaveLength(1);
     expect(cotTexts(h.cotClient.cards[0]!)).toContain(
       'continued after failed removal',

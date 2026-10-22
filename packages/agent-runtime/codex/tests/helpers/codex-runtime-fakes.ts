@@ -348,7 +348,7 @@ export class FakeCodexWsClient {
     });
   }
 
-  private emit(notification: ServerNotification): void {
+  emit(notification: ServerNotification): void {
     for (const handler of [...this.notificationHandlers]) handler(notification);
   }
 }

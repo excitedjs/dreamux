@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Emit native reasoning increments from partial messages, correlate completed snapshots with native blocks, and close interrupted streams without changing ordinary text completion.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

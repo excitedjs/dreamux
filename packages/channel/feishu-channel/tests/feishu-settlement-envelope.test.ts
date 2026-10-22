@@ -153,6 +153,7 @@ async function handle(
     log,
     lifecycle,
     cotClient: undefined,
+    cotReasoning: false,
   });
   const submitter = new FeishuTeamSubmitter({ lifecycle, cot, commands });
   const bindings = new FeishuBindingOperations({

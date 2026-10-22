@@ -37,3 +37,4 @@
 - [Hide Claude Code subagent activity](/.agents/tasks/channel/hide-claude-subagent-activity/README.md) — Report only the main agent's activity from the Claude Code runtime; a subagent's envelopes produce no runtime activity
 - [Feishu extension input delivery contract](/.agents/tasks/channel/add-extension-input-delivery/README.md) — Let a Feishu extension deliver card-related input from its own channel instance, observe the submission outcome, and constrain delivery to the expected bound Team.
 - [Support converted Feishu topic groups](/.agents/tasks/channel/support-converted-feishu-topic-groups/README.md) — Allow ordinary Feishu groups switched to thread message format to operate as Collaboration Spaces with one Team per topic.
+- [Stream opt-in reasoning into Feishu COT](/.agents/tasks/channel/stream-cot-reasoning/README.md) — Display native reasoning increments with a Thinking prefix, throttle COT updates, and label TeamMate messages to their leader.

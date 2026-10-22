@@ -61,16 +61,17 @@ export interface TeammateActorScope {
 }
 
 /**
- * Which producer's work an automated push-back reports.
+ * Structured provenance for an input a display presents by its source.
  *
  * Carried only where the body alone cannot say it. A cron fire and a restart
  * notice already name themselves through `source`, and an ordinary task or
- * Channel message is the sender's own words; a completion push-back is the one
- * input whose provenance name is the same for every producer, so the producer
- * is stated here rather than recovered by parsing the notification prose.
+ * Channel message is the sender's own words. Completion push-backs and member
+ * messages use shared provenance names, so their authenticated producer is
+ * stated here rather than recovered by parsing prose or model envelopes.
  */
 export type TeammateInputNotice =
   | { readonly kind: 'teammate_completion'; readonly producer: string }
+  | { readonly kind: 'teammate_message'; readonly producer: string }
   | { readonly kind: 'workflow_completion' };
 
 /**
@@ -101,10 +102,10 @@ export type TeammateInputEvent = TeammateActorScope & {
   /** The source's own body, never the assembled provenance envelope. */
   readonly content: string;
   /**
-   * What kind of automated push-back this is, when it is one. `null` for every
-   * input a person or an Agent wrote, whose body is what a reader wants. Its
-   * producer name is an Agent name the host assigned, not payload text, so it
-   * carries neither a secret nor a path.
+   * What produced an input whose display can use a source label instead of
+   * its body. `null` for ordinary inputs. Its producer name is an Agent name
+   * the host assigned, not payload text, so it carries neither a secret nor a
+   * path. Displays choose their own presentation without changing model input.
    */
   readonly notice: TeammateInputNotice | null;
 };

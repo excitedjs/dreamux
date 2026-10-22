@@ -46,9 +46,9 @@ export interface TeammateSubmitInput {
   /** One optional trailing note, rendered once after the source block. */
   readonly reminder?: string;
   /**
-   * Which producer's work an automated push-back reports. Never rendered: the
-   * body already says it in the words the model reads, and this is the same
-   * fact for the display that shows a line instead of that body.
+   * Structured provenance for an input a display can present by source.
+   * Never rendered into the model's input: the original body and attributes
+   * remain its complete account, independently of the display's label.
    */
   readonly notice?: TeammateInputNotice;
   /** Stable per-source id for Core's duplicate ledger. Never rendered. */

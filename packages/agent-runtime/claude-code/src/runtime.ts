@@ -19,6 +19,7 @@ import type { DispatcherClaudeCodeConfig } from './config.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import { claudeSpawnEnv } from './paths.js';
 import {
+  createNativeActivityState,
   endNativeTurn,
   handleProtocolEvent,
   type NativeActivityState,
@@ -69,6 +70,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private stopped = false;
   private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
   private session: ClaudeCodeSession | null = null;
+  private activity: NativeActivityState;
   private sessionStarting: Promise<ClaudeCodeSession> | null = null;
   private startTask: Promise<AgentRuntimeStartOutcome> | null = null;
   private stopTask: Promise<void> | null = null;
@@ -95,6 +97,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.threadId = priorSessionId;
     this.resumed = priorSessionId !== null;
     this.logger = deps.logger;
+    this.activity = createNativeActivityState(deps.events);
   }
 
   start(): Promise<AgentRuntimeStartOutcome> {
@@ -307,7 +310,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     status: 'completed' | 'failed' | 'interrupted',
     reason: string | null,
   ): void {
-    endNativeTurn(status, reason, this.deps.events);
+    endNativeTurn(status, reason, {
+      activity: this.activity,
+      events: this.deps.events,
+    });
   }
 
   /** Ensure a live resident session exists, resuming after a child exit. */
@@ -348,7 +354,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       disableFeatures: this.deps.disableFeatures,
       outputSchema: this.deps.outputSchema,
     });
-    const activity: NativeActivityState = { tools: new Map() };
+    const activity = createNativeActivityState(this.deps.events);
+    this.activity = activity;
     const session = createDefaultClaudeCodeSession({
       bin: this.bin,
       args,

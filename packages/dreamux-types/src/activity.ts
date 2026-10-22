@@ -35,7 +35,8 @@ interface NativeActivity<K extends string> {
    * The provider's own id, taken whole without a prefix, suffix, or counter.
    * It identifies the native object, not a unique activity: a tool's start
    * and result share its call id; usage and interruption share a turn id.
-   * A consumer derives row identity from kind (and tool status) plus this id.
+   * A consumer derives row identity from kind and this id, plus a tool's
+   * status or a reasoning part's native position where applicable.
    */
   readonly id: string;
 }
@@ -49,13 +50,28 @@ interface NativeActivity<K extends string> {
  * arbitrary member. What a live surface needs is this agent's stream in order,
  * which is what this is.
  *
- * A Channel receives this same type with every text and JSON payload member
- * already redacted by Core. Core bounds nothing: each surface applies its
- * own display limits where it sends.
+ * A Channel receives this same type with text and JSON payloads redacted by
+ * Core, except `assistant.reasoning` append fragments, which pass unchanged.
+ * Core bounds nothing: each surface applies its own display limits where it
+ * sends.
  */
 export type RuntimeActivity =
   | (NativeActivity<'assistant.message'> & {
       readonly text: string;
+    })
+  /**
+   * Append-only, live reasoning. `id` is the native item's/message's identity;
+   * `partIndex` is its native content position, kept separate from that id.
+   * `text` contains only new text, including a completed snapshot when the
+   * provider received no increments for that part. Empty completions close
+   * an existing stream without opening a new visible block. Completion means
+   * the part closed, not that the turn succeeded. Providers close outstanding
+   * parts before `turn.ended`; the cold activity reader does not replay them.
+   */
+  | (NativeActivity<'assistant.reasoning'> & {
+      readonly partIndex: number;
+      readonly text: string;
+      readonly status: 'streaming' | 'completed';
     })
   /**
    * The runtime compacted its context. Carries no summary or compaction

@@ -8,9 +8,12 @@
  */
 
 import type { CodexWsClient } from './rpc.js';
+import type { ReasoningDelta } from './reasoning-activity.js';
 import type {
   ItemCompletedNotification,
   ItemStartedNotification,
+  ReasoningTextDeltaNotification,
+  ReasoningSummaryTextDeltaNotification,
   ThreadItem,
   ThreadTokenUsage,
   ThreadTokenUsageUpdatedNotification,
@@ -43,6 +46,7 @@ export interface TurnCollector {
 }
 
 export interface TurnSubscriptionOptions {
+  onReasoningDelta?: (delta: ReasoningDelta) => void;
   onTokenUsage?: (usage: ThreadTokenUsage) => void;
   onItemStarted?: (turnId: string, item: ThreadItem) => void;
   onItemCompleted?: (
@@ -92,6 +96,22 @@ export function subscribeTurnCollection(
     if (notif.method === 'thread/tokenUsage/updated') {
       const params = notif.params as ThreadTokenUsageUpdatedNotification;
       options.onTokenUsage?.(params.tokenUsage);
+    } else if (
+      notif.method === 'item/reasoning/summaryTextDelta' ||
+      notif.method === 'item/reasoning/textDelta'
+    ) {
+      const params = notif.params as
+        ReasoningTextDeltaNotification | ReasoningSummaryTextDeltaNotification;
+      if (terminalTurnIds.has(params.turnId)) return;
+      const summary = notif.method === 'item/reasoning/summaryTextDelta';
+      options.onReasoningDelta?.({
+        turnId: params.turnId,
+        itemId: params.itemId,
+        carrier: summary ? 'summary' : 'content',
+        partIndex:
+          'summaryIndex' in params ? params.summaryIndex : params.contentIndex,
+        text: params.delta,
+      });
     } else if (notif.method === 'item/started') {
       const params = notif.params as ItemStartedNotification;
       if (terminalTurnIds.has(params.turnId)) return;

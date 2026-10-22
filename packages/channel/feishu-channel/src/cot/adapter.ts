@@ -49,18 +49,18 @@ import type {
 } from '@excitedjs/feishu-transport';
 
 import type { FeishuTarget } from '../routing/target.js';
-import { appendBatchFits } from './bytes.js';
 import {
   COT_CONTEXT_COMPACTED_LABEL,
   COT_TURN_INTERRUPTED_LABEL,
   FEISHU_COT_OPENING_LABELS,
   inputDisplayContent,
+  mergeAdjacentReasoningDelta,
   runStartedEvent,
-  runTerminalEvent,
   textMessageEvents,
   tokenUsageSummary,
   toolCallResultEvents,
   toolCallStartEvents,
+  type CotReasoningActivity,
   type CotToolCallActivity,
   type FeishuCotTerminal,
 } from './card.js';
@@ -70,7 +70,11 @@ import {
   type CotLogScope,
 } from './diagnostics.js';
 import { FeishuInboundCorrelations } from './inbound-correlations.js';
-import { FeishuCotIo, type FeishuCotIoHandle } from './io.js';
+import {
+  closeReasoningParts,
+  commitReasoningProjection,
+  planReasoningActivity,
+} from './reasoning.js';
 import {
   CotOutbox,
   CotState,
@@ -80,9 +84,11 @@ import {
   ensureCotState,
   inboundRecipient,
   prepareVisibleAnchor,
+  type CotAdjacentMerge,
   type CotPresentation,
   type VisibleMessageAnchor,
 } from './recipients.js';
+import { CotCardWriter } from './writer.js';
 
 const FEISHU_COT_OPEN_TOOL_CALLS_MAX = 512;
 const FEISHU_COT_CLOSE_DRAIN_MS = 5_000;
@@ -93,6 +99,8 @@ export interface FeishuCotAdapterOptions {
   readonly log: DreamuxLogger;
   readonly cotClient: FeishuCotClient | undefined;
   readonly lifecycle: FeishuLifecycle;
+  /** Whether native reasoning reaches the card. Off when the config omits it. */
+  readonly cotReasoning: boolean;
 }
 
 /** One optimistic anchor transition, scoped to the generation it created. */
@@ -107,16 +115,18 @@ export class FeishuCotAdapter {
   private readonly states = new Map<string, CotState>();
   private readonly inboundCorrelations = new FeishuInboundCorrelations();
   private readonly leaderFence = new LeaderLifecycleFence();
-  private readonly pending = new Set<Promise<void>>();
   private readonly controller = new AbortController();
-  private readonly io: FeishuCotIo;
+  private readonly writer: CotCardWriter;
   private closed = false;
 
   constructor(private readonly opts: FeishuCotAdapterOptions) {
-    this.io = new FeishuCotIo({
+    this.writer = new CotCardWriter({
+      dispatcherId: opts.dispatcherId,
+      channelId: opts.channelId,
       log: opts.log,
       cotClient: opts.cotClient,
       signal: this.controller.signal,
+      onSettled: (key, state) => this.reapState(key, state),
     });
   }
 
@@ -236,17 +246,7 @@ export class FeishuCotAdapter {
         state.openCalls.clear();
         this.detach(key, state, 'interrupted');
       }
-      if (this.pending.size > 0) {
-        let drainTimer: ReturnType<typeof setTimeout> | undefined;
-        const drained = new Promise<void>((resolve) => {
-          drainTimer = setTimeout(resolve, FEISHU_COT_CLOSE_DRAIN_MS);
-        });
-        await Promise.race([
-          Promise.allSettled([...this.pending]).then(() => undefined),
-          drained,
-        ]);
-        if (drainTimer !== undefined) clearTimeout(drainTimer);
-      }
+      await this.writer.drain(FEISHU_COT_CLOSE_DRAIN_MS);
       this.controller.abort();
       this.inboundCorrelations.clear();
       this.states.clear();
@@ -398,6 +398,9 @@ export class FeishuCotAdapter {
           'message',
         );
         return;
+      case 'assistant.reasoning':
+        this.acceptReasoningActivity(found.key, found.state, event.activity);
+        return;
       case 'tool.call':
         this.acceptToolCallActivity(found.key, found.state, event.activity);
         return;
@@ -460,10 +463,10 @@ export class FeishuCotAdapter {
     state.openCalls.delete(event.id);
     if (events.length === 0) return;
     if (
-      this.admitOutbox(state, presentation, events) &&
+      this.writer.admit(state, presentation, events) &&
       presentation.phase === 'writing'
     ) {
-      this.scheduleFlush(key, state, presentation);
+      this.writer.schedule(key, state, presentation);
     }
   }
 
@@ -495,6 +498,38 @@ export class FeishuCotAdapter {
       return;
     }
     this.acceptOpeningActivityForState(key, state, events);
+  }
+
+  /**
+   * One native reasoning increment, when the operator enabled reasoning.
+   *
+   * The projection decides what the increment adds against the parts this
+   * card has open; its state is committed only after admission, so a dropped
+   * increment never makes the next one believe the prefix was already shown.
+   * See `./reasoning.js` for the block and section rules.
+   */
+  private acceptReasoningActivity(
+    key: string,
+    state: CotState,
+    activity: CotReasoningActivity,
+  ): void {
+    if (!this.opts.cotReasoning) return;
+    if (state.anchor === null) return;
+    const projection = planReasoningActivity(
+      activity,
+      state.active?.reasoningParts,
+    );
+    if (projection === null) return;
+    const accepted = this.acceptOpeningActivityForState(
+      key,
+      state,
+      projection.events,
+      projection.coalescible ? mergeAdjacentReasoningDelta : undefined,
+    );
+    const parts = state.active?.reasoningParts;
+    if (accepted && parts !== undefined) {
+      commitReasoningProjection(parts, projection);
+    }
   }
 
   /**
@@ -613,10 +648,22 @@ export class FeishuCotAdapter {
     ) {
       return;
     }
+    // A block still open when the card stops would otherwise leave the stream
+    // without its message end; the close events are queued ahead of the
+    // terminal, so the card ends in the order it was written.
+    this.closeOpenReasoning(state, presentation);
     presentation.terminalIntent = terminal;
     if (presentation.phase === 'writing') {
-      this.scheduleFlush(key, state, presentation);
+      this.writer.schedule(key, state, presentation);
     }
+  }
+
+  private closeOpenReasoning(
+    state: CotState,
+    presentation: CotPresentation,
+  ): void {
+    const events = closeReasoningParts(presentation.reasoningParts);
+    if (events.length > 0) this.writer.admit(state, presentation, events);
   }
 
   /**
@@ -631,6 +678,7 @@ export class FeishuCotAdapter {
     key: string,
     state: CotState,
     events: FeishuCotEventInput[],
+    mergeAdjacent?: CotAdjacentMerge,
   ): boolean {
     const presentation = state.active;
     if (presentation === null) {
@@ -645,12 +693,14 @@ export class FeishuCotAdapter {
         cotId: null,
         messageId: null,
         outbox: new CotOutbox(),
+        reasoningParts: new Set(),
+        lastAppendStartedAt: null,
         terminalIntent: null,
         flushQueued: false,
         closed: false,
       };
       if (
-        !this.admitOutbox(state, created, [
+        !this.writer.admit(state, created, [
           runStartedEvent(created.id),
           ...events,
         ])
@@ -658,185 +708,22 @@ export class FeishuCotAdapter {
         return false;
       }
       state.active = created;
-      this.enqueue(key, state, () => this.runCreate(state, created));
+      this.writer.open(key, state, created);
       return true;
     }
     if (presentation.closed || presentation.terminalIntent !== null) {
       return false;
     }
-    const accepted = this.admitOutbox(state, presentation, events);
+    const accepted = this.writer.admit(
+      state,
+      presentation,
+      events,
+      mergeAdjacent,
+    );
     if (accepted && presentation.phase === 'writing') {
-      this.scheduleFlush(key, state, presentation);
+      this.writer.schedule(key, state, presentation);
     }
     return accepted;
-  }
-
-  private admitOutbox(
-    state: CotState,
-    presentation: CotPresentation,
-    events: readonly FeishuCotEventInput[],
-  ): boolean {
-    const admission = presentation.outbox.admit(events);
-    if (!admission.accepted && admission.firstDrop) {
-      this.opts.log.warn(
-        {
-          ...this.logScope(state),
-          presentation_id: presentation.id,
-          phase: presentation.phase,
-          buffered_events: admission.bufferedEvents,
-          buffered_bytes: admission.bufferedBytes,
-        },
-        'Feishu COT buffer is full; dropping newest activity',
-      );
-    }
-    return admission.accepted;
-  }
-
-  private scheduleFlush(
-    key: string,
-    state: CotState,
-    presentation: CotPresentation,
-  ): void {
-    if (presentation.flushQueued) return;
-    presentation.flushQueued = true;
-    this.enqueue(key, state, async () => {
-      presentation.flushQueued = false;
-      await this.runFlush(state, presentation);
-    });
-  }
-
-  private enqueue(
-    key: string,
-    state: CotState,
-    task: () => Promise<void>,
-  ): void {
-    state.inFlight += 1;
-    const run = async (): Promise<void> => {
-      try {
-        await task();
-      } finally {
-        state.inFlight -= 1;
-        this.reapState(key, state);
-      }
-    };
-    const next = state.tail.then(run, run).then(
-      () => undefined,
-      () => undefined,
-    );
-    state.tail = next;
-    this.pending.add(next);
-    void next.finally(() => this.pending.delete(next));
-  }
-
-  private async runCreate(
-    state: CotState,
-    presentation: CotPresentation,
-  ): Promise<void> {
-    const io = this.openIo(state, presentation);
-    if (io === undefined) {
-      this.abandon(state, presentation, 'cot_unavailable');
-      return;
-    }
-    try {
-      const created = await io.create({
-        chatId: presentation.chatId,
-        originMessageId: presentation.originMessageId,
-        cotHidden: false,
-        enableBadge: false,
-        updateFeedRank: false,
-      });
-      presentation.cotId = created.cotId;
-      presentation.messageId = created.messageId;
-      presentation.phase = 'writing';
-      this.opts.log.info(
-        { ...this.logScope(state), presentation_id: presentation.id },
-        'Feishu COT created',
-      );
-    } catch {
-      this.abandon(state, presentation, 'create_failed');
-      return;
-    }
-    await this.runFlush(state, presentation);
-  }
-
-  private async runFlush(
-    state: CotState,
-    presentation: CotPresentation,
-  ): Promise<void> {
-    const io = this.openIo(state, presentation);
-    const cotId = presentation.cotId;
-    const messageId = presentation.messageId;
-    if (io === undefined || cotId === null || messageId === null) return;
-    while (!presentation.closed) {
-      const batch = presentation.outbox.takeAppendBatch(cotId, messageId);
-      if (batch.length === 0 && presentation.outbox.hasEvents()) {
-        this.abandon(state, presentation, 'append_batch_too_large');
-        await io.completeWithError({ cotId, messageId });
-        return;
-      }
-      let finishing = false;
-      if (
-        !presentation.outbox.hasEvents() &&
-        presentation.terminalIntent !== null
-      ) {
-        const terminal = runTerminalEvent(
-          presentation.id,
-          presentation.terminalIntent,
-        );
-        if (appendBatchFits(cotId, messageId, [...batch, terminal])) {
-          batch.push(terminal);
-          finishing = true;
-        }
-      }
-      if (batch.length === 0) return;
-      try {
-        await io.append({ cotId, messageId, events: batch });
-      } catch {
-        this.abandon(state, presentation, 'append_failed');
-        await io.completeWithError({ cotId, messageId });
-        return;
-      }
-      if (finishing) {
-        presentation.closed = true;
-        presentation.outbox.clear();
-        this.opts.log.info(
-          {
-            ...this.logScope(state),
-            presentation_id: presentation.id,
-            terminal: presentation.terminalIntent,
-            dropped_events: presentation.outbox.droppedEvents,
-          },
-          'Feishu COT finished',
-        );
-        return;
-      }
-    }
-  }
-
-  /**
-   * Give up on one card, and only on that card.
-   *
-   * The presentation is what failed; the recipient's standing anchor is not.
-   * Dropping the active reference here is the whole of the recovery: the next
-   * opening activity finds no card, sees the anchor still standing, and tries
-   * to create one there again.
-   */
-  private abandon(
-    state: CotState,
-    presentation: CotPresentation,
-    reason: string,
-  ): void {
-    presentation.closed = true;
-    presentation.outbox.clear();
-    if (state.active === presentation) state.active = null;
-    this.opts.log.warn(
-      {
-        ...this.logScope(state),
-        presentation_id: presentation.id,
-        reason,
-      },
-      'Feishu COT presentation abandoned',
-    );
   }
 
   private reapState(key: string, state: CotState): void {
@@ -850,16 +737,6 @@ export class FeishuCotAdapter {
       dispatcherId: this.opts.dispatcherId,
       channelId: this.opts.channelId,
       recipient: state?.identity,
-    });
-  }
-
-  private openIo(
-    state: CotState,
-    presentation: CotPresentation,
-  ): FeishuCotIoHandle | undefined {
-    return this.io.open({
-      logScope: this.logScope(state),
-      presentationId: presentation.id,
     });
   }
 }

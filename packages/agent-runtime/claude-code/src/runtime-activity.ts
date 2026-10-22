@@ -1,4 +1,5 @@
 import { turnFailureMessage } from './rpc.js';
+import { ClaudeReasoningActivity } from './reasoning-activity.js';
 import { toolDisplay } from './tool-display.js';
 import type { ClaudeActivityLine, ClaudeProtocolEvent } from './types.js';
 import type {
@@ -10,6 +11,13 @@ import type {
 /** Resident activity is independent of request admission and settlement. */
 export interface NativeActivityState {
   tools: Map<string, { name: string; arguments: JsonValue | null }>;
+  reasoning: ClaudeReasoningActivity;
+}
+
+export function createNativeActivityState(
+  events: AgentRuntimeEventSink,
+): NativeActivityState {
+  return { tools: new Map(), reasoning: new ClaudeReasoningActivity(events) };
 }
 
 export interface ProtocolEventContext {
@@ -36,11 +44,12 @@ export interface ProtocolEventContext {
 export function endNativeTurn(
   status: 'completed' | 'failed' | 'interrupted',
   reason: string | null,
-  sink: AgentRuntimeEventSink,
+  { activity, events }: ProtocolEventContext,
 ): void {
+  activity.reasoning.close();
   emitActivity(
     { kind: 'turn.ended', occurredAt: Date.now(), status, reason },
-    sink,
+    events,
   );
 }
 
@@ -93,7 +102,7 @@ export function handleProtocolEvent(
       !interrupted && event.outcome.isError
         ? turnFailureMessage(event.outcome)
         : null,
-      context.events,
+      context,
     );
     context.activity.tools.clear();
     return;
@@ -131,12 +140,18 @@ function emitStreamActivity(
     return;
   }
   if (line.raw['parent_tool_use_id'] != null) return;
+  if (line.kind === 'stream_event') {
+    activityState.reasoning.stream(line.raw);
+    return;
+  }
   const message = recordValue(line.raw['message']) ?? line.raw;
   const lineUuid = stringValue(line.raw['uuid']);
   const content = Array.isArray(message['content']) ? message['content'] : [];
-  for (const candidate of content) {
+  for (const [offset, candidate] of content.entries()) {
     const block = recordValue(candidate);
     if (block === null) continue;
+    if (line.kind === 'assistant')
+      activityState.reasoning.snapshot(line.raw, offset);
     const activity =
       line.kind === 'assistant'
         ? assistantBlockActivity(activityState, lineUuid, block)

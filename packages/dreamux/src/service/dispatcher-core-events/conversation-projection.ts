@@ -32,7 +32,7 @@ export interface ConversationInput {
   readonly sourceId: string | null;
   /** The source's own body, never the assembled provenance envelope. */
   readonly text: string;
-  /** Which producer's work this reports, for the automated push-backs that carry one. */
+  /** Structured provenance for inputs that a display can present by source. */
   readonly notice: TeammateInputNotice | null;
   readonly occurredAt: number;
 }
@@ -161,7 +161,7 @@ function actorScope(agent: ProjectedAgent) {
   return null;
 }
 
-/** Redact payloads while preserving the runtime's activity shape and identity. */
+/** Preserve runtime shape; reasoning append fragments intentionally pass raw. */
 function projectedActivity(
   activity: RuntimeActivity,
   cwd: string,
@@ -173,6 +173,7 @@ function projectedActivity(
     case 'context.compacted':
     case 'turn.interrupted':
     case 'token.usage':
+    case 'assistant.reasoning':
       return activity;
     case 'assistant.message':
       return {

@@ -120,6 +120,7 @@ export function claudeCodeResidentArgs(
     '--output-format',
     'stream-json',
     '--verbose',
+    '--include-partial-messages',
     '--mcp-config',
     input.mcpConfigJson,
   ];

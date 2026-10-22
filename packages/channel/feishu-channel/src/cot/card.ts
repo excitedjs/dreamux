@@ -64,6 +64,13 @@ export const FEISHU_COT_OPENING_LABELS = [
 export const COT_CONTEXT_COMPACTED_LABEL = 'COMPACTED SESSION';
 /** The interrupt line on a card, in Claude Code's own words. */
 export const COT_TURN_INTERRUPTED_LABEL = '[Request interrupted by user]';
+/**
+ * The heading one visible reasoning block opens with. The client renders a
+ * native reasoning block like ordinary text, so without this a reader cannot
+ * tell a thought from an answer; it is written once per block, never repeated
+ * for the block's later increments.
+ */
+export const COT_REASONING_PREFIX = 'Thinking...';
 
 /**
  * The provenance names Core's own automated producers use, and the one line a
@@ -80,9 +87,20 @@ const SYSTEM_SOURCE = 'system';
 
 export function inputDisplayContent(event: TeammateInputEvent): string {
   if (event.notice !== null) {
-    return event.notice.kind === 'teammate_completion'
-      ? `TEAMMATE CALLBACK · ${event.notice.producer}`
-      : 'WORKFLOW FINISHED';
+    switch (event.notice.kind) {
+      case 'teammate_completion':
+        return `TEAMMATE CALLBACK · ${event.notice.producer}`;
+      case 'teammate_message':
+        // A member's explicit send reaches its leader as the model's input.
+        // Only that recipient reads it as a message from the member; any other
+        // recipient sees the body as written, because the label names a
+        // direction, not a message kind.
+        return event.role === 'team_leader'
+          ? `TEAMMATE MESSAGE FROM ${event.notice.producer}`
+          : event.content;
+      case 'workflow_completion':
+        return 'WORKFLOW FINISHED';
+    }
   }
   if (event.source === SCHEDULED_SOURCE) return 'CRON TRIGGERED';
   if (event.source === SYSTEM_SOURCE) return 'SYSTEM RESTARTED';
@@ -214,6 +232,128 @@ export function textMessageEvents(input: {
   );
   if (contentEvents.length === 0) return [];
   return boundedTextMessageEventGroup(start, contentEvents, end, messageId);
+}
+
+/** One native reasoning part, as the live activity contract names it. */
+export type CotReasoningActivity = Extract<
+  RuntimeActivity,
+  { kind: 'assistant.reasoning' }
+>;
+
+/**
+ * The display identity of one native reasoning part inside one presentation.
+ *
+ * A native id and its content position are separate facts — a provider reuses
+ * an item id across parts — so both feed the digest, never a concatenation the
+ * platform or the card could read back. The identity is stable across a part's
+ * increments, which is what makes the client append them to one block, and
+ * scoped to a presentation because a replacement card starts empty.
+ */
+export function reasoningDisplayId(
+  activity: Pick<CotReasoningActivity, 'id' | 'partIndex'>,
+): string {
+  return opaqueDisplayId('reasoning', `${activity.id}\0${activity.partIndex}`);
+}
+
+/**
+ * One reasoning block, in the AG-UI shape the COT reference documents: the
+ * section opens (40), the message opens with the reasoning role (41), each
+ * content event appends (42), then the message (43) and section (45) close.
+ * A block that is reopened on the same presentation starts a new section.
+ */
+export function reasoningStartEvent(messageId: string): FeishuCotEventInput {
+  return checkedEvent({
+    eventType: 'REASONING_START',
+    content: { messageId },
+  });
+}
+
+export function reasoningMessageStartEvent(
+  messageId: string,
+): FeishuCotEventInput {
+  return checkedEvent({
+    eventType: 'REASONING_MESSAGE_START',
+    content: { messageId, role: 'reasoning' },
+  });
+}
+
+export function reasoningMessageEndEvent(
+  messageId: string,
+): FeishuCotEventInput {
+  return checkedEvent({
+    eventType: 'REASONING_MESSAGE_END',
+    content: { messageId },
+  });
+}
+
+export function reasoningEndEvent(messageId: string): FeishuCotEventInput {
+  return checkedEvent({
+    eventType: 'REASONING_END',
+    content: { messageId },
+  });
+}
+
+/**
+ * This increment as one or more content events, split to the per-event budget.
+ * The prefix rides in the text before splitting, so the event that carries it
+ * is fitted as a whole and no later increment needs it again.
+ */
+export function reasoningContentEvents(input: {
+  readonly messageId: string;
+  readonly text: string;
+  readonly prefix: boolean;
+}): FeishuCotEventInput[] {
+  const text = input.prefix
+    ? `${COT_REASONING_PREFIX}\n\n${input.text}`
+    : input.text;
+  return splitForEventContent(text, (delta) => ({
+    messageId: input.messageId,
+    delta,
+  })).map((content) =>
+    checkedEvent({ eventType: 'REASONING_MESSAGE_CONTENT', content }),
+  );
+}
+
+/**
+ * Merge one reasoning increment into the outbox tail when that tail is the
+ * previous increment of the same block, so a paced flush carries one content
+ * event instead of every provider chunk.
+ *
+ * A text or tool event between them is a barrier: the tail is a different
+ * event, so nothing merges across it. The merged content must still fit one
+ * event's budget; beyond that the increment stays its own event and the client
+ * appends it to the same block anyway.
+ */
+export function mergeAdjacentReasoningDelta(
+  tail: FeishuCotEventInput,
+  next: FeishuCotEventInput,
+): FeishuCotEventInput | null {
+  if (
+    tail.eventType !== 'REASONING_MESSAGE_CONTENT' ||
+    next.eventType !== 'REASONING_MESSAGE_CONTENT'
+  ) {
+    return null;
+  }
+  const messageId = next.content['messageId'];
+  if (
+    typeof messageId !== 'string' ||
+    messageId === '' ||
+    tail.content['messageId'] !== messageId
+  ) {
+    return null;
+  }
+  const previous =
+    typeof tail.content['delta'] === 'string' ? tail.content['delta'] : '';
+  const incoming =
+    typeof next.content['delta'] === 'string' ? next.content['delta'] : '';
+  if (incoming === '') return null;
+  const merged: FeishuCotEventInput = {
+    eventType: 'REASONING_MESSAGE_CONTENT',
+    content: { messageId, delta: `${previous}${incoming}` },
+  };
+  return cotEventContentBytes(merged) <= FEISHU_COT_EVENT_CONTENT_MAX_BYTES
+    ? merged
+    : null;
 }
 
 /** `TOOL_CALL_START.icon` as the COT Message Brief documents it: a built-in
