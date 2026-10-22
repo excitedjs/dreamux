@@ -30,6 +30,19 @@ function socketName(): string {
 }
 
 /**
+ * The name stem the DOCTOR's sample uses instead of a fresh random one. It has
+ * the exact length of a real stem (`socketName`'s 8 base64url characters,
+ * `defaultVolatileSocketPath`'s 8 UUID characters), because the placement and
+ * budget verdicts the sample stands in for are functions of the whole path. It
+ * is fixed rather than random because the doctor only REPORTS its sample —
+ * nothing binds or connects to it — and the sample is rendered into the
+ * doctor's own diagnostics (the shared-`/tmp` placement error names the path),
+ * so two `doctor` runs over identical configuration would otherwise print
+ * different text and could not be compared.
+ */
+const SAMPLE_SOCKET_STEM = 'sample00';
+
+/**
  * Standalone default for the volatile socket path, used when no host candidate
  * directories are supplied (the bare generic-loader path or external standalone
  * use). This is the PACKAGE's own fallback root — `$XDG_RUNTIME_DIR` when set,
@@ -37,8 +50,13 @@ function socketName(): string {
  * path is random per call and never persisted.
  */
 export function defaultVolatileSocketPath(id: string): string {
+  return volatileSocketPath(id, randomUUID().slice(0, 8));
+}
+
+/** The fallback root's path shape, shared by the real allocation and the doctor's sample. */
+function volatileSocketPath(id: string, stem: string): string {
   const root = globalThis.process.env['XDG_RUNTIME_DIR'] ?? tmpdir();
-  return join(root, `arc-${sanitize(id)}-${randomUUID().slice(0, 8)}.sock`);
+  return join(root, `arc-${sanitize(id)}-${stem}.sock`);
 }
 
 /**
@@ -68,14 +86,20 @@ export function allocateCodexSocketPath(
  * A representative, NON-throwing socket sample for the doctor: the first
  * candidate whose path fits, else the last candidate (which is then over budget,
  * so the home doctor can REPORT it as an error rather than throwing here). With
- * no candidate directories it uses {@link defaultVolatileSocketPath}.
+ * no candidate directories it uses the fallback root in
+ * {@link defaultVolatileSocketPath}'s shape. The sample name is fixed
+ * ({@link SAMPLE_SOCKET_STEM}), never a real per-start allocation: the doctor
+ * only reports it, and a random name would make its output differ between two
+ * runs over identical configuration.
  */
 export function representativeCodexSocketPath(
   socketDirs: readonly string[],
   id: string,
 ): string {
-  if (socketDirs.length === 0) return defaultVolatileSocketPath(id);
-  const name = socketName();
+  if (socketDirs.length === 0) {
+    return volatileSocketPath(id, SAMPLE_SOCKET_STEM);
+  }
+  const name = `${SAMPLE_SOCKET_STEM}.sock`;
   for (const dir of socketDirs) {
     const path = join(dir, name);
     if (unixSocketPathFitsBudget(path)) return path;
