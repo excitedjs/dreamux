@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Slim Team, TeamMate and workflow MCP receipts and lists while retaining diagnostic details. Preserve reminders by returning business JSON plus text in content only. Add optional agents description, tags and developerInstructions with onboarding preservation; append instructions at launch/resume. Replace provider capability snapshots with configured runtime metadata. Add TeamMate record timestamps and bound TeamLeader status. Channel tools that may return text must omit outputSchema; otherwise SDK validation can fail after execution. Existing configuration and state remain readable.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/feishu-channel",
+      "comment": "Return configured collaboration-space identity text in details and compact bind, unbind and list results. Omit published outputSchema for built-in and extension tools with successText so notification reminders reach models through content-only results.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

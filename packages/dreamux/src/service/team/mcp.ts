@@ -2,7 +2,7 @@
  * The Team MCP server, implemented by the Team collection that owns it.
  *
  * The Dispatcher Agent's catalog operates on addressed Teams. A TeamLeader's
- * bound dissolve tool belongs to its actual Team in `leader-mcp.ts`.
+ * bound status and dissolve tools belong to its actual Team in `leader-mcp.ts`.
  *
  * Every tool reaches {@link TeamsPort} directly. `team.create` /
  * `team.submit` / … remain the shared `admin.sock` and Channel-to-Core surface
@@ -48,11 +48,9 @@ import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import {
-  dissolveReceiptSchema,
   teamHistoryQuery,
   teamNameParam,
   teamSubmitResult,
-  teamSubmitResultOutput,
 } from './requests.js';
 import type { TeamsPort } from './teams-port.js';
 
@@ -126,7 +124,16 @@ async function create(
     deliverCompletionToDispatcher: true,
   });
   return {
-    structured: result,
+    structured: {
+      team_name: result.team_name,
+      status: result.status,
+      leader_name: result.leader_name,
+      leader_agent_runtime: result.leader_agent_runtime,
+      source_repo: result.source_repo,
+      runtime_cwd: result.runtime_cwd,
+      worktree_mode: result.worktree_mode,
+      worktree_cleanup_mode: result.worktree_cleanup_mode,
+    },
     // A create that carried a prompt handed work down: the TeamLeader's first
     // turn was submitted behind this receipt, and its result arrives later.
     // This delegate mints a fresh request id for every call. A successful
@@ -155,17 +162,32 @@ async function send(
     // the leader's completion back to it.
     deliverCompletionToDispatcher: true,
   });
-  const structured = teamSubmitResult(admission);
+  const result = teamSubmitResult(admission);
   return {
-    structured,
-    ...(structured.status === 'submitted'
+    structured: {
+      status: result.status,
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    },
+    ...(result.status === 'submitted'
       ? { text: TEAM_DISPATCH_SUCCESS_REMINDER }
       : {}),
   };
 }
 
 async function list(teams: TeamsPort): Promise<McpToolSuccess> {
-  return { structured: { teams: await teams.list() } };
+  return {
+    structured: {
+      teams: (await teams.list()).map((team) => ({
+        team_name: team.team_name,
+        status: team.status,
+        intent: team.intent,
+        source_repo: team.source_repo,
+        leader_state: team.leader_state,
+        member_count: team.member_count,
+        worktree_cleanup: team.worktree_cleanup,
+      })),
+    },
+  };
 }
 
 async function status(
@@ -181,8 +203,21 @@ async function history(
   teams: TeamsPort,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
+  const result = await teams.history(teamHistoryQuery(args));
   return {
-    structured: await teams.history(teamHistoryQuery(args)),
+    structured: {
+      items: result.items.map((team) => ({
+        team_name: team.team_name,
+        status: team.status,
+        intent: team.intent,
+        source_repo: team.source_repo,
+        updated_at: team.updated_at,
+        closed_at: team.closed_at,
+        close_note_preview: team.close_note_preview,
+        worktree_cleanup: team.worktree_cleanup,
+      })),
+      next_cursor: result.next_cursor,
+    },
   };
 }
 
@@ -196,7 +231,7 @@ async function dissolve(
     note,
     force,
   });
-  return { structured: dissolved };
+  return { structured: { status: dissolved.status } };
 }
 
 function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
@@ -254,7 +289,6 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
         ['name_prefix', 'leader_agent_runtime', 'intent'],
         {
           title: 'Create a Team',
-          output: OBJECT,
           annotations: MUTATING_ANNOTATIONS,
         },
       ),
@@ -288,7 +322,6 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
         ['team_name', 'prompt'],
         {
           title: 'Send a TeamLeader turn',
-          output: teamSubmitResultOutput,
           annotations: MUTATING_ANNOTATIONS,
         },
       ),
@@ -297,7 +330,7 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
     {
       descriptor: tool(
         'list',
-        'List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, repo, leader, and member count). Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.',
+        "List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, source_repo, leader_state, member_count, and worktree_cleanup). Read status for one Team's full detail. Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.",
         {},
         [],
         {
@@ -311,7 +344,7 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
     {
       descriptor: tool(
         'status',
-        "Read one Team's current summary by its team_name, using the same fields returned by create.",
+        "Read one Team's full current detail by its team_name, including leader state, workspace policy, lifecycle, and cleanup outcomes.",
         {
           team_name: {
             type: 'string',
@@ -401,7 +434,7 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
     {
       descriptor: tool(
         'dissolve',
-        "Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ accepted, team_name, status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team's worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
+        "Submit a dissolve of one Team (by team_name) and its agents. It returns a receipt as soon as the request is accepted ({ status: submitted }); the Team is stopped and closed behind that receipt, so this call never reports the outcome. note is required: it records why a recoverable Team was stopped. team.status reports the Team's worktree_mode and worktree_cleanup_mode; only a managed delete-on-close worktree is removed. A non-forced request checks such a worktree before it accepts: uncommitted, untracked, or unmerged work is refused with the blocking reason, and the Team stays open and running. force: true only overrides a delete-on-close removal blocked by uncommitted, untracked, or unmerged work, by discarding that work; under cleanup: keep the checkout and its changes are retained; never the branch, its commits, a reused directory, or the source repository; deleting them is a separate decision that is the user's.",
         {
           team_name: {
             type: 'string',
@@ -428,7 +461,10 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
         ['team_name', 'note'],
         {
           title: 'Dissolve a Team',
-          output: dissolveReceiptSchema(),
+          output: objectSchema(
+            { status: { type: 'string', enum: ['submitted'] } },
+            ['status'],
+          ),
           annotations: DESTRUCTIVE_ANNOTATIONS,
         },
       ),

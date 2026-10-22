@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Remove the static getCapabilities declaration; runtime selection descriptions and tags are now owned by Dreamux agents configuration.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

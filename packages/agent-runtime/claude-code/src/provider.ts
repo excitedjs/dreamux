@@ -2,7 +2,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeProviderCapabilities,
 } from '@excitedjs/dreamux-types';
 import { readClaudeRecentActivity } from './activity/reader.js';
 import {
@@ -23,14 +22,6 @@ function normalizedSystemPromptAppend(
 }
 
 /**
- * Provider-static selection metadata. Recovery, session-bound structured
- * output, and recent Activity reads are mandatory provider behavior, so none of
- * them is advertised here.
- */
-const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
-  { tags: [] };
-
-/**
  * Create the built-in Claude Code `AgentRuntimeProvider`. It implements the
  * neutral `@excitedjs/dreamux-types` contract: `config.read` parses Claude Code
  * runtime config, `readRecentActivity` serves neutral Activity Records for any
@@ -42,7 +33,6 @@ const CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
  */
 export function createClaudeCodeAgentRuntimeProvider(): AgentRuntimeProvider<DispatcherClaudeCodeConfig> {
   return {
-    getCapabilities: () => CLAUDE_CODE_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: claudeCodeAgentRuntimeDiagnostic,
     operatorStateRoot: (env) => resolveClaudeConfigHomeDir(env, process.cwd()),
     onboard: {

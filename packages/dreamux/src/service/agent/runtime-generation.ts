@@ -316,6 +316,26 @@ export class RuntimeGeneration {
       identity.agent_runtime,
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
+    let systemPrompt = this.options.systemPrompt;
+    if (agent.developerInstructions) {
+      systemPrompt = {
+        ...systemPrompt,
+        ...(systemPrompt?.replace !== undefined
+          ? {
+              replace: `${systemPrompt.replace}\n\n${agent.developerInstructions}`,
+            }
+          : {}),
+        ...(systemPrompt?.append !== undefined ||
+        systemPrompt?.replace === undefined
+          ? {
+              append: [
+                ...(systemPrompt?.append ?? []),
+                agent.developerInstructions,
+              ],
+            }
+          : {}),
+      };
+    }
     return {
       provider: provider.implementation,
       context: {
@@ -331,9 +351,7 @@ export class RuntimeGeneration {
           ? { outputSchema: this.options.outputSchema }
           : {}),
         events: this.generationEventSink(lease),
-        ...(this.options.systemPrompt !== undefined
-          ? { systemPrompt: this.options.systemPrompt }
-          : {}),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         // A distinct lease per runtime generation: opening it revoked the
         // previous, so a stale writer cannot overwrite its successor.
         state: lease.state,

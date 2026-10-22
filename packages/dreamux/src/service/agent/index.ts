@@ -4,11 +4,7 @@ import type { AsyncSeriesHook } from 'tapable';
 import type { WorkAdmission } from '../../platform/work-fence.js';
 
 import type { AgentRuntimeProviderCatalog } from '../../agent-runtime/catalog.js';
-import type { AgentRuntimePublicCapabilities } from '../../agent-runtime/capabilities.js';
-import {
-  defaultAgentRuntime,
-  type ResolvedAgentConfig,
-} from '../../config/config.js';
+import { defaultAgentRuntime } from '../../config/config.js';
 import type { ConfigReader } from '../../config/service.js';
 import { ServerShuttingDownError } from '../../platform/errors.js';
 import {
@@ -33,10 +29,8 @@ import { readAgentActivity } from './activity.js';
 import { toSubmissionResult } from './admission.js';
 import { teamMateNotFound } from './errors.js';
 import type { AgentServiceFactory } from './factory.js';
-import {
-  createTeamMateMcpDelegate,
-  type TeamMateMessagingOwner,
-} from './mcp.js';
+import { createTeamMateMcpDelegate } from './mcp.js';
+import type { TeamMateMessagingOwner } from './member-mcp.js';
 import {
   optionalLifecycleText,
   requireLifecycleText,
@@ -49,7 +43,6 @@ import {
   type AgentEntityLastQuery,
   type AgentEntityLastResult,
   type AgentEntityRecordRow,
-  type AgentEntityRuntimeCapability,
   type AgentEntityRuntimeStatus,
   type AgentEntitySendResult,
   type AgentEntitySpawnResult,
@@ -472,53 +465,15 @@ export class TeammateCollection implements TeammateOps {
 
   private getCapabilitiesAdmitted(): AgentEntityCapabilities {
     return {
-      verbs: [
-        'spawn',
-        'send',
-        'close',
-        'history',
-        'list',
-        'status',
-        'last',
-        'get_capabilities',
-      ],
       agent_runtimes: Object.entries(this.opts.config.current().agents).map(
-        ([agentRuntimeId, agent]) =>
-          this.agentRuntimeCapability(agentRuntimeId, agent),
+        ([id, agent]) => ({
+          id,
+          ...(agent.description !== undefined
+            ? { description: agent.description }
+            : {}),
+          ...(agent.tags?.length ? { tags: [...agent.tags] } : {}),
+        }),
       ),
-    };
-  }
-
-  /**
-   * Project one `agents[]` entry as the runtime-facing capability descriptor
-   * `getCapabilities()` reports. Recovery and structured output are mandatory
-   * provider behavior, so neither is projected here; only whether the
-   * provider resolved, plus the bounded facts it declared about itself.
-   */
-  private agentRuntimeCapability(
-    agentRuntimeId: string,
-    agent: ResolvedAgentConfig,
-  ): AgentEntityRuntimeCapability {
-    let capabilities: AgentRuntimePublicCapabilities | null = null;
-    let unsupportedReason: string | null = null;
-    try {
-      // The catalog's snapshot, not a fresh `getCapabilities()` call: Core
-      // validated and froze it once at registration, so this projection cannot
-      // observe a provider object that changed underneath it.
-      capabilities = this.opts.agentRuntimeProviders.resolve(
-        agent.provider,
-      ).capabilities;
-    } catch (error) {
-      unsupportedReason =
-        error instanceof Error ? error.message : String(error);
-    }
-    return {
-      id: agentRuntimeId,
-      spawn: { agent_runtime: agentRuntimeId },
-      runtime_available: capabilities !== null,
-      unsupported_reason: unsupportedReason,
-      tags: capabilities?.tags ?? [],
-      public_config: capabilities?.publicConfig ?? null,
     };
   }
 

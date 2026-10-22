@@ -157,14 +157,20 @@ names no Feishu tool, inspects no result field, and runs no egress gate of its
 own. There is no sessionless Feishu tool: the capability is taken from the built
 instance, which exists from creation rather than from connection.
 
-The built-in provider supplies closed input and output schemas for every tool.
+The built-in provider supplies closed input schemas and tool-owned output
+schemas.
 Successful results are canonical values: `reply` returns
 `{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
-`list_chat_bots` returns `{ chat_id, known, trusted }`. The shared server exposes
-the value unchanged as `structuredContent` and validates it against the provider
-output schema. `ChannelMcpToolOutcome` may carry separate success `text`; Core
-passes it into standard MCP `content` without inspecting provider tool names.
-Without that text, `content` is exactly `[]`.
+`list_chat_bots` returns `{ chat_id, known, trusted }`. Without success text, the
+shared server exposes the value as `structuredContent` with `content: []` and
+validates any published output schema. With `ChannelMcpToolOutcome.text`, it
+returns compact business JSON followed by the unchanged text in one `content`
+block, omitting `structuredContent` so both engines retain the text. A tool that
+can return success text publishes no output schema. Feishu's `toolRegistration`
+enforces this for every definition with `successText`, including extensions,
+while leaving the definition's own schema intact. Core inspects no provider
+tool names. The common wire contract is owned by
+[model-facing writing](model-facing-writing.md#mcp-descriptions-and-results).
 
 For both caller scopes, successful `bind_channel` and actual `unbind_channel`
 results also explain that the system automatically sends a notification card
@@ -1133,6 +1139,14 @@ repository) and read it back. They do not create the external container, and
 unbinding removes future provisioning policy without deleting the container,
 existing topic bindings, or Teams already provisioned under it; dissolving one of
 those is an ordinary `team.dissolve`.
+
+Space mutation receipts are compact: bind returns `{ space_name, chat_id }` and
+unbind returns `{ unbound }`. List rows contain `space_name`, `chat_id`,
+`display`, `leader_agent_runtime`, and `repo_path`. `get_collaboration_space`
+keeps the full policy and topic bindings, including the actual configured
+`identity` string or `null`; it does not replace that text with a presence flag.
+A missing space remains `{ space: null, targets: [] }`. Source:
+`/packages/channel/feishu-channel/src/tools/space-tools.ts`.
 
 Switching an ordinary group to chat message format preserves its space policy
 and all saved topic bindings, pauses automatic provisioning, and sends unbound

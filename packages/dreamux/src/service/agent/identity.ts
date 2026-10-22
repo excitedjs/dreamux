@@ -2,7 +2,6 @@ import type {
   AgentActivityRecord,
   AgentRuntimeSkillSource,
   AgentRuntimeStatus,
-  JsonValue,
 } from '@excitedjs/dreamux-types';
 import { RuleViolation } from '@excitedjs/dreamux-utils';
 
@@ -104,6 +103,9 @@ export interface AgentEntityRuntimeStatus {
   name: string;
   session_id: string | null;
   agent_runtime: string;
+  created_at: number;
+  /** Identity record update time, not last activity time or a liveness signal. */
+  updated_at: number;
   repo: AgentEntityRepoView;
   intent: string | null;
   status: AgentEntityIdentityStatus;
@@ -224,25 +226,14 @@ export interface AgentEntityLastResult {
   truncated: boolean;
 }
 
-/**
- * One spawnable agent runtime as the public capability surface reports it.
- *
- * `tags` and `public_config` are the provider's own declared facts, projected
- * through Core's validated snapshot: they let a caller tell two configured
- * runtimes apart without Core naming any provider. Both are empty/`null` when
- * the provider did not resolve.
- */
+/** One configured runtime and its operator-authored selection metadata. */
 export interface AgentEntityRuntimeCapability {
   id: string;
-  spawn: { agent_runtime: string };
-  runtime_available: boolean;
-  unsupported_reason: string | null;
-  tags: readonly string[];
-  public_config: Readonly<Record<string, JsonValue>> | null;
+  description?: string;
+  tags?: readonly string[];
 }
 
 export interface AgentEntityCapabilities {
-  verbs: string[];
   agent_runtimes: AgentEntityRuntimeCapability[];
 }
 

@@ -246,6 +246,12 @@ function buildSelectedChain(entries: readonly NativeEntry[]): NativeEntry[] {
     const uuid = stringValue(entry.value['uuid']);
     if (uuid === null) continue;
     byId.set(uuid, entry);
+    // Only another conversation participant can keep a participant from
+    // being the leaf. Claude appends non-participant records (attachments,
+    // queue operations, prompt latches) under the newest message; counting
+    // those as children selects no leaf while a turn is still being written,
+    // which projects an empty page for a session that has activity.
+    if (!isConversationParticipant(entry.value)) continue;
     const parent = stringValue(entry.value['parentUuid']);
     if (parent !== null) parents.add(parent);
   }

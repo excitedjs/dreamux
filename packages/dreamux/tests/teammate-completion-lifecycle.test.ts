@@ -87,7 +87,11 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     ).resolves.toMatchObject({
       ok: true,
       structured: {
-        teammate: { name: direct.result.teammate.name, status: 'closed' },
+        status: 'closed',
+        repo: {
+          path: direct.result.teammate.repo.path,
+          cleanup_state: 'not-managed',
+        },
       },
     });
 
@@ -132,7 +136,11 @@ describe('TeamMate completion delivery across deliberate lifecycle teardown', ()
     ).resolves.toMatchObject({
       ok: true,
       structured: {
-        teammate: { name: member.result.teammate.name, status: 'closed' },
+        status: 'closed',
+        repo: {
+          path: member.result.teammate.repo.path,
+          cleanup_state: 'not-managed',
+        },
       },
     });
 

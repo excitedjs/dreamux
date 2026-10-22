@@ -330,29 +330,130 @@ describe('shared MCP protocol conformance', () => {
     }
   });
 
-  it('emits only handler-owned text beside unchanged structured content', async () => {
-    // The handler is the sole owner of whether a call says anything beyond its
-    // structured value (see McpToolOutcome in src/mcp/server.ts) — there is no
-    // separate selector hook the runner consults after the fact.
-    const successTextTool: McpToolDefinition = {
+  /** A text-carrying tool: it advertises no output schema by design. */
+  const TEXT_RECEIPT_TOOL: McpToolDefinition = {
+    name: 'echo_with_success_text',
+    title: 'Echo value',
+    description: 'Return the value with an operation-specific success text.',
+    inputSchema: ECHO_TOOL.inputSchema,
+    annotations: ECHO_TOOL.annotations,
+    handler: async (args) => ({
+      structured: { echoed: args['value'] },
+      text: 'Operation-specific success text.',
+    }),
+  };
+
+  it('emits a text result as content-only JSON plus that text', async () => {
+    const connection = await connectMcpClient((transport) =>
+      serve(transport, [TEXT_RECEIPT_TOOL]),
+    );
+    try {
+      const result = await callTool(
+        connection.client,
+        'echo_with_success_text',
+        { value: 'valid' },
+      );
+      expect(result).toEqual({
+        content: [
+          {
+            type: 'text',
+            text: '{"echoed":"valid"}\n\n' + 'Operation-specific success text.',
+          },
+        ],
+      });
+      expect(result).not.toHaveProperty('structuredContent');
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it('keeps structured content when a text-capable tool says nothing', async () => {
+    const conditionalTextTool: McpToolDefinition = {
+      name: 'echo_with_conditional_text',
+      title: 'Echo value',
+      description: 'Speak only for some calls.',
+      inputSchema: ECHO_TOOL.inputSchema,
+      annotations: ECHO_TOOL.annotations,
+      handler: async (args) => ({
+        structured: { echoed: args['value'] },
+        ...(args['value'] === 'quiet'
+          ? {}
+          : { text: 'Operation-specific success text.' }),
+      }),
+    };
+    const connection = await connectMcpClient((transport) =>
+      serve(transport, [conditionalTextTool]),
+    );
+    try {
+      await expect(
+        callTool(connection.client, 'echo_with_conditional_text', {
+          value: 'quiet',
+        }),
+      ).resolves.toEqual({
+        content: [],
+        structuredContent: { echoed: 'quiet' },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it('keeps a structured result for a tool that advertises no output schema', async () => {
+    const schemaFreeTool: McpToolDefinition = {
+      name: 'echo_without_output_schema',
+      title: 'Echo value',
+      description: 'Return the value without advertising a result schema.',
+      inputSchema: ECHO_TOOL.inputSchema,
+      annotations: ECHO_TOOL.annotations,
+      handler: async (args) => ({ structured: { echoed: args['value'] } }),
+    };
+    const connection = await connectMcpClient((transport) =>
+      serve(transport, [schemaFreeTool]),
+    );
+    try {
+      await expect(
+        callTool(connection.client, 'echo_without_output_schema', {
+          value: 'valid',
+        }),
+      ).resolves.toEqual({
+        content: [],
+        structuredContent: { echoed: 'valid' },
+      });
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it('rejects text on a tool that still advertises an output schema', async () => {
+    // No compatibility is claimed for a schema-bearing text tool: the SDK
+    // requires structured content whenever an output schema is advertised, and
+    // the content-only projection intentionally supplies none.
+    const schemaAndTextTool: McpToolDefinition = {
       ...ECHO_TOOL,
-      name: 'echo_with_success_text',
+      name: 'echo_with_schema_and_text',
       handler: async (args) => ({
         structured: { echoed: args['value'] },
         text: 'Operation-specific success text.',
       }),
     };
     const connection = await connectMcpClient((transport) =>
-      serve(transport, [successTextTool]),
+      serve(transport, [schemaAndTextTool]),
     );
     try {
       await expect(
-        callTool(connection.client, 'echo_with_success_text', {
+        callTool(connection.client, 'echo_with_schema_and_text', {
           value: 'valid',
         }),
-      ).resolves.toEqual({
-        content: [{ type: 'text', text: 'Operation-specific success text.' }],
-        structuredContent: { echoed: 'valid' },
+      ).resolves.toMatchObject({
+        isError: true,
+        content: [
+          expect.objectContaining({
+            type: 'text',
+            text: expect.stringMatching(
+              /output schema but no structured content/i,
+            ),
+          }),
+        ],
       });
     } finally {
       await connection.close();

@@ -61,7 +61,7 @@ describe('Team dispatch reminders', () => {
     });
     expect(result).toEqual({
       ok: true,
-      structured: { status: 'submitted', turn_id: 'accepted-turn' },
+      structured: { status: 'submitted' },
       text: TEAM_DISPATCH_SUCCESS_REMINDER,
     });
     expect(result).toMatchObject({
@@ -83,6 +83,22 @@ describe('Team dispatch reminders', () => {
       });
       expect(result.ok).toBe(true);
       expect(result).not.toHaveProperty('text');
+      expect(result).toMatchObject({
+        structured: {
+          status: status === 'skipped' ? 'stopped' : status,
+          ...(status === 'failed' || status === 'ambiguous'
+            ? {
+                error: {
+                  code:
+                    status === 'failed' ? 'SUBMIT_FAILED' : 'SUBMIT_AMBIGUOUS',
+                  message: 'not admitted',
+                },
+              }
+            : status === 'skipped'
+              ? { error: { code: 'TURN_SKIPPED', message: 'turn skipped' } }
+              : {}),
+        },
+      });
     },
   );
 });
@@ -137,7 +153,23 @@ describe.each(['dispatcher', 'team_leader'] as const)(
                   }
                 : { name: actual.teammate.name, prompt: 'Continue' },
           });
-          expect(result).toMatchObject({ ok: true, structured: receipt });
+          expect(result).toMatchObject({
+            ok: true,
+            structured: {
+              ...(name === 'spawn' ? { name: actual.teammate.name } : {}),
+              status,
+              ...(name === 'spawn' && kind === 'dispatcher'
+                ? {
+                    repo: {
+                      path: actual.teammate.repo.path,
+                      branch: actual.teammate.repo.branch,
+                    },
+                  }
+                : {}),
+            },
+          });
+          if (result.ok)
+            expect(result.structured).not.toHaveProperty('teammate');
           if (status === 'submitted') {
             expect(result).toMatchObject({
               text: TEAMMATE_DISPATCH_SUCCESS_REMINDER,

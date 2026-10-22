@@ -31,11 +31,7 @@ import {
   MAX_WORKFLOW_MAX_CONCURRENCY,
   MIN_WORKFLOW_MAX_CONCURRENCY,
 } from './limits.js';
-import {
-  workflowRunIdParam,
-  workflowRunInput,
-  workflowRunResult,
-} from './requests.js';
+import { workflowRunIdParam, workflowRunInput } from './requests.js';
 
 /**
  * One Workflow tool, paired with the handler that serves it against a
@@ -48,6 +44,16 @@ interface WorkflowMcpToolRecord {
     args: CommandPayload,
   ) => Promise<McpToolSuccess>;
 }
+
+const WORKFLOW_RUN_STATUS_SCHEMA: JsonSchema = {
+  type: 'string',
+  enum: ['running', 'completed', 'failed', 'stopped'],
+};
+
+const WORKFLOW_AGENT_STATUS_SCHEMA: JsonSchema = {
+  type: 'string',
+  enum: ['queued', 'running', 'completed', 'failed', 'stopped'],
+};
 
 /**
  * The four Workflow tools (`workflow_run`/`workflow_status`/`workflow_stop`/
@@ -90,7 +96,6 @@ export const WORKFLOW_TOOL_RECORDS: WorkflowMcpToolRecord[] = [
       [],
       {
         title: 'Run a workflow',
-        output: objectSchema({ run_id: { type: 'string' } }, ['run_id']),
         annotations: MUTATING_ANNOTATIONS,
         inputConstraints: {
           anyOf: [{ required: ['script'] }, { required: ['scriptPath'] }],
@@ -131,10 +136,9 @@ export const WORKFLOW_TOOL_RECORDS: WorkflowMcpToolRecord[] = [
       ['run_id'],
       {
         title: 'Stop a workflow',
-        output: objectSchema(
-          { run_id: { type: 'string' }, status: { type: 'string' } },
-          ['run_id', 'status'],
-        ),
+        output: objectSchema({ status: WORKFLOW_RUN_STATUS_SCHEMA }, [
+          'status',
+        ]),
         annotations: DESTRUCTIVE_ANNOTATIONS,
       },
     ),
@@ -148,7 +152,9 @@ export const WORKFLOW_TOOL_RECORDS: WorkflowMcpToolRecord[] = [
       [],
       {
         title: 'List workflows',
-        output: objectSchema({ runs: arrayOf(workflowRunSchema()) }, ['runs']),
+        output: objectSchema({ runs: arrayOf(workflowListRowSchema()) }, [
+          'runs',
+        ]),
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
@@ -172,7 +178,32 @@ async function workflowStatus(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const record = await workflows.status({ run_id: workflowRunIdParam(args) });
-  return { structured: workflowRunResult(record) };
+  return {
+    structured: {
+      run_id: record.run_id,
+      status: record.status,
+      phase: record.phase,
+      last_log: record.last_log,
+      result: record.result ?? null,
+      error: record.error,
+      created_at: record.created_at,
+      updated_at: record.updated_at,
+      ended_at: record.ended_at,
+      // `index` is the runner-assigned call identity: normalization can drop
+      // an agent from the record and a script may continue after a caught
+      // failure, so it need not equal the array position; while `name` and
+      // `label` are nullable it is the only stable call/log key.
+      agents: record.agents.map((agent) => ({
+        index: agent.index,
+        name: agent.name,
+        label: agent.label,
+        status: agent.status,
+        phase: agent.phase,
+        result: agent.result ?? null,
+        error: agent.error,
+      })),
+    },
+  };
 }
 
 async function workflowStop(
@@ -180,12 +211,23 @@ async function workflowStop(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const result = await workflows.stop({ run_id: workflowRunIdParam(args) });
-  return { structured: { run_id: result.run_id, status: result.status } };
+  return { structured: { status: result.status } };
 }
 
 async function workflowList(workflows: WorkflowOps): Promise<McpToolSuccess> {
   const result = await workflows.list();
-  return { structured: { runs: result.runs.map(workflowRunResult) } };
+  // `created_at` is the only stable identifier when a script names no phase,
+  // so it stays in the scan row; the per-agent detail belongs to status.
+  return {
+    structured: {
+      runs: result.runs.map((run) => ({
+        run_id: run.run_id,
+        status: run.status,
+        phase: run.phase,
+        created_at: run.created_at,
+      })),
+    },
+  };
 }
 
 function workflowRunIdSchema(): JsonSchema {
@@ -195,17 +237,8 @@ function workflowRunIdSchema(): JsonSchema {
 function workflowRunSchema(): JsonSchema {
   return objectSchema(
     {
-      version: { type: 'integer', const: 1 },
       run_id: workflowRunIdSchema(),
-      dispatcher_id: { type: 'string' },
-      team_id: { type: ['string', 'null'] },
-      caller_kind: { type: 'string', enum: ['dispatcher', 'team_leader'] },
-      script_hash: { type: 'string' },
-      status: {
-        type: 'string',
-        enum: ['running', 'completed', 'failed', 'stopped'],
-      },
-      max_concurrency: { type: 'integer' },
+      status: WORKFLOW_RUN_STATUS_SCHEMA,
       phase: { type: ['string', 'null'] },
       last_log: { type: ['string', 'null'] },
       agents: arrayOf(workflowAgentSchema()),
@@ -217,14 +250,8 @@ function workflowRunSchema(): JsonSchema {
       ended_at: { type: ['integer', 'null'] },
     },
     [
-      'version',
       'run_id',
-      'dispatcher_id',
-      'team_id',
-      'caller_kind',
-      'script_hash',
       'status',
-      'max_concurrency',
       'phase',
       'last_log',
       'agents',
@@ -243,26 +270,23 @@ function workflowAgentSchema(): JsonSchema {
       index: { type: 'integer' },
       name: { type: ['string', 'null'] },
       label: { type: ['string', 'null'] },
+      status: WORKFLOW_AGENT_STATUS_SCHEMA,
       phase: { type: ['string', 'null'] },
-      status: {
-        type: 'string',
-        enum: ['queued', 'running', 'completed', 'failed', 'stopped'],
-      },
       result: {},
       error: { type: ['string', 'null'] },
-      created_at: { type: 'integer' },
-      settled_at: { type: ['integer', 'null'] },
     },
-    [
-      'index',
-      'name',
-      'label',
-      'phase',
-      'status',
-      'result',
-      'error',
-      'created_at',
-      'settled_at',
-    ],
+    ['index', 'name', 'label', 'status', 'phase', 'result', 'error'],
+  );
+}
+
+function workflowListRowSchema(): JsonSchema {
+  return objectSchema(
+    {
+      run_id: workflowRunIdSchema(),
+      status: WORKFLOW_RUN_STATUS_SCHEMA,
+      phase: { type: ['string', 'null'] },
+      created_at: { type: 'integer' },
+    },
+    ['run_id', 'status', 'phase', 'created_at'],
   );
 }

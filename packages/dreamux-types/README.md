@@ -23,13 +23,13 @@ shared structural types.
 
 - provider descriptor / ref shapes;
 - the complete Agent Runtime provider contract: `AgentRuntimeProvider`,
-  `AgentRuntime`, the neutral `AgentRuntimeCreateContext`, capabilities, role,
-  skill sources, completion delivery, `RuntimeAdmission`, canonical
-  `RuntimeSubmission`/`RuntimeCompletion` settlement, resume checkpoints, provider-native
-  transcript queries/pages/errors, MCP server descriptor, neutral state
-  callbacks, and diagnostic helper shapes. Provider-native Turn identifiers,
-  cursor positions, and transcript formats remain private inside provider
-  packages;
+  `AgentRuntime`, the neutral `AgentRuntimeCreateContext`, identity, system
+  prompts, skill sources, `RuntimeAdmission`, canonical
+  `RuntimeSubmission`/`RuntimeCompletion` settlement, leased state and event
+  sinks, MCP server descriptors, and optional operational capabilities;
+- live `RuntimeActivity` and cold `AgentActivityRecord` shapes, with recent
+  activity queries/pages/errors. Provider-native turn identifiers, cursor
+  positions, and history formats remain private inside provider packages;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, config/session contexts, optional strict
   collaboration operations, and dispatcher-scoped read-only core event DTOs.
@@ -54,8 +54,8 @@ therefore ambiguous unless the provider can prove that no native command was
 accepted.
 
 `AgentRuntime.stop()` publishes its admission fence synchronously. It resolves
-only after every `channelInput()` and `completionInput()` call that had already
-started has settled and no such call can later return `submitted`. Providers
+only after every `submit()` call that had already started has settled and no
+such call can later return `submitted`. Providers
 must terminate or release their own pending native requests before satisfying
 that convergence contract.
 
@@ -80,33 +80,36 @@ Live activity remains display-only. Providers and hosts must implement the
 required event sink; there are no separate activity/result sinks or compatibility
 fallbacks.
 
-## Native transcript contract
+## Runtime provider contract
 
-Every Agent Runtime provider implements `readTranscript(query, context)` as a
-cold read: it must not start or resume a runtime. The query accepts only a turn
-count, an opaque provider cursor, and an optional tool-block toggle. Pages use
-provider-neutral message/tool blocks and the host supplies the fixed
-262144-byte output budget.
+`AgentRuntimeProvider<TConfig>` requires two methods:
 
-`AgentRuntimeResumeCheckpoint` persists the provider-native session id and an
-optional canonical `transcript_locator` atomically. The provider validates that
-locator against its own native roots and session, rediscovers a moved native
-transcript when supported, owns cursor validity/staleness, and returns
-`scan_unsupported` when its bounded reader cannot safely continue. Native IDs,
-filesystem locators, raw reasoning, and provider control records never appear
-in transcript pages.
+- `createRuntime(context)` receives the neutral, immutable
+  `AgentRuntimeCreateContext<TConfig>` and returns a handle with `start`,
+  `submit`, `interrupt`, and `stop`. Core supplies parsed config, cwd, prior
+  session identity, prompt alternatives, MCP servers, skill sources, and leased
+  state/event sinks. A non-null prior session must resume continuous context;
+  failure rejects rather than silently starting fresh.
+- `readRecentActivity(query, context)` reads the native session without starting
+  or resuming a runtime. It works while the session is growing and after the
+  runtime closes. The query carries `sessionId`, optional opaque `cursor`,
+  `limit`, and `includeTools`; the context supplies config, cwd, and a logger.
+  A chronological page contains assistant text and tool names/statuses, optional
+  `nextCursor`, and `truncated`. Tool arguments/results and native history paths
+  do not appear in these records. Providers own native read and cursor bounds;
+  recognized failures use the `AgentActivityError` contract.
 
-A provider implements the full contract against this package only — see
-`tests/fixtures/external-provider.ts` for a complete `AgentRuntimeProvider`
-(`readConfig` + `getCapabilities` + `readTranscript` + `createRuntime`) and a
-`ChannelProvider` authored with `@excitedjs/dreamux-types` imports alone.
+Optional operational members are `config.read`, `onboard`, `diagnostic`
+(`binChecks` and `runDiagnostic`), and `operatorStateRoot`. Registration identity
+belongs to the host's descriptor, not the provider or live handle. Runtime
+selection metadata comes from the host's configured runtime IDs, descriptions,
+and tags; it is not a provider `getCapabilities` result or snapshot. Resume,
+structured output, and recent activity reads are required behavior rather than
+negotiated flags.
 
-> **Core convergence is in progress.** Dreamux core's own launcher still threads
-> a host-coupled create context internally; converging it onto the neutral
-> public `AgentRuntimeCreateContext` (and deleting the host-coupled variant in
-> `packages/dreamux/src/agent-runtime/types.ts`) is the runtime-split slice's job
-> (issue #209 slice 3). The public target published here is already stable for
-> external and built-in runtime/channel packages to author against.
+Built-in and external providers use this same neutral interface, defined in
+[`src/agent-runtime.ts`](src/agent-runtime.ts) and
+[`src/activity.ts`](src/activity.ts); Core constructs that context directly.
 
 ## Plugin loading contract
 

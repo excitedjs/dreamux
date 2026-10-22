@@ -165,6 +165,10 @@ export interface ChannelMcpToolDescriptor {
    * JSON Schema object describing the tool's canonical successful public
    * result. Optional because MCP itself permits its omission; when present the
    * SDK advertises it and validates the returned value.
+   *
+   * A tool that can return model-facing `text` must omit this. Such a result
+   * is delivered as content only, and the SDK requires structured content
+   * whenever an output schema is advertised.
    */
   outputSchema?: unknown;
   /** Standard, conservative read-only/destructive behavior hints. */
@@ -231,6 +235,10 @@ export interface ChannelSessionMcpCapability {
 /**
  * What a Channel tool answers: the result object with optional model-facing
  * text, or a refusal the Channel decided the model may read.
+ *
+ * A successful outcome that carries `text` is delivered as content only, with
+ * the value's compact JSON beside it and no `structuredContent`; the tool's
+ * registration must therefore declare no `outputSchema`.
  *
  * A refusal is a value, not an exception, because the two sides are different
  * packages and often different processes. A Channel that says "that chat is not

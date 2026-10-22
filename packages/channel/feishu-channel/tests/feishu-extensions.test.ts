@@ -1075,6 +1075,16 @@ describe('extension tools through the MCP capability', () => {
     };
     const { api, provider } = loadFeishu();
     api.extensions.register(extension('alpha', { tools: [greetTool] }));
+    const registrations = provider.mcp!.describe(
+      { appId: 'app-1', appSecret: 'secret' },
+      { caller: DISPATCHER },
+    );
+    const registration = registrations.find(
+      (entry) => entry.tool.name === 'alpha_greet',
+    );
+    expect(registration).toBeDefined();
+    expect(registration!.tool).not.toHaveProperty('outputSchema');
+    expect(greetTool.outputSchema).toEqual({ type: 'object' });
     const instance = await createSession(provider);
     await instance.session.initialize(inertPort());
     await instance.session.start();

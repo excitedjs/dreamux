@@ -2,6 +2,7 @@ import type {
   AgentRuntimeSkillSource,
   AgentRuntimeSystemPrompt,
   Team,
+  TeamSummary,
 } from '@excitedjs/dreamux-types';
 
 import { DISABLE_FEATURE_CRON } from '../../agent-runtime/host-context.js';
@@ -93,6 +94,7 @@ export interface TeamLeaderOptions {
     readonly scheduler: SchedulerCommands;
     admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
     assertOpen(): void;
+    status(): Promise<TeamSummary>;
     dissolve(input: TeamDissolveCommand): Promise<TeamDissolveReceipt>;
   };
   workspace: AgentEntityWorktreeIdentity;
@@ -162,7 +164,7 @@ function teamLeaderSystemPrompt(
 ): AgentRuntimeSystemPrompt {
   const append = [
     `You are the TeamLeader of Dreamux Team ${JSON.stringify(teamId)}.`,
-    "Your Dreamux MCP servers: `teammate` (this Team's members, who share the Team workspace, and scripted workflows), `team` (dissolve this Team), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel's own tools).",
+    "Your Dreamux MCP servers: `teammate` (this Team's members, who share the Team workspace, and scripted workflows), `team` (read this Team's status or dissolve it), `cron` (scheduled prompts that wake this TeamLeader), and one `channel-<provider>` server per configured channel that provides tools, for example `channel-feishu` (that channel's own tools).",
     teamWorkspaceSentence(workspace),
     'Dreamux TeamMates are better suited to team collaboration than native subagents: they share a workspace, retain context across turns, and can use different models for complementary perspectives. Use TeamMates proactively when delegation can save time or improve quality. Consult the `teamwork` skill when you need collaboration guidance that is not already in your current context.',
     ...pluginInstructions,

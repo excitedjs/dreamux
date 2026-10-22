@@ -79,8 +79,8 @@ its own), worktree manager, and completion-delivery policy its owning
 `TeamCollection` injects. The per-Team
 `TeammateCollection` is members-only: the TeamLeader lives at the Team root and
 is never cached in the collection's entity map. The Team assembles its leader's
-tools from its own members, Workflows, scheduler, and dissolve operation. Channel
-tools receive the actual ChannelService and fences through neutral structural
+tools from its own members, Workflows, scheduler, status, and dissolve
+operations. Channel tools receive the actual ChannelService and fences through neutral structural
 views. There is no leader-scope handle or lookup back through TeamCollection.
 
 One service class belongs in one file or directory; a class with helpers gets a
@@ -171,9 +171,18 @@ historical config for this. It materializes no entity, starts no runtime, and
 stores no transcript copy, index, or cursor; it returns provider-neutral bounded message/tool
 records, an opaque backward cursor, and truncation state.
 
-No surface exposes a native history path. `spawn`, `send`, `list`, `status`, and
-`history` receipts carry the entity's `AgentEntityRuntimeStatus`, whose only
-session-derived field is the opaque `session_id`. Existing per-entity
+No surface exposes a native history path. The full `AgentEntityRuntimeStatus`
+read retains the opaque `session_id`, workspace, intent, lifecycle state and
+errors, and the identity's `created_at` and `updated_at`. These timestamps are
+persisted identity facts, not Activity timestamps or a heartbeat; `last` is the
+activity observation tool. MCP `spawn`, `send`, `close`, `list`, `history`, and
+`last` project only the facts needed by that operation, while Commands keep
+their full domain values. Creation still returns the allocated name and any
+new workspace facts, submission still returns status/errors, close retains
+cleanup outcomes, and history retains its recovery search and pagination.
+MCP `status` keeps the full detail. Source:
+`/packages/dreamux/src/service/agent/mcp.ts` and
+`/packages/dreamux/src/service/agent/records.ts`. Existing per-entity
 `turn.jsonl` files are inert residue: Dreamux does not create, stat, list, open,
 validate, repair, migrate, warn about, or automatically delete them. The
 persisted identity shape itself is owned by
@@ -258,10 +267,10 @@ fabricates no synthetic default prompt. A `running` Team record means creation
 completed, never that a process is alive. Team-owned members share the Team
 workspace.
 
-`team.create` and `team.status` expose the same flat `TeamSummary`; each
-`team.list` item is the compact `TeamListRow`, a same-named, same-meaning
-subset with no leader runtime state and no machine-local path. `status` is
-always the Team record lifecycle; creation replay is represented only by the
+The `team.create` and `team.status` Commands expose the same flat `TeamSummary`;
+each Command `team.list` item is the compact `TeamListRow`, a same-named,
+same-meaning subset with no leader runtime state and no machine-local path.
+`status` is always the Team record lifecycle; creation replay is represented only by the
 accepted request identity on input, not by a created/existing output wrapper.
 `TeamCollection` selects the projection source once for status and
 accepted-request replay: a record read as `closed` answers from that record
@@ -271,28 +280,46 @@ status; otherwise the read model uses the Team record plus the aligned leader
 identity without materializing anything. `team.list` reads records only.
 `member_count` is the occupancy of the Team's `teammate/` directory on every
 path, excluding the leader and including closed or unreadable member
-identities. Both DTOs are open objects on the Command and MCP catalogs, like
-every other entity DTO. `team.history` remains its separate compact recovery
-projection.
+identities. The Command DTOs remain open objects.
+
+Team MCP owns a separate compact projection: create returns the allocated Team
+and leader names, lifecycle status, selected runtime, source repository, runtime
+cwd, and workspace/cleanup modes; send returns submission status and any error;
+dissolve returns only `{ status: "submitted" }`. MCP list rows retain
+`team_name`, `status`, `intent`, `source_repo`, `leader_state`, `member_count`,
+and `worktree_cleanup`. History rows retain `team_name`, `status`, `intent`,
+`source_repo`, `updated_at`, `closed_at`, `close_note_preview`, and
+`worktree_cleanup`, plus the page's `next_cursor`; matching still searches the
+full stored close note. MCP status retains the complete `TeamSummary`, including
+leader session/runtime details and full close notes. This changes model-facing
+projections without reducing Command/domain detail.
 
 Binding a conversation to a Team is not a Team capability at all: routing is the
 Channel's own decision, made with that Channel's tools, so Team MCP has no
 `bind_channel` and no `transfer_back`. Peer Team send remains future work;
 TeamLeaders use their scoped TeamMate MCP to reach members. The TeamLeader's
-Team surface is exactly one descriptor-bound `dissolve({ note, force? })` that
-derives its Team from the MCP descriptor and accepts no Team selector.
+Team surface has descriptor-bound `status({})` and `dissolve({ note, force? })`,
+with no Team selector. Status invokes the actual Team's existing `status()`
+summary owner, including `leader_session_id`; member rows remain on
+`teammate.list`. Both tools cross `admitLeaderTools`, which refuses dispatcher
+shutdown and a durably closed Team. They grant no global Team list/history
+access and introduce no message-history store.
 
 Source:
 
 - `/packages/dreamux/src/service/team/store.ts`
 - `/packages/dreamux/src/service/team/create-request.ts`
 - `/packages/dreamux/src/service/team/mcp.ts`
+- `/packages/dreamux/src/service/team/leader-mcp.ts`
+- `/packages/dreamux/src/service/team/service.ts`
 - `/packages/dreamux/src/service/agent/store.ts`
 
 ### Dissolve
 
 A dissolve belongs to the Team, and it is a submission rather than a persisted
-operation. It answers `{ accepted, team_name, status: "submitted" }` as soon as
+operation. Its domain/Command receipt is
+`{ accepted, team_name, status: "submitted" }`; both MCP scopes project only
+`{ status: "submitted" }`. The receipt returns as soon as
 the Team owns the one background task that will write it closed, destroy every
 child service, and reclaim its checkout, and it never reports how that went —
 a TeamLeader dissolving its own Team should expect to lose the response,
@@ -311,7 +338,8 @@ rather than queueing it — dissolve is a stop-and-reclaim, not a drain. From th
 point every caller operation the Team admits is refused (Dispatcher and Channel
 send, TeamLeader member and Workflow mutation, Team scheduler mutation and fire,
 member-completion injection), and permanently so once the record says closed;
-reads stay available. Only a precheck refusal, or a failure to write the closed
+Dispatcher Team-summary reads stay available; the leader's bound status rejects
+a durably closed Team. Only a precheck refusal, or a failure to write the closed
 record itself, lowers the fence again and leaves the Team open, exactly as it
 was — the operation's only two reversible outcomes.
 
@@ -507,7 +535,11 @@ The role owner assembles its delegates: DispatcherAgent during build,
 `teamLeaderOptions` in `team/leader.ts` when TeamService builds its leader, and
 TeammateCollection's ordinary construction for member send/list. The member
 scope binds the real sender and structural actual owner; Workflow construction
-omits it.
+omits it. `/packages/dreamux/src/service/agent/member-mcp.ts` owns that member
+authority object, its send/list projections, and its admission-only receipt
+wording. The entry point in `agent/mcp.ts` retains the server name and the
+Dispatcher/TeamLeader roster catalogs, forwarding member scopes to their own
+delegate.
 Each holds the actual channel source and
 its own domain collaborators. Channel snapshots are taken after initialization.
 The different tool sets follow the callers' ownership, not a shared server's
@@ -529,12 +561,13 @@ redeem a token and one who can already holds full admin authority.
 
 `/packages/dreamux/src/mcp/server.ts` is the sole official stdio MCP transport
 and protocol owner. It serves exactly `2026-07-28`, `2025-11-25`, and
-`2025-06-18`, validates the same JSON Schemas it advertises, and emits canonical
-`structuredContent` with exact `content: []` for ordinary successes. Bound Team,
-TeamMate, and workflow tool definitions may select one operation-local reminder
-text from a successfully submitted projected result without changing that
-structured value. Each delegate retains tool visibility, descriptor-bound scope,
-result projection, success-text selection, and public-error allowlists.
+`2025-06-18` and validates the JSON Schemas it advertises. A success with text
+uses content-only business JSON plus that text; without text it uses
+`structuredContent` and `content: []`. Tools that can return text publish no
+output schema. The complete wire contract lives in
+[model-facing writing](model-facing-writing.md#mcp-descriptions-and-results).
+Each delegate owns its tool visibility, bound scope, result projection, and
+success-text selection; the common admission boundary renders thrown failures.
 
 Source:
 

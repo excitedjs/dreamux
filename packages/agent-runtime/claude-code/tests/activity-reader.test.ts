@@ -123,6 +123,38 @@ function userToolResult(
   };
 }
 
+/** A non-participant record Claude appends under the newest message. */
+function attachmentRecord(input: NativeRecordInput): Record<string, unknown> {
+  return {
+    type: 'attachment',
+    sessionId: input.sessionId,
+    uuid: input.uuid,
+    parentUuid: input.parentUuid,
+    timestamp: input.timestamp,
+    attachment: { type: 'file', name: 'synthetic.txt' },
+  };
+}
+
+/** A non-participant record with no uuid at all, as Claude writes at a tail. */
+function queueOperationRecord(input: {
+  sessionId: string;
+  timestamp: string;
+}): Record<string, unknown> {
+  return {
+    type: 'queue-operation',
+    sessionId: input.sessionId,
+    timestamp: input.timestamp,
+    operation: 'enqueue',
+  };
+}
+
+function assistantSidechainText(
+  input: NativeRecordInput,
+  text: string,
+): Record<string, unknown> {
+  return { ...assistantText(input, text), isSidechain: true };
+}
+
 // ─── Fixture harness ─────────────────────────────────────────────────────────
 
 const tempDirs: string[] = [];
@@ -337,6 +369,152 @@ describe('readClaudeRecentActivity: closed session', () => {
       fixture.context,
     );
     expect(page.records).toHaveLength(3);
+  });
+});
+
+describe('readClaudeRecentActivity: in-progress native tail', () => {
+  const at = (offsetSeconds: number) =>
+    new Date(Date.UTC(2026, 0, 1, 0, 0, offsetSeconds)).toISOString();
+
+  it('keeps an active page when the newest participant has a non-participant child and a uuid-less tail record', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    await fixture.write([
+      userText(
+        { sessionId, uuid: 'u1', parentUuid: null, timestamp: at(0) },
+        'start',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: at(1) },
+        'working',
+      ),
+      assistantToolUse(
+        { sessionId, uuid: 'a2', parentUuid: 'a1', timestamp: at(2) },
+        'call-1',
+        'Read',
+        { file_path: '/synthetic/secret-path.txt' },
+      ),
+      userToolResult(
+        { sessionId, uuid: 'u2', parentUuid: 'a2', timestamp: at(3) },
+        'call-1',
+        'synthetic tool result',
+        false,
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-1',
+        parentUuid: 'u2',
+        timestamp: at(4),
+      }),
+      queueOperationRecord({ sessionId, timestamp: at(5) }),
+    ]);
+
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+
+    expect(page.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'working',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'tool',
+        name: 'Read',
+        status: 'completed',
+        occurredAt: expect.any(String),
+      },
+    ]);
+  });
+
+  it('ignores a sidechain branch while selecting the main leaf', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    await fixture.write([
+      userText(
+        { sessionId, uuid: 'u1', parentUuid: null, timestamp: at(0) },
+        'start',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: at(1) },
+        'main line 1',
+      ),
+      assistantSidechainText(
+        { sessionId, uuid: 's1', parentUuid: 'u1', timestamp: at(2) },
+        'side branch',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a2', parentUuid: 'a1', timestamp: at(3) },
+        'main line 2',
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-1',
+        parentUuid: 'a2',
+        timestamp: at(4),
+      }),
+      queueOperationRecord({ sessionId, timestamp: at(5) }),
+    ]);
+
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+
+    expect(page.records.map((record) => record.kind)).toEqual([
+      'assistant_message',
+      'assistant_message',
+    ]);
+    expect(
+      page.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['main line 1', 'main line 2']);
+  });
+
+  it('keeps parent tracing when a participant is parented to a non-participant', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    await fixture.write([
+      userText(
+        { sessionId, uuid: 'u1', parentUuid: null, timestamp: at(0) },
+        'start',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: at(1) },
+        'before attachment',
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-1',
+        parentUuid: 'a1',
+        timestamp: at(2),
+      }),
+      assistantText(
+        { sessionId, uuid: 'a2', parentUuid: 'att-1', timestamp: at(3) },
+        'after attachment',
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-2',
+        parentUuid: 'a2',
+        timestamp: at(4),
+      }),
+      queueOperationRecord({ sessionId, timestamp: at(5) }),
+    ]);
+
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+
+    expect(
+      page.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['before attachment', 'after attachment']);
   });
 });
 

@@ -85,10 +85,6 @@ export class ControlledRuntimeProvider implements AgentRuntimeProvider<unknown> 
   readonly runtimes: ControlledRuntime[] = [];
   private readonly plans: ControlledRuntimePlan[] = [];
 
-  getCapabilities() {
-    return { tags: [] };
-  }
-
   async readRecentActivity() {
     return { records: [], truncated: false };
   }

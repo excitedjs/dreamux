@@ -326,8 +326,15 @@ export function teammateCommands(
     version: 1,
     input: objectSchema({}),
     output: objectSchema(
-      { verbs: arrayOf(STRING), agent_runtimes: arrayOf(OBJECT) },
-      ['verbs', 'agent_runtimes'],
+      {
+        agent_runtimes: arrayOf(
+          objectSchema(
+            { id: STRING, description: STRING, tags: arrayOf(STRING) },
+            ['id'],
+          ),
+        ),
+      },
+      ['agent_runtimes'],
     ),
     parse: () => ({}),
     async execute(context) {

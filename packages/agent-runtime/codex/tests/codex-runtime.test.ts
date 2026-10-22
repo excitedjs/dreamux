@@ -1727,10 +1727,9 @@ describe('MCP server list passthrough encoding', () => {
 });
 
 describe('AgentRuntimeProvider public surface', () => {
-  it('provides actual Codex capabilities through the neutral Provider contract', async () => {
+  it('provides Codex operations through the neutral Provider contract', async () => {
     const provider: AgentRuntimeProvider<unknown> =
       createCodexAgentRuntimeProvider();
-    expect(provider.getCapabilities()).toEqual({ tags: [] });
     expect(typeof provider.readRecentActivity).toBe('function');
     expect(typeof provider.createRuntime).toBe('function');
     expect(typeof provider.operatorStateRoot).toBe('function');

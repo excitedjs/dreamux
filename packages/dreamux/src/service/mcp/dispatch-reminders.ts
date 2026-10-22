@@ -7,10 +7,14 @@
  * holding only the receipt otherwise reports or predicts an outcome nobody has
  * yet, or polls a read tool until one appears.
  *
- * They are not read on every engine. Claude Code drops an MCP result's
- * `content` text when `structuredContent` is present, and every hand-off tool
- * here publishes an output schema, so on that engine the tool description's own
- * receipt sentence is the only carrier of this fact.
+ * They travel in the tool result's `content` text, beside the compact JSON
+ * business value, and the MCP adapter emits no `structuredContent` for that
+ * call: an engine reads structured content in preference to content text, so a
+ * result carrying both would hide the reminder. A tool whose success can carry
+ * text therefore advertises no output schema — a schema makes the MCP SDK
+ * require the structured content this shape omits. The trailing receipt
+ * sentence of the hand-off tool descriptions states the same contract before
+ * the tool is called.
  *
  * They live with the delegate infrastructure rather than in a transport module
  * because it is the delegate — the layer that knows an operation was a

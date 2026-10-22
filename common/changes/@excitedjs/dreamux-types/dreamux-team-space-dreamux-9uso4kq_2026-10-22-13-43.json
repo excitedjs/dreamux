@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "Remove AgentRuntimeProviderCapabilities and provider getCapabilities; configured runtimes own selection metadata. Channel tools that may return text must omit outputSchema for content-only delivery; schema-plus-text results fail SDK validation after execution.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

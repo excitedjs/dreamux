@@ -96,7 +96,7 @@ for (const scope of ['team', 'dispatcher'] as const)
       });
       expect(receipt).toMatchObject({
         ok: true,
-        structured: { name: address, status: 'submitted' },
+        structured: { status: 'submitted' },
       });
       const ownerRuntime = f.provider.runtimes.at(-1)!;
       expect(ownerRuntime.inputs).toEqual([
@@ -139,7 +139,7 @@ for (const scope of ['team', 'dispatcher'] as const)
         await a.call('send', { name: b.name, prompt: 'question' }),
       ).toMatchObject({
         ok: true,
-        structured: { name: b.name, status: 'submitted' },
+        structured: { status: 'submitted' },
       });
       expect(b.runtime.inputs[1]).toBe(
         `<task from="${a.name}">question</task>`,

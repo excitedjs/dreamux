@@ -30,6 +30,10 @@ import type {
 import { StatedFailure, ValidationError } from '../src/platform/errors.js';
 import { createTeamMcpDelegate } from '../src/service/team/mcp.js';
 import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
+import type {
+  AgentEntityRecordRow,
+  AgentEntityRuntimeStatus,
+} from '../src/service/agent/identity.js';
 import { createCronMcpDelegate } from '../src/service/scheduler/mcp.js';
 import {
   TeamClosedError,
@@ -697,7 +701,7 @@ describe('a stated failure carries the same code, reason, and action over the ad
 });
 
 // ---------------------------------------------------------------------------
-// Two adapters, one operation: the values they publish must not drift.
+// Two adapters, one operation: each keeps its intentional public projection.
 // ---------------------------------------------------------------------------
 
 describe('the Command surface and the MCP delegate are two adapters over one operation', () => {
@@ -711,11 +715,13 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       args: Record<string, unknown>;
     };
     /**
-     * What the owning object actually answered, in public form. Both surfaces
-     * are checked against it rather than only against each other: two adapters
-     * that agree on a value neither owner produced would still be wrong.
+     * The complete Command value from the owner. MCP has a separate explicit
+     * expectation when it selects fewer fields; agreement between adapters
+     * alone cannot prove either one projected the owner's facts correctly.
      */
     expected: unknown;
+    /** Explicit model projection when it intentionally differs from Command. */
+    expectedMcp?: unknown;
   }
 
   const teamSummary = harnessTeamSummary({
@@ -731,10 +737,54 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
     member_count: 2,
   });
   const historyPage = {
-    items: [{ team_name: 'blue-1a2b', status: 'closed' }],
+    items: [
+      {
+        ...teamRow,
+        status: 'closed',
+        closed_at: 3,
+        close_note: 'Completed the full review',
+        close_note_preview: 'Completed…',
+      },
+    ],
     next_cursor: 'c-2',
   };
-  const teammateRow = { name: 'mate-9z', status: 'running' };
+  const teammateRow: AgentEntityRuntimeStatus = {
+    name: 'mate-9z',
+    status: 'running',
+    agent_runtime: 'r1',
+    session_id: 'session-1',
+    intent: 'review',
+    created_at: 1,
+    updated_at: 2,
+    runtime_status: 'ready',
+    last_error: null,
+    closed_at: null,
+    close_note: null,
+    repo: {
+      mode: 'reuse-cwd',
+      path: '/workspace',
+      source_repo: '/source',
+      branch: null,
+      base_ref: null,
+      cleanup: 'keep',
+      cleanup_state: 'not-managed',
+    },
+  };
+  const teammateHistoryRow: AgentEntityRecordRow = {
+    name: 'mate-9z',
+    agent_runtime: 'r1',
+    status: 'closed',
+    intent: 'review',
+    source_repo: '/source',
+    created_at: 1,
+    updated_at: 3,
+    closed_at: 3,
+    runtime_status: null,
+    close_note: 'Completed the full review',
+    close_note_preview: 'Completed…',
+    cleanup_state: 'not-managed',
+    resume: { tool: 'send', name: 'mate-9z' },
+  };
   const cronJob = {
     id: 'job-1',
     title: 'nightly',
@@ -774,6 +824,21 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         args: { status: 'closed', limit: 10 },
       },
       expected: historyPage,
+      expectedMcp: {
+        items: [
+          {
+            team_name: 'blue-1a2b',
+            status: 'closed',
+            intent: 'test Team',
+            source_repo: null,
+            updated_at: teamRow.updated_at,
+            closed_at: 3,
+            close_note_preview: 'Completed…',
+            worktree_cleanup: 'not-managed',
+          },
+        ],
+        next_cursor: 'c-2',
+      },
     },
     {
       operation: 'team.list',
@@ -781,6 +846,19 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       command: { name: 'team.list', params: {} },
       tool: { delegate: 'team', name: 'list', args: {} },
       expected: { teams: [teamRow] },
+      expectedMcp: {
+        teams: [
+          {
+            team_name: 'blue-1a2b',
+            status: 'running',
+            intent: 'test Team',
+            source_repo: null,
+            leader_state: 'running',
+            member_count: 2,
+            worktree_cleanup: 'not-managed',
+          },
+        ],
+      },
     },
     {
       operation: 'teammate.status',
@@ -795,12 +873,25 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       command: { name: 'teammate.list', params: {} },
       tool: { delegate: 'teammate', name: 'list', args: {} },
       expected: { teammates: [teammateRow] },
+      expectedMcp: {
+        teammates: [
+          {
+            name: 'mate-9z',
+            status: 'running',
+            agent_runtime: 'r1',
+            intent: 'review',
+          },
+        ],
+      },
     },
     {
       operation: 'teammate.history',
       overrides: {
         teammates: {
-          history: async () => ({ items: [teammateRow], next_cursor: null }),
+          history: async () => ({
+            items: [teammateHistoryRow],
+            next_cursor: null,
+          }),
         },
       },
       command: { name: 'teammate.history', params: { status: 'closed' } },
@@ -809,7 +900,21 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         name: 'history',
         args: { status: 'closed' },
       },
-      expected: { items: [teammateRow], next_cursor: null },
+      expected: { items: [teammateHistoryRow], next_cursor: null },
+      expectedMcp: {
+        items: [
+          {
+            name: 'mate-9z',
+            status: 'closed',
+            agent_runtime: 'r1',
+            intent: 'review',
+            source_repo: '/source',
+            updated_at: 3,
+            close_note_preview: 'Completed…',
+          },
+        ],
+        next_cursor: null,
+      },
     },
     {
       operation: 'teammate.last',
@@ -841,20 +946,27 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         next_cursor: null,
         truncated: false,
       },
+      expectedMcp: {
+        status: 'running',
+        runtime_status: 'ready',
+        last_error: null,
+        records: [{ kind: 'assistant_message', text: 'hi', occurred_at: null }],
+        next_cursor: null,
+        truncated: false,
+      },
     },
     {
       operation: 'teammate.capabilities',
       overrides: {
         teammates: {
           getCapabilities: () => ({
-            verbs: ['spawn'],
             agent_runtimes: [{ id: 'r1' }],
           }),
         },
       },
       command: { name: 'teammate.capabilities', params: {} },
       tool: { delegate: 'teammate', name: 'get_capabilities', args: {} },
-      expected: { verbs: ['spawn'], agent_runtimes: [{ id: 'r1' }] },
+      expected: { agent_runtimes: [{ id: 'r1' }] },
     },
     {
       operation: 'cron.list',
@@ -899,7 +1011,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
   }
 
   for (const entry of cases) {
-    it(`${entry.operation}: both surfaces answer the same owning object with the same value`, async () => {
+    it(`${entry.operation}: both surfaces project the same owner as specified`, async () => {
       const harness = await createCommandHarness({
         dispatcherOverrides: entry.overrides,
       });
@@ -918,10 +1030,8 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       // admin socket writes it and `mcp.toolcall` canonicalizes it.
       const toolValue = json(viaTool.ok ? viaTool.structured : null);
       const commandValue = json(viaCommand);
-      expect(toolValue).toEqual(commandValue);
-      // …and both carry what the owning object answered, so two adapters that
-      // agreed on a value neither owner produced would still fail here.
-      expect(toolValue).toEqual(json(entry.expected));
+      expect(commandValue).toEqual(json(entry.expected));
+      expect(toolValue).toEqual(json(entry.expectedMcp ?? entry.expected));
     });
   }
 

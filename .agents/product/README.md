@@ -182,7 +182,10 @@ the same change that touches it.
   message id that triggered the Team, with the instruction to pass that message
   id to `reply` when no other is visible; the `reply` guard in the next bullet
   is a second line, not a replacement. Existing Teams and the shared space
-  policy are unchanged; identity stays a string.
+  policy are unchanged; identity stays a string. The space detail tool returns
+  that configured identity text or `null` together with the full policy and
+  topic bindings; compact bind/unbind/list results leave those details on the
+  explicit read.
   (Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
 - **Feishu spaces support native topic groups and ordinary groups using topic
   message format.** Switching an ordinary group back to chat message format
@@ -294,11 +297,12 @@ the same change that touches it.
   remains on disk, and records remain server-owned.
   (R74: [review repairs](/.agents/tasks/architecture/code-organization-refactor/artifacts/review-fixes-20261003.md).)
 - **Dissolve means terminate now and reclaim.** The user pressing dissolve
-  wants processes dead and tokens no longer burning: the receipt answers
-  `{accepted, status: "submitted"}` as soon as the Team owns the background
+  wants processes dead and tokens no longer burning: both MCP scopes answer
+  `{status: "submitted"}` as soon as the Team owns the background
   work, before anything has stopped; all member runtimes then stop and close
   behind that receipt, and slow physical cleanup (large worktrees) continues
-  after that. `force` is the explicit authorization to discard local changes.
+  after that. The Command receipt retains its acceptance and Team-name fields.
+  `force` is the explicit authorization to discard local changes.
   A TeamLeader dissolving its own Team usually never receives the tool
   response; that connection loss is the expected surface, and delivery failure
   never rolls the dissolve back. Automatic cleanup removes only the worktree
@@ -344,17 +348,26 @@ the same change that touches it.
   creation. With a `prompt`, the runtime starts inside that first turn. A
   TeamMate's runtime has always started with its spawn prompt.
   (Ruling: [split-streaming-display-from-pushback](/.agents/tasks/architecture/split-streaming-display-from-pushback/requirement.md).)
-- **Create and status show the same Team facts; list stays compact.**
-  `team.create` and `team.status` return one flat current Team summary. Its
-  `status` is only the Team lifecycle (`starting`, `running`, or `closed`); a
-  replay carries no separate created/existing outcome. The summary includes
-  stable TeamLeader and workspace facts, nullable current leader state, and the
-  number of occupied Team-member names excluding the leader. Each `team.list`
-  item is a compact scan row that uses the same field names and meanings
-  (name, lifecycle status, intent, repo, leader name, runtime, and state,
-  member count, timestamps, worktree cleanup) and carries no machine-local path.
-  `team.history` remains the compact paginated recovery view.
-  (Decision: [unify Team command projections](/.agents/tasks/architecture/unify-team-command-projections/README.md).)
+- **MCP receipts and scans stay compact; status keeps the detail.** Team and
+  TeamMate MCP tools project operation-specific results independently of the
+  Command/domain values. Creation keeps allocated names and actionable workspace
+  facts; submission keeps status/errors; close keeps lifecycle and cleanup
+  outcomes. List supports scanning and history preserves recovery search,
+  close-note previews, and pagination. Full `status` reads retain session IDs,
+  workspace, intent, lifecycle/error details, and full close notes. A TeamMate's
+  `created_at` and `updated_at` are identity timestamps, not recent Activity;
+  `last` remains its recent-activity read. The Team `status` field means only
+  `starting`, `running`, or `closed`, not native runtime liveness. Commands keep
+  their full values, including the shared flat Team create/status summary.
+  (Original Command projection decision:
+  [unify Team command projections](/.agents/tasks/architecture/unify-team-command-projections/README.md);
+  MCP change: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
+- **A TeamLeader can inspect its own Team for recovery.** Its zero-parameter
+  `team.status` returns the same full summary as Dispatcher Team status,
+  including `leader_session_id`, intent, and runtime cwd. The tool is bound to
+  this Team and grants no global Team list/history or selection. Member rows
+  remain on `teammate.list`; status adds no message-history storage.
+  (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
 - **A Codex leader's session title updates its Team intent.** When the native
   title notification arrives, Core queues it as the Team's topic; after that
   write commits, `/teams` displays it. A failed title write retains the previous
@@ -396,6 +409,10 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 - **Members can address their actual owner and peers.** Ordinary members of a
   Team and a Dispatcher's root collection receive `teammate.send` and `list`.
   `list` gives the concrete owner address and peers, including closed peers.
+  Its compact owner row contains `name` and `status`; peer rows contain name,
+  status, configured runtime, and intent, excluding the caller itself. `send`
+  returns admission status and any error, with a reminder on successful
+  submission that a reply requires the recipient's explicit send.
   Member guidance briefly names the actual owner, describes the send/list
   capabilities and identifies the owner as the automatic turn-result recipient.
   Sender identity is host-bound; the model cannot forge it or address peers in
@@ -454,6 +471,9 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   TeamLeader, who pulls the member's recent activity — while the turn is still
   open. It returns assistant messages and tool names/statuses, not tool
   arguments or outputs.
+  Claude reads preserve that active tail when attachments or queue/control
+  records follow the newest conversation message; those native records are
+  not themselves exposed as Activity.
 - **Live conversation display is a best-effort stream.** Runtime activity flows
   through neutral projection to the Channel as it happens; delivery is
   best-effort with no replay, no retransmission, and no delivery guarantee —
@@ -580,6 +600,13 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 
 ## Failures the model sees
 
+- **A tool's success reminder reaches both engines with its business value.**
+  A result carrying success text returns compact business JSON followed by that
+  text in MCP `content`, without `structuredContent`. Tools that can carry text
+  publish no output schema. Results without text keep the structured business
+  value and an empty content list. This preserves dispatch and Feishu
+  notification reminders without repeating the JSON in two result channels.
+  (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
 - **Every tool failure is model-visible and actionable.** A domain-authored
   failure renders its stable code, reason, and next step; any other thrown
   error keeps its own code (or `INTERNAL`) and carries its native message
@@ -693,6 +720,14 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   already running keeps what it launched with.
   `dispatchers[]` has no Command; it is still edited by hand with the
   daemon stopped. (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
+
+- **Runtime discovery uses configured selection metadata.** `get_capabilities`
+  returns runtime `id` with optional `description` and `tags`. It does not
+  expose provider configuration or report an availability check. A runtime's
+  optional `developerInstructions` are appended after role, plugin, and identity
+  instructions at launch; configuration changes affect later launches/resumes
+  without altering an already-running runtime's prompt.
+  (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
 
 ## Plugins
 

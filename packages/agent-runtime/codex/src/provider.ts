@@ -2,7 +2,6 @@ import type {
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
-  AgentRuntimeProviderCapabilities,
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
 import { readCodexRecentActivity } from './activity/reader.js';
@@ -39,14 +38,6 @@ export interface CodexAgentRuntimeProviderOptions {
   restartBackoffMaxMs?: number;
 }
 
-/**
- * Provider-static selection metadata. Recovery, session-bound structured
- * output, and recent Activity reads are mandatory provider behavior, so none of
- * them is advertised here.
- */
-export const CODEX_AGENT_RUNTIME_CAPABILITIES: AgentRuntimeProviderCapabilities =
-  { tags: [] };
-
 export function codexSystemPromptReplace(
   systemPrompt: AgentRuntimeSystemPrompt | undefined,
 ): string | undefined {
@@ -80,7 +71,6 @@ export function createCodexAgentRuntimeProvider(
   options: CodexAgentRuntimeProviderOptions = {},
 ): AgentRuntimeProvider<DispatcherCodexConfig> {
   return {
-    getCapabilities: () => CODEX_AGENT_RUNTIME_CAPABILITIES,
     diagnostic: codexAgentRuntimeDiagnostic,
     operatorStateRoot: resolveCodexHomeDir,
     onboard: {

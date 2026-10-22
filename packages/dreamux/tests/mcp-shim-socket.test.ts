@@ -82,7 +82,7 @@ function serveShim(input: { lease: string; adminSocketPath: string }) {
 }
 
 describe('runDreamuxMcp — end to end over a real admin socket', () => {
-  it('advertises the frozen catalog and returns the delegate structured value plus its text', async () => {
+  it('advertises the frozen catalog and keeps the delegate value and reminder together in content', async () => {
     const harness = createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
@@ -106,8 +106,7 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
           value: 'hi',
         });
         expect(result).toEqual({
-          content: [{ type: 'text', text: 'said it back' }],
-          structuredContent: { echoed: 'hi' },
+          content: [{ type: 'text', text: '{"echoed":"hi"}\n\nsaid it back' }],
         });
       } finally {
         await connection.close();

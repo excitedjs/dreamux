@@ -208,8 +208,6 @@ describe('R74 record holds through actual Team owners', () => {
     expect(result).toMatchObject({
       ok: true,
       structured: {
-        accepted: true,
-        team_name: service.id,
         status: 'submitted',
       },
     });
@@ -366,8 +364,6 @@ describe('R74 record holds through actual Team owners', () => {
       expect(await dissolving).toMatchObject({
         ok: true,
         structured: {
-          accepted: true,
-          team_name: service.id,
           status: 'submitted',
         },
       });
@@ -473,8 +469,6 @@ describe('R74 record holds through actual Team owners', () => {
       const receipt = {
         ok: true,
         structured: {
-          accepted: true,
-          team_name: service.id,
           status: 'submitted',
         },
       };
