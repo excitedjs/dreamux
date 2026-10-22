@@ -48,6 +48,14 @@ whole stream once per runtime generation. AgentService handles each observation
 at its existing owner: activities go to the conversation projection, results go
 to its completion handling, and titles are published by its own EventEmitter.
 No emitter is injected down from a parent and no global event bus is introduced.
+AgentService lists every activity kind explicitly alongside result and title
+handling. Its default branch is only a compile-time exhaustiveness check, as in
+the conversation projection; it performs no activity routing. This addresses the
+[review comment](https://github.com/excitedjs/dreamux/pull/478#discussion_r4345529998)
+without adding an activity envelope or changing the event API. The result case
+also calls its owner directly, removing the single-use forwarding method left by
+the former results sink. AgentService's submission/lifecycle composition remains
+a cohesion refactor candidate rather than a reason to bypass the line limit.
 
 The result event contains the exact completion object used by submission
 settlements. Providers emit it at the same point as before: synchronously before

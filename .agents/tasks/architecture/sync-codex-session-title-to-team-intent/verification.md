@@ -82,3 +82,16 @@ the integration and existing list/card projection. No production daemon has
 been upgraded and no deployed Feishu client acceptance is claimed. There is no
 added title producer, replay, polling, or model summary request. Dropped events
 or failed title writes may leave the prior topic until a later rename.
+
+## Review follow-up: explicit event dispatch
+
+The activity routing review comment was addressed by listing all six activity
+kinds in AgentService. The default branch now only checks exhaustiveness at
+compile time. The one-use result forwarding method was removed, keeping the
+same completion references and owner report path. No test assertions or public
+API shapes changed.
+
+The first lint run exposed AgentService's line limit; removing that obsolete
+forwarding method resolved the issue without moving responsibilities or changing
+the rule. The final full rerun passed build, lint, test, test typecheck, and built
+CLI smoke: 2,842 tests passed and the same six opt-in model tests were skipped.

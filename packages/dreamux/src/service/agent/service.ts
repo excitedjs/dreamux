@@ -416,16 +416,28 @@ export class AgentService {
     try {
       switch (event.kind) {
         case 'turn.result':
-          this.observeRuntimeResult(event.completion);
-          break;
+          return this.reportOutcome(
+            this.nativeResultRecipient ?? null,
+            event.completion,
+            event.completion,
+          );
         case 'session.title.changed':
           this.events.emit('session.title.changed', event.title);
-          break;
-        default:
-          this.deps.conversationProjection.projectActivity(
+          return;
+        case 'assistant.message':
+        case 'context.compacted':
+        case 'turn.interrupted':
+        case 'tool.call':
+        case 'token.usage':
+        case 'turn.ended':
+          return this.deps.conversationProjection.projectActivity(
             { identity: this.current(), role: this.role },
             event,
           );
+        default: {
+          const exhaustive: never = event;
+          return exhaustive;
+        }
       }
     } catch (error) {
       this.deps.log.error(
@@ -433,14 +445,6 @@ export class AgentService {
         'Agent Runtime event observer failed',
       );
     }
-  }
-
-  private observeRuntimeResult(completion: RuntimeCompletion): void {
-    this.reportOutcome(
-      this.nativeResultRecipient ?? null,
-      completion,
-      completion,
-    );
   }
 
   /** The sole notification owner, shared by native observation and request replies. */
