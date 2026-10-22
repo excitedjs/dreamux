@@ -169,7 +169,9 @@ async function workflowRun(
   const accepted = await workflows.run(workflowRunInput(args));
   return {
     structured: { run_id: accepted.run_id },
-    text: WORKFLOW_RUN_SUCCESS_REMINDER,
+    text:
+      `Started workflow run ${JSON.stringify(accepted.run_id)}.` +
+      `\n\n${WORKFLOW_RUN_SUCCESS_REMINDER}`,
   };
 }
 

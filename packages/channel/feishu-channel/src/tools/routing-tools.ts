@@ -47,10 +47,31 @@ import {
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
 // The card is best effort: it is skipped when a topic's reply root cannot be
 // read from Feishu, and dropped when the send fails after its one retry.
-const BIND_SUCCESS_TEXT =
-  'Binding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
-const UNBIND_SUCCESS_TEXT =
-  'Unbinding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
+const BINDING_NOTIFICATION_TEXT =
+  'The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
+
+function bindSuccessText(result: FeishuToolResult): string {
+  return (
+    (result.thread_id !== null
+      ? `Bound topic ${result.thread_id} in chat ${result.chat_id}`
+      : `Bound whole chat ${result.chat_id}`) +
+    ` to Team ${result.team_name}.` +
+    (result.previous_team_name !== null
+      ? ` Previous binding: ${result.previous_team_name}.`
+      : '') +
+    ` ${BINDING_NOTIFICATION_TEXT}`
+  );
+}
+
+function unbindSuccessText(result: FeishuToolResult): string | undefined {
+  if (result.unbound !== true) return undefined;
+  return (
+    (result.thread_id !== null
+      ? `Unbound topic ${result.thread_id} in chat ${result.chat_id}`
+      : `Unbound whole chat ${result.chat_id}`) +
+    ` from Team ${result.team_name}. ${BINDING_NOTIFICATION_TEXT}`
+  );
+}
 
 interface TargetInput {
   chatId: string;
@@ -189,7 +210,7 @@ export const bindChannelDef: FeishuToolDef<BindInput> = {
   ),
   outputSchema: bindOutputSchema,
   annotations: mutating,
-  successText: () => BIND_SUCCESS_TEXT,
+  successText: bindSuccessText,
   parse(raw) {
     const obj = asRecord(raw, 'bind_channel arguments');
     return {
@@ -220,7 +241,7 @@ export const leaderBindChannelDef: FeishuToolDef<
   ),
   outputSchema: bindOutputSchema,
   annotations: mutating,
-  successText: () => BIND_SUCCESS_TEXT,
+  successText: bindSuccessText,
   parse(raw) {
     const obj = asRecord(raw, 'bind_channel arguments');
     return {
@@ -244,8 +265,7 @@ export const unbindChannelDef: FeishuToolDef<TargetInput> = {
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
   outputSchema: unbindOutputSchema,
   annotations: mutating,
-  successText: (result) =>
-    result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
+  successText: unbindSuccessText,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },
@@ -265,8 +285,7 @@ export const leaderUnbindChannelDef: FeishuToolDef<TargetInput> = {
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
   outputSchema: unbindOutputSchema,
   annotations: mutating,
-  successText: (result) =>
-    result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
+  successText: unbindSuccessText,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },

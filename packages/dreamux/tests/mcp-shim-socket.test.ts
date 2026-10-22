@@ -82,7 +82,7 @@ function serveShim(input: { lease: string; adminSocketPath: string }) {
 }
 
 describe('runDreamuxMcp — end to end over a real admin socket', () => {
-  it('advertises the frozen catalog and keeps the delegate value and reminder together in content', async () => {
+  it('advertises the frozen catalog and forwards authored facts and reminder verbatim', async () => {
     const harness = createCommandHarness();
     const admin = await startHarnessAdminSocket(harness);
     try {
@@ -90,7 +90,7 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
         call: async (call) => ({
           ok: true,
           structured: { echoed: call.arguments['value'] },
-          text: 'said it back',
+          text: `Echoed value: ${call.arguments['value']}.\n\nReminder: The echo is complete.`,
         }),
       });
       const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
@@ -106,38 +106,12 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
           value: 'hi',
         });
         expect(result).toEqual({
-          content: [{ type: 'text', text: '{"echoed":"hi"}\n\nsaid it back' }],
-        });
-      } finally {
-        await connection.close();
-      }
-    } finally {
-      await admin.close();
-    }
-  });
-
-  it('keeps an empty success text on the content-only projection', async () => {
-    const harness = createCommandHarness();
-    const admin = await startHarnessAdminSocket(harness);
-    try {
-      const spy = spyDelegate({
-        call: async (call) => ({
-          ok: true,
-          structured: { echoed: call.arguments['value'] },
-          text: '',
-        }),
-      });
-      const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
-
-      const connection = await connectMcpClient(
-        serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
-      );
-      try {
-        const result = await callTool(connection.client, 'echo_tool', {
-          value: 'hi',
-        });
-        expect(result).toEqual({
-          content: [{ type: 'text', text: '{"echoed":"hi"}' }],
+          content: [
+            {
+              type: 'text',
+              text: 'Echoed value: hi.\n\nReminder: The echo is complete.',
+            },
+          ],
         });
         expect(result).not.toHaveProperty('structuredContent');
       } finally {
@@ -147,6 +121,44 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
       await admin.close();
     }
   });
+
+  it.each([
+    { label: 'absent', successText: undefined },
+    { label: 'empty', successText: '' },
+  ])(
+    'keeps the structured value for $label success text',
+    async ({ successText }) => {
+      const harness = createCommandHarness();
+      const admin = await startHarnessAdminSocket(harness);
+      try {
+        const spy = spyDelegate({
+          call: async (call) => ({
+            ok: true,
+            structured: { echoed: call.arguments['value'] },
+            ...(successText !== undefined ? { text: successText } : {}),
+          }),
+        });
+        const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
+
+        const connection = await connectMcpClient(
+          serveShim({ lease: minted.token, adminSocketPath: admin.socketPath }),
+        );
+        try {
+          const result = await callTool(connection.client, 'echo_tool', {
+            value: 'hi',
+          });
+          expect(result).toEqual({
+            content: [],
+            structuredContent: { echoed: 'hi' },
+          });
+        } finally {
+          await connection.close();
+        }
+      } finally {
+        await admin.close();
+      }
+    },
+  );
 
   it('surfaces a delegate-approved refusal verbatim through mcp.toolcall', async () => {
     const harness = createCommandHarness();

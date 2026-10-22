@@ -11,6 +11,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
 import type { TeamMateMessagingOwner } from '../src/service/agent/member-mcp.js';
+import {
+  TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+  WORKFLOW_RUN_SUCCESS_REMINDER,
+} from '../src/service/mcp/dispatch-reminders.js';
 import type {
   AgentEntityCapabilities,
   AgentEntityLastResult,
@@ -227,7 +231,12 @@ describe.each(['dispatcher', 'team_leader'] as const)(
             ? { repo: { path: '/workspace/mate-1', branch: 'main' } }
             : {}),
         },
-        text: expect.stringMatching(/TeamMate task was submitted/),
+        text:
+          kind === 'dispatcher'
+            ? 'Started TeamMate "mate-1" in "/workspace/mate-1" on branch "main".\n\n' +
+              TEAMMATE_DISPATCH_SUCCESS_REMINDER
+            : 'Started TeamMate "mate-1".\n\n' +
+              TEAMMATE_DISPATCH_SUCCESS_REMINDER,
       });
       if (kind === 'team_leader') {
         expect(result).not.toMatchObject({
@@ -257,6 +266,25 @@ describe('owner send receipt', () => {
       structured: { status: 'failed', error: 'runtime refused the turn' },
     });
   });
+
+  it('speaks the dispatch reminder for a submitted turn', async () => {
+    const f = await dispatcherFixture();
+    vi.spyOn(f.host.teammates, 'send').mockResolvedValue({
+      status: 'submitted',
+      teammate: teammateStatus(),
+    });
+
+    const result = await dispatcherDelegate(f.host).call({
+      name: 'send',
+      arguments: { name: 'mate-1', prompt: 'continue' },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      structured: { status: 'submitted' },
+      text: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+    });
+  });
 });
 
 describe('member send receipt', () => {
@@ -272,7 +300,11 @@ describe('member send receipt', () => {
     expect(result).toEqual({
       ok: true,
       structured: { status: 'submitted' },
-      text: expect.stringMatching(/admission receipt/),
+      text:
+        'Message submitted.\n\n' +
+        'This is an admission receipt, not a response or completion. ' +
+        'A reply arrives only if the recipient explicitly sends one. ' +
+        "The recipient's applicable turn results are reported to its owner.",
     });
   });
 });
@@ -423,7 +455,7 @@ describe('workflow projections', () => {
     expect(result).toEqual({
       ok: true,
       structured: { run_id: 'wf-1' },
-      text: expect.stringMatching(/do not call or poll/),
+      text: 'Started workflow run "wf-1".\n\n' + WORKFLOW_RUN_SUCCESS_REMINDER,
     });
   });
 

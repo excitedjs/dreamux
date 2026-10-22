@@ -236,9 +236,11 @@ export interface ChannelSessionMcpCapability {
  * What a Channel tool answers: the result object with optional model-facing
  * text, or a refusal the Channel decided the model may read.
  *
- * A successful outcome that carries `text` is delivered as content only, with
- * the value's compact JSON beside it and no `structuredContent`; the tool's
- * registration must therefore declare no `outputSchema`.
+ * Nonempty `text` is the complete model-facing result, delivered verbatim as
+ * content with no `structuredContent` or serialized copy of `value`. Its owner
+ * must include all actionable facts and reminders. Omitted or empty text uses
+ * the structured value instead. A tool that can return nonempty text must
+ * declare no `outputSchema`.
  *
  * A refusal is a value, not an exception, because the two sides are different
  * packages and often different processes. A Channel that says "that chat is not
@@ -255,6 +257,7 @@ export type ChannelMcpToolOutcome =
   | {
       readonly ok: true;
       readonly value: Readonly<Record<string, JsonValue>>;
+      /** Complete model-facing result; omitted or empty text exposes value. */
       readonly text?: string;
     }
   | { readonly ok: false; readonly message: string };

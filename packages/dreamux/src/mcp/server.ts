@@ -84,6 +84,7 @@ export type McpToolResult = Record<string, unknown>;
  */
 export interface McpToolOutcome {
   structured: McpToolResult;
+  /** Complete model-facing result; omitted or empty text uses structured. */
   text?: string;
 }
 
@@ -272,14 +273,15 @@ function buildMcpServer(
 /**
  * The single MCP-adapter-owned execution projector.
  *
- * A result that carries model-facing text is emitted as content only: the
- * compact JSON business value followed by that text, with no
- * `structuredContent`. An engine reads structured content in preference to
+ * A result that carries nonempty model-facing text is emitted verbatim as
+ * content only. The tool owns all actionable facts and reminders in that text;
+ * this adapter adds no JSON copy and emits no `structuredContent`.
+ * An engine reads structured content in preference to
  * content text, so keeping both would hide the text. The tool therefore
  * advertises no output schema — a schema would make the SDK require the very
  * structured content this shape omits.
  *
- * A result with no text keeps the canonical value as structured content and an
+ * A result with absent or empty text keeps its value as structured content and an
  * empty content list. The projector also reports a tool failure whose text was
  * already authored for the model as an `isError` result, and reports every
  * other failure under its own code and message after logging the whole value
@@ -292,15 +294,9 @@ async function executeTool(
 ): Promise<CallToolResult> {
   try {
     const outcome = await tool.handler(args);
-    if (outcome.text !== undefined) {
-      const value = JSON.stringify(outcome.structured);
+    if (outcome.text !== undefined && outcome.text !== '') {
       return {
-        content: [
-          {
-            type: 'text',
-            text: outcome.text === '' ? value : `${value}\n\n${outcome.text}`,
-          },
-        ],
+        content: [{ type: 'text', text: outcome.text }],
       };
     }
     return {

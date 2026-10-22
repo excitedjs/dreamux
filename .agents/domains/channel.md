@@ -163,9 +163,11 @@ Successful results are canonical values: `reply` returns
 `{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
 `list_chat_bots` returns `{ chat_id, known, trusted }`. Without success text, the
 shared server exposes the value as `structuredContent` with `content: []` and
-validates any published output schema. With `ChannelMcpToolOutcome.text`, it
-returns compact business JSON followed by the unchanged text in one `content`
-block, omitting `structuredContent` so both engines retain the text. A tool that
+validates any published output schema. Nonempty `ChannelMcpToolOutcome.text`
+is the complete model-visible result: the provider includes actionable facts
+and reminders, and the adapter forwards it verbatim in one `content` block,
+without `structuredContent` or a JSON copy. Absent or empty text keeps the
+structured value. A tool that
 can return success text publishes no output schema. Feishu's `toolRegistration`
 enforces this for every definition with `successText`, including extensions,
 while leaving the definition's own schema intact. Core inspects no provider
@@ -173,7 +175,10 @@ tool names. The common wire contract is owned by
 [model-facing writing](model-facing-writing.md#mcp-descriptions-and-results).
 
 For both caller scopes, successful `bind_channel` and actual `unbind_channel`
-results also explain that the system automatically sends a notification card
+text states the chat/topic, actual Team and any previous exact binding. The
+previous binding is not necessarily the Team that served an inherited topic
+route; a same-Team rebind does not imply another Team was replaced. Results
+also explain that the system automatically sends a notification card
 and no additional user notification is needed. Feishu tool definitions own this
 wording through `successText`; a no-op unbind, refusal, or other tool gets no
 binding-success text. This says nothing about confirmed card delivery and does

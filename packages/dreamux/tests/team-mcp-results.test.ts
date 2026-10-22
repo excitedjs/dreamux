@@ -1,13 +1,120 @@
+import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { promisify } from 'node:util';
+import { describe, expect, it, vi } from 'vitest';
 import { validateMcpToolCatalog } from '../src/service/mcp/catalog.js';
+import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../src/service/mcp/dispatch-reminders.js';
 import { createLeaderTeamMcpDelegate } from '../src/service/team/leader-mcp.js';
 import { createTeamMcpDelegate } from '../src/service/team/mcp.js';
+import { TeamService } from '../src/service/team/service.js';
 import { deferred } from './helpers/controlled-runtime-provider.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 
 describe('Team MCP result projections', () => {
+  it.each(['reuse-cwd', 'managed'] as const)(
+    'states the actual names, runtime and %s workspace in the prompt-bearing create text',
+    async (mode) => {
+      const fixture = await dispatcherFixture();
+      await fixture.host.start();
+      const repo = join(fixture.host.cwd, 'selected-repository');
+      await mkdir(repo);
+      if (mode === 'managed') {
+        for (const args of [
+          ['init', '-q'],
+          ['config', 'user.name', 'Test'],
+          ['config', 'user.email', 'test@example.com'],
+          ['commit', '--allow-empty', '-q', '-m', 'initial'],
+        ])
+          await promisify(execFile)('git', args, { cwd: repo });
+      }
+      const result = await createTeamMcpDelegate({ teams: fixture.teams }).call(
+        {
+          name: 'create',
+          arguments: {
+            name_prefix: 'receipt',
+            intent: 'Inspect the workspace',
+            leader_agent_runtime: 'controlled',
+            prompt: 'Start review',
+            repo: {
+              mode,
+              path: repo,
+              ...(mode === 'managed' ? { cleanup: 'delete-on-close' } : {}),
+            },
+          },
+        },
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.message);
+      const [row] = await fixture.teams.list();
+      const actual = await fixture.teams.summary(row!.team_name);
+      expect(actual.team_name).not.toBe('receipt');
+      expect(result.text).toContain(
+        `Created Team ${actual.team_name} (status: running).`,
+      );
+      expect(result.text).toContain(
+        `Leader: ${actual.leader_name} (controlled).`,
+      );
+      expect(result.text).toContain(
+        `Workspace: ${actual.runtime_cwd} (${mode}; cleanup: ${mode === 'managed' ? 'delete-on-close' : 'keep'}).`,
+      );
+      if (mode === 'managed') {
+        expect(actual.runtime_cwd).not.toBe(repo);
+        expect(actual.source_repo).not.toBeNull();
+        expect(result.text).toContain(
+          `Source repository: ${actual.source_repo}.`,
+        );
+      } else {
+        expect(actual.runtime_cwd).toBe(repo);
+        expect(result.text).not.toContain('Source repository:');
+      }
+      expect(result.text).toContain(TEAM_DISPATCH_SUCCESS_REMINDER);
+      expect(result.text).not.toMatch(/^\s*\{/);
+    },
+  );
+
+  it('reports closed in create text when the initial leader dissolves before creation returns', async () => {
+    const fixture = await dispatcherFixture();
+    await fixture.host.start();
+    const start = TeamService.prototype.startCreated;
+    const starting = vi
+      .spyOn(TeamService.prototype, 'startCreated')
+      .mockImplementation(async function (this: TeamService, input) {
+        await start.call(this, input);
+        await createLeaderTeamMcpDelegate(this).call({
+          name: 'dissolve',
+          arguments: { note: 'Initial task complete' },
+        });
+        await this.closed;
+      });
+    try {
+      const result = await createTeamMcpDelegate({ teams: fixture.teams }).call(
+        {
+          name: 'create',
+          arguments: {
+            name_prefix: 'quick',
+            intent: 'Finish during the initial turn',
+            leader_agent_runtime: 'controlled',
+            prompt: 'Complete the task',
+          },
+        },
+      );
+      const [team] = await fixture.teams.list();
+      expect(result).toMatchObject({
+        ok: true,
+        structured: { team_name: team!.team_name, status: 'closed' },
+        text: expect.stringContaining(
+          `Created Team ${team!.team_name} (status: closed).`,
+        ),
+      });
+      expect(result).toMatchObject({
+        text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER),
+      });
+    } finally {
+      starting.mockRestore();
+    }
+  });
+
   it('returns the allocated names and actual workspace while status retains the full detail', async () => {
     const fixture = await dispatcherFixture();
     const cwd = join(fixture.host.cwd, 'selected-workspace');

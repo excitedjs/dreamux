@@ -111,6 +111,16 @@ Built-in and external providers use this same neutral interface, defined in
 [`src/agent-runtime.ts`](src/agent-runtime.ts) and
 [`src/activity.ts`](src/activity.ts); Core constructs that context directly.
 
+## Channel tool result contract
+
+`ChannelMcpToolOutcome.text`, when nonempty, is the complete model-visible
+success result. Include actionable addresses, outcomes and reminders in that
+text: the MCP adapter forwards it verbatim in `content`, without
+`structuredContent` or a serialized copy of `value`. Omitted or empty text
+exposes `value` as structured content instead. A tool that can return nonempty
+text must omit its advertised `outputSchema`; otherwise the MCP SDK rejects the
+result after execution because structured content is absent.
+
 ## Plugin loading contract
 
 A plugin factory returns its `DreamuxPlugin` synchronously; `config.read`

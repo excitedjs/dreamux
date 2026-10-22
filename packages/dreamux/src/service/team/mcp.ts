@@ -139,7 +139,18 @@ async function create(
     // This delegate mints a fresh request id for every call. A successful
     // prompt-bearing create therefore submitted the first turn; replays belong
     // to callers that supply their own durable request identity.
-    ...(prompt !== null ? { text: TEAM_DISPATCH_SUCCESS_REMINDER } : {}),
+    ...(prompt !== null
+      ? {
+          text:
+            `Created Team ${result.team_name} (status: ${result.status}). ` +
+            `Leader: ${result.leader_name} (${result.leader_agent_runtime}). ` +
+            `Workspace: ${result.runtime_cwd} (${result.worktree_mode}; cleanup: ${result.worktree_cleanup_mode}).` +
+            (result.source_repo !== null
+              ? ` Source repository: ${result.source_repo}.`
+              : '') +
+            `\n\n${TEAM_DISPATCH_SUCCESS_REMINDER}`,
+        }
+      : {}),
   };
 }
 

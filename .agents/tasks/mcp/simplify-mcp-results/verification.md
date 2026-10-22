@@ -26,8 +26,8 @@ not a claim about every client or provider.
   attachment between participants; no real transcript is checked in.
 - Many historical handoff results lacked visible reminders. Later reads were
   correlated with some such calls; this does not establish causation. SDK wire
-  tests now establish that business JSON and the original reminder travel in
-  one content block, without structuredContent.
+  tests establish that tool-authored actionable facts and the original reminder
+  travel in one content block, without structuredContent or a JSON prefix.
 - There were no current collaboration-space calls or workflow missing-field
   examples in the sample. Space identity follows the explicit operator request;
   workflow pruning is source-backed, not claimed as historical proof.
@@ -72,11 +72,27 @@ The subsequent external review found two gaps in the delivered draft, both fixed
   a projection because creation may legitimately return a Team whose initial
   Leader already self-dissolved; its existing regression test remains intact.
 - The shim now preserves `text: ''`, which earlier layers already retained.
-  A real admin-socket/shim/SDK test confirms JSON-only content and absent
-  structuredContent; the previous adapter-only test missed this loss boundary.
+  The original admin-socket/shim/SDK test confirmed JSON-only content; the
+  2026-10-23 authored-text refinement supersedes that representation with the
+  structured value when text is empty, while keeping the shim's lossless pass.
   The SDK client transport in this test is in-memory, not child-process stdio.
 
 A follow-up source review accepted both corrections without a new blocker.
+
+For the operator-authorized authored-text refinement, the architect checked
+the plan against actual producers. Creation text retains the Team's current
+status even after initial self-dissolve; member send explicitly says submitted;
+Feishu text distinguishes an exact previous binding from inherited routing.
+Empty text selects the existing structured branch in the final adapter only.
+Public Channel and Feishu extension contracts now require nonempty success text
+to carry all actionable facts. The transport adds no JSON copy or new mode.
+
+The subsequent whole-diff review found no new production blocker. Its stale
+release-note finding was resolved by regenerating the three affected packages'
+combined notes through Rush. Reminder tests retain the existing automatic-push
+and no-polling assertions; new receipt facts are checked independently rather
+than rebuilding the production formatter in the expectation. The fresh full
+repository gates passed with 2,914 tests and six opt-in real-model cases skipped.
 
 The operator's request for the detailed plan is answered by the exact field
 matrix in the final solution, alongside the historical evidence rather than
@@ -85,7 +101,7 @@ an unmeasured token-savings percentage.
 ## Validation boundary
 
 The protocol suites use the actual MCP SDK and real admin-socket shim. They cover
-content-only results, conditional no-text results, ordinary schema validation and
+verbatim authored results, conditional absent/empty-text results, ordinary schema validation and
 the SDK rejection of a text result whose provider still advertises an output
 schema. Runtime tests cover initial launch and resume with fresh configuration.
 Space tests check exact identity text, null and missing-space behavior.

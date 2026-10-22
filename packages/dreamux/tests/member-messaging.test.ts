@@ -97,6 +97,9 @@ for (const scope of ['team', 'dispatcher'] as const)
       expect(receipt).toMatchObject({
         ok: true,
         structured: { status: 'submitted' },
+        text: expect.stringMatching(
+          /^Message submitted\.\n\nThis is an admission receipt.*A reply arrives only if the recipient explicitly sends one/,
+        ),
       });
       const ownerRuntime = f.provider.runtimes.at(-1)!;
       expect(ownerRuntime.inputs).toEqual([
@@ -140,6 +143,9 @@ for (const scope of ['team', 'dispatcher'] as const)
       ).toMatchObject({
         ok: true,
         structured: { status: 'submitted' },
+        text: expect.stringMatching(
+          /^Message submitted\.\n\nThis is an admission receipt.*A reply arrives only if the recipient explicitly sends one/,
+        ),
       });
       expect(b.runtime.inputs[1]).toBe(
         `<task from="${a.name}">question</task>`,

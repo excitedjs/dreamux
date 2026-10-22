@@ -239,16 +239,21 @@ is intentionally open. Team entity DTO schemas remain open under the
 that exception does not extend to other entity schemas. Do not add generic
 forwarding acknowledgements or prompt guidance to business fields.
 
-The shared MCP server emits a success with `text` as one `content` text block:
-compact JSON for the business value, then a blank line and the unchanged text.
-It omits `structuredContent`; empty text leaves just the JSON. Without `text`,
-the business value is `structuredContent` and `content` is exactly `[]`.
+The shared MCP server emits nonempty success `text` verbatim as one `content`
+text block, without `structuredContent` or a serialized JSON copy. The tool
+owner writes every actionable fact and reminder into this complete result:
+actual created names and workspace facts, workflow run ids, or binding changes.
+Absent or empty text exposes the business value as `structuredContent` with
+`content: []`. The shim preserves text unchanged; only the final adapter selects
+this representation, without trimming nonempty strings.
 Any tool that can return success text omits its published `outputSchema`, even
 when a particular invocation returns no text: the SDK requires structured
 content when a schema is advertised. This applies to dispatch reminders and
 Channel success text through `ChannelMcpToolOutcome`. Feishu registration uses
 the presence of `successText` for built-ins and extensions; the tool definition
-can retain its schema for other consumers. See
+can retain its schema for other consumers. External providers and extensions
+must supply complete text, rather than assuming their structured value is also
+visible. See
 `/packages/dreamux/src/mcp/server.ts`,
 `/packages/dreamux/src/service/mcp/tool-metadata.ts`, and
 `/packages/channel/feishu-channel/src/tools/registry.ts`.

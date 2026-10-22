@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Slim Team, TeamMate and workflow MCP receipts and lists while retaining diagnostic details. Tool owners write actionable facts and reminders directly into complete success text; the adapter forwards it without a JSON copy or structuredContent. Absent or empty text retains structured results. Add optional agents description, tags and developerInstructions with onboarding preservation and launch/resume application. Replace provider capability snapshots with configured runtime metadata. Add TeamMate record timestamps and bound TeamLeader status. Text-capable Channel tools must omit outputSchema; otherwise SDK validation can fail after execution. Existing configuration and state remain readable.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

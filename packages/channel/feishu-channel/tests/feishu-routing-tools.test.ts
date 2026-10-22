@@ -381,40 +381,88 @@ function mcpFor(session: FeishuToolSession) {
 describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
   const context = { dispatcher_id: 'd1', channel_id: 'chan-1', caller };
 
-  it('adds notification guidance alongside the successful binding value', async () => {
-    const result = await mcpFor(fakeSession()).invoke(
+  it.each([null, 'omt_topic'])(
+    'states the bound target (%s) and Team alongside notification guidance',
+    async (threadId) => {
+      const result = await mcpFor(fakeSession()).invoke(
+        {
+          name: 'bind_channel',
+          arguments: {
+            chat_id: 'oc_target',
+            ...(threadId === null ? {} : { thread_id: threadId }),
+            ...(caller.kind === 'dispatcher' ? { team_name: 'my-team' } : {}),
+          },
+        },
+        context,
+      );
+
+      expect(result).toEqual({
+        ok: true,
+        value: {
+          chat_id: 'oc_target',
+          thread_id: threadId,
+          team_name: 'my-team',
+          previous_team_name: null,
+        },
+        text: expect.stringContaining(
+          threadId === null
+            ? 'Bound whole chat oc_target to Team my-team.'
+            : 'Bound topic omt_topic in chat oc_target to Team my-team.',
+        ),
+      });
+      expect(result).toMatchObject({
+        text: expect.stringContaining(
+          'no additional user notification is needed',
+        ),
+      });
+      expect(result).toMatchObject({
+        text: expect.stringMatching(
+          /automatically.*notification card.*best-effort/,
+        ),
+      });
+      if (result.ok) {
+        expect(result.text).not.toContain('Previous binding:');
+        expect(result.text).not.toMatch(/^\s*\{/);
+      }
+    },
+  );
+
+  it('reports the previous exact binding, including a same-Team rebind', async () => {
+    const session = fakeSession();
+    const previousTeam =
+      caller.kind === 'dispatcher' ? 'earlier-team' : 'my-team';
+    vi.spyOn(session.bindings, 'bindChannel').mockResolvedValue({
+      team_name: 'my-team',
+      previous_team_name: previousTeam,
+    });
+    const result = await mcpFor(session).invoke(
       {
         name: 'bind_channel',
         arguments: {
           chat_id: 'oc_target',
+          thread_id: 'omt_topic',
           ...(caller.kind === 'dispatcher' ? { team_name: 'my-team' } : {}),
         },
       },
       context,
     );
-
-    expect(result).toEqual({
-      ok: true,
-      value: {
-        chat_id: 'oc_target',
-        thread_id: null,
-        team_name: 'my-team',
-        previous_team_name: null,
-      },
-      text: expect.stringMatching(
-        /^Binding succeeded\..*automatically.*notification card/,
-      ),
-    });
     expect(result).toMatchObject({
+      ok: true,
+      value: { previous_team_name: previousTeam },
       text: expect.stringContaining(
-        'no additional user notification is needed',
+        `Bound topic omt_topic in chat oc_target to Team my-team. Previous binding: ${previousTeam}.`,
       ),
     });
   });
 
-  it.each(['my-team', null])(
-    'adds unbinding guidance only for a removed route (%s)',
-    async (teamName) => {
+  it.each([
+    { teamName: 'my-team', threadId: null },
+    { teamName: 'my-team', threadId: 'omt_topic' },
+    { teamName: null, threadId: null },
+    { teamName: null, threadId: 'omt_topic' },
+  ])(
+    'adds factual unbinding guidance only for a removed route ($teamName, $threadId)',
+    async ({ teamName, threadId }) => {
       const session = fakeSession();
       vi.spyOn(session.bindings, 'unbindChannel').mockResolvedValue({
         team_name: teamName,
@@ -422,7 +470,10 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
       const result = await mcpFor(session).invoke(
         {
           name: 'unbind_channel',
-          arguments: { chat_id: 'oc_target' },
+          arguments: {
+            chat_id: 'oc_target',
+            ...(threadId === null ? {} : { thread_id: threadId }),
+          },
         },
         context,
       );
@@ -431,7 +482,7 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
         ok: true,
         value: {
           chat_id: 'oc_target',
-          thread_id: null,
+          thread_id: threadId,
           unbound: teamName !== null,
           team_name: teamName,
         },
@@ -440,13 +491,20 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
         expect(result).not.toHaveProperty('text');
       } else {
         expect(result).toMatchObject({
-          text: expect.stringMatching(
-            /^Unbinding succeeded\..*automatically.*notification card/,
+          text: expect.stringContaining(
+            threadId === null
+              ? 'Unbound whole chat oc_target from Team my-team.'
+              : 'Unbound topic omt_topic in chat oc_target from Team my-team.',
           ),
         });
         expect(result).toMatchObject({
           text: expect.stringContaining(
             'no additional user notification is needed',
+          ),
+        });
+        expect(result).toMatchObject({
+          text: expect.stringMatching(
+            /automatically.*notification card.*best-effort/,
           ),
         });
       }

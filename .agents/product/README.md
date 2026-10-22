@@ -600,12 +600,13 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 
 ## Failures the model sees
 
-- **A tool's success reminder reaches both engines with its business value.**
-  A result carrying success text returns compact business JSON followed by that
-  text in MCP `content`, without `structuredContent`. Tools that can carry text
-  publish no output schema. Results without text keep the structured business
-  value and an empty content list. This preserves dispatch and Feishu
-  notification reminders without repeating the JSON in two result channels.
+- **A tool's success text states its actionable facts and reminder together.**
+  The tool writes actual names, workspace facts, workflow run ids or binding
+  changes into its text. Nonempty text is forwarded verbatim in MCP `content`,
+  without `structuredContent` or a serialized JSON copy. Tools that can carry
+  text publish no output schema. Absent or empty text keeps the structured
+  business value and an empty content list. Dispatch and Feishu notification
+  reminders remain visible in the same result as the facts the model needs.
   (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
 - **Every tool failure is model-visible and actionable.** A domain-authored
   failure renders its stable code, reason, and next step; any other thrown

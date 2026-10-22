@@ -596,22 +596,37 @@ async function spawn(
       ...(worktree !== null ? { worktree } : {}),
     });
   }
-  return submissionReceipt(result, {
+  // A Dispatcher-spawned TeamMate owns a workspace the caller may have to
+  // inspect; a Team member inherits the Team's shared directory, already
+  // stated in its prompt, so repeating it here adds nothing.
+  const repo =
+    scope.kind === 'dispatcher'
+      ? {
+          path: result.teammate.repo.path,
+          branch: result.teammate.repo.branch,
+        }
+      : null;
+  const structured = {
     name: result.teammate.name,
     status: result.status,
     ...(result.error !== undefined ? { error: result.error } : {}),
-    // A Dispatcher-spawned TeamMate owns a workspace the caller may have to
-    // inspect; a Team member inherits the Team's shared directory, already
-    // stated in its prompt, so repeating it here adds nothing.
-    ...(scope.kind === 'dispatcher'
-      ? {
-          repo: {
-            path: result.teammate.repo.path,
-            branch: result.teammate.repo.branch,
-          },
-        }
-      : {}),
-  });
+    ...(repo !== null ? { repo } : {}),
+  };
+  if (result.status !== 'submitted') return { structured };
+
+  let location = '';
+  if (repo !== null) {
+    location = ` in ${JSON.stringify(repo.path)}`;
+    if (repo.branch !== null) {
+      location += ` on branch ${JSON.stringify(repo.branch)}`;
+    }
+  }
+  return {
+    structured,
+    text:
+      `Started TeamMate ${JSON.stringify(result.teammate.name)}${location}.` +
+      `\n\n${TEAMMATE_DISPATCH_SUCCESS_REMINDER}`,
+  };
 }
 
 async function send(
@@ -626,23 +641,11 @@ async function send(
     prompt: request.prompt,
     ...(request.intent !== null ? { intent: request.intent } : {}),
   });
-  return submissionReceipt(result, {
-    status: result.status,
-    ...(result.error !== undefined ? { error: result.error } : {}),
-  });
-}
-
-/**
- * The hand-off receipt both owner sends return. The caller already knows the
- * concrete name; what it cannot see is whether the turn was admitted and why
- * it was not, so the reminder travels beside exactly those facts.
- */
-function submissionReceipt(
-  result: AgentEntitySpawnResult,
-  structured: Record<string, unknown>,
-): McpToolSuccess {
   return {
-    structured,
+    structured: {
+      status: result.status,
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    },
     ...(result.status === 'submitted'
       ? { text: TEAMMATE_DISPATCH_SUCCESS_REMINDER }
       : {}),

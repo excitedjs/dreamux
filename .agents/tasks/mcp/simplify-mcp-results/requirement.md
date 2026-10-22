@@ -13,6 +13,9 @@ selection guidance on 2026-10-22. Original wording is quoted as evidence:
 - Space identity: "identity 返回不要只写一个有没有".
 - Historical evidence: "让 deepseek 去" and "特别是那些 MCP 工具没有返回、还需要写脚本去跑的其他属性，这部分属于返回值不足的场景，找到之后应该给我补充上".
 - Reminder delivery: "我们返回了 Content 的那些工具，反而应该不再返回 Structured Content".
+- Text refinement on 2026-10-23: "精简掉 Structured Content，就是需要把一些事实直接拼到文字里"; implementation authorization: "可以，按照这个模式来改一下".
+- Separate activity question: "last 这边，你有什么建议的方案吗？" requests a
+  recommendation; this follow-up does not implement a native log path contract.
 
 ## Desired behavior and boundary
 
@@ -25,9 +28,9 @@ selection; details support investigation and recovery. Repeated full snapshots,
 argument echoes and derivable counters are removed. Historical evidence guides
 missing facts; a missing consumer in a sample does not prove a field useless.
 
-Results with operation-owned text carry compact business JSON and original text
-together in content, without structuredContent. Results without text retain
-structured output. Admission/completion semantics and member reply semantics
+Nonempty operation-owned text states the actionable facts and reminder as the
+complete model-facing result, without a JSON copy or structuredContent. Absent
+or empty text retains structured output. Admission/completion and member reply semantics
 remain unchanged. Space details return the stored identity text or null.
 
 Scope includes owner/member TeamMate, workflow, Team, space tools and the shared
@@ -45,8 +48,9 @@ Live settings, deployment and merge are outside this authorization.
    creation/resume across roles.
 2. Capabilities contain runtime ids and supplied selection metadata only.
 3. Independent expected MCP/Command results preserve domain/error semantics.
-4. Real SDK calls preserve business JSON and reminders without structuredContent;
-   ordinary read schema validation and conditional reminder branches still work.
+4. Real SDK calls forward authored facts and reminders verbatim without a JSON
+   prefix or structuredContent. Absent/empty text, ordinary read schema
+   validation, and conditional reminder branches still work.
 5. Space get returns exact identity text and preserves null/not-found behavior.
 6. TeamMate status exposes record timestamps, explicitly not activity timestamps;
    a Leader can read its own Team status without reading persisted files.

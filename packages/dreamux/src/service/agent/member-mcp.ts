@@ -152,7 +152,7 @@ function memberToolRecords(scope: MemberMcpScope): MemberMcpToolRecord[] {
             ...(result.error !== undefined ? { error: result.error } : {}),
           },
           ...(result.status === 'submitted'
-            ? { text: MEMBER_RECEIPT_REMINDER }
+            ? { text: 'Message submitted.\n\n' + MEMBER_RECEIPT_REMINDER }
             : {}),
         };
       },

@@ -25,7 +25,7 @@ describe('Team dispatch reminders', () => {
     });
     expect(result).toMatchObject({
       ok: true,
-      text: TEAM_DISPATCH_SUCCESS_REMINDER,
+      text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER),
     });
     expect(result).toMatchObject({
       text: expect.stringMatching(/do not poll.*completion/i),
@@ -172,11 +172,19 @@ describe.each(['dispatcher', 'team_leader'] as const)(
             expect(result.structured).not.toHaveProperty('teammate');
           if (status === 'submitted') {
             expect(result).toMatchObject({
-              text: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+              text: expect.stringContaining(TEAMMATE_DISPATCH_SUCCESS_REMINDER),
             });
             expect(result).toMatchObject({
               text: expect.stringMatching(/automatically push.*Do not poll/),
             });
+            if (result.ok && name === 'spawn') {
+              expect(result.text).toContain(actual.teammate.name);
+              if (kind === 'dispatcher') {
+                expect(result.text).toContain(actual.teammate.repo.path);
+                if (actual.teammate.repo.branch !== null)
+                  expect(result.text).toContain(actual.teammate.repo.branch);
+              }
+            }
           } else expect(result).not.toHaveProperty('text');
         },
       );
@@ -193,7 +201,9 @@ describe.each(['dispatcher', 'team_leader'] as const)(
       expect(result).toEqual({
         ok: true,
         structured: { run_id: 'accepted-run' },
-        text: WORKFLOW_RUN_SUCCESS_REMINDER,
+        text:
+          'Started workflow run "accepted-run".\n\n' +
+          WORKFLOW_RUN_SUCCESS_REMINDER,
       });
       expect(result).toMatchObject({
         text: expect.stringMatching(

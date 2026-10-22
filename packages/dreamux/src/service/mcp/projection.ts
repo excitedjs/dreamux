@@ -18,7 +18,7 @@ import type { McpDelegateResult } from './types.js';
 /** What a tool body produces when it succeeds. */
 export interface McpToolSuccess {
   structured: unknown;
-  /** Optional model-facing text this operation chose to say. */
+  /** Complete model-facing result; absent or empty text uses structured. */
   text?: string;
 }
 

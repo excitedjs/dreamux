@@ -22,19 +22,32 @@ results from the same owner. Keep admin/Channel Command equivalence unchanged.
 
 ## Wire behavior
 
-Only the final SDK adapter selects the wire representation. With text present,
-serialize compact business JSON and append original text in one content block;
-omit structuredContent. Otherwise keep structured output. Internal
-`{structured,text?}` and errors remain unchanged.
-The shim preserves an empty text string as present: it produces JSON-only
-content, not structuredContent, on the actual admin-socket path as well.
+Only the final SDK adapter selects the wire representation. Nonempty text is
+the complete model-facing result, forwarded verbatim in one content block with
+no JSON prefix or structuredContent. Tool owners write actionable facts before
+their reminders: the actual TeamMate name and Dispatcher workspace/branch,
+Team name/current status/leader/runtime/workspace policies, workflow run id, or
+Feishu binding target and previous exact binding. A successful member send
+explicitly states that the message was submitted while retaining its distinct
+reply and owner-completion semantics. Non-submitted results keep their existing
+structured status and errors. Team creation can return closed after its first
+Leader self-dissolves; the text must report that actual status.
+
+Absent or empty text keeps structured output. Internal `{structured,text?}` and
+errors remain unchanged. The shim preserves text unchanged, including empty
+strings; the final adapter selects the representation without trimming text.
+This supersedes the earlier JSON-plus-reminder and empty-text JSON-only choices
+under the operator's 2026-10-23 direction to put facts directly into prose.
 
 Core text-capable tools omit outputSchema. Feishu's existing successText hook
 supplies the same fact for builtin/extension registration. Ordinary schemas and
 validation remain. No new mode or redundant runtime validation is added.
 
-External Channel providers must omit outputSchema for any tool that may return
-text. This changes their old contract: an unadapted schema-plus-text tool can
+External Channel providers and Feishu extensions own complete nonempty success
+text, including all business facts the model needs; the adapter no longer
+serializes their value beside that text. Returning undefined or an empty string
+selects the structured result. Providers must omit outputSchema for any tool
+that may return nonempty text. An unadapted schema-plus-text tool can
 complete an action before SDK output validation fails. This is not a compatible
 fallback or persisted-file upgrade blocker; release notes must state the change.
 
@@ -73,8 +86,28 @@ attachment. No private transcript data or home-search fallback is introduced.
 
 ## Exact MCP projections
 
+### Activity path recommendation (not implemented)
+
+The operator separately asked for a `last` recommendation. Keep its bounded
+activity records, cursor and truncation facts, and attach `transcript_path` when
+the provider has actually located the session file. If a subsequent read fails,
+carry that already-located path on the existing neutral activity error and
+include it in the failure text. A locator failure supplies no verified path.
+Core must not infer native layouts, scan other configured homes, or persist a
+second path fact. External providers may omit a filesystem path.
+
+For Codex the path means the current session's rollout file, which may be
+compressed and may reference ancestor rollouts; it is not a claim that every
+record in the page came from that one file. Replacing `last` with only a path
+would remove its neutral activity read and force callers to parse native logs.
+The current implementation still returns no transcript path.
+
+### Implemented result values
+
 Except for the capability catalog and added status timestamps, these are
-MCP-only projections of complete Command/domain records.
+MCP-only projections of complete Command/domain records. The tables list the
+internal compact business values: on nonempty text branches their actionable
+facts are authored in prose instead of exposing these objects on the wire.
 `?` marks optional fields. List/history rows retain their existing outer arrays;
 history and activity pages retain `next_cursor`.
 
@@ -108,7 +141,7 @@ Submitting dissolve does not report teardown completion.
 
 | Workflow tool | Result | Removed from this response |
 | --- | --- | --- |
-| `workflow_run` | `run_id`, unchanged business value | Only the advertised output schema changes for its reminder |
+| `workflow_run` | `run_id`, also stated in its authored text | No JSON copy or advertised output schema for the text result |
 | `workflow_stop` | `status` | `run_id` echo |
 | `workflow_list` | Rows: `run_id, status, phase, created_at` | Full run records including agent results |
 | `workflow_status` | `run_id, status, phase, last_log, result, error, created_at, updated_at, ended_at, agents` | `version, dispatcher_id, team_id, caller_kind, script_hash, max_concurrency` |

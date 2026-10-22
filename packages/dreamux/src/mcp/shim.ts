@@ -155,8 +155,8 @@ async function callTool(
   }
   const structured = asRecord(envelope['structured'], `tool '${name}' value`);
   const text = envelope['text'];
-  // Presence, not truthiness: an empty string is still the server saying this
-  // call has content, and the projector emits it as JSON-only content.
+  // Preserve the delegate's text unchanged; the final adapter alone chooses
+  // between authored content and the structured value, including empty text.
   return {
     structured,
     ...(typeof text === 'string' ? { text } : {}),

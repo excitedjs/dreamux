@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-types",
+      "comment": "Remove AgentRuntimeProviderCapabilities and provider getCapabilities; configured runtimes own selection metadata. Nonempty Channel tool text is now the complete model-visible result: providers must include actionable facts and reminders. Omitted or empty text exposes the structured value. Text-capable tools must omit outputSchema; schema-plus-text results fail SDK validation after execution.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types"
+}

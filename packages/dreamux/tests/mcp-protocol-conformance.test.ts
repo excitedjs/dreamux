@@ -334,16 +334,16 @@ describe('shared MCP protocol conformance', () => {
   const TEXT_RECEIPT_TOOL: McpToolDefinition = {
     name: 'echo_with_success_text',
     title: 'Echo value',
-    description: 'Return the value with an operation-specific success text.',
+    description: 'State the value and reminder in operation-owned text.',
     inputSchema: ECHO_TOOL.inputSchema,
     annotations: ECHO_TOOL.annotations,
     handler: async (args) => ({
       structured: { echoed: args['value'] },
-      text: 'Operation-specific success text.',
+      text: `Echoed value: ${args['value']}.\n\nReminder: The echo is complete.`,
     }),
   };
 
-  it('emits a text result as content-only JSON plus that text', async () => {
+  it('emits the complete authored text verbatim without a JSON copy', async () => {
     const connection = await connectMcpClient((transport) =>
       serve(transport, [TEXT_RECEIPT_TOOL]),
     );
@@ -357,7 +357,7 @@ describe('shared MCP protocol conformance', () => {
         content: [
           {
             type: 'text',
-            text: '{"echoed":"valid"}\n\n' + 'Operation-specific success text.',
+            text: 'Echoed value: valid.\n\nReminder: The echo is complete.',
           },
         ],
       });

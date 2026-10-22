@@ -7,8 +7,8 @@
  * holding only the receipt otherwise reports or predicts an outcome nobody has
  * yet, or polls a read tool until one appears.
  *
- * They travel in the tool result's `content` text, beside the compact JSON
- * business value, and the MCP adapter emits no `structuredContent` for that
+ * They follow any actionable facts the tool writes into its `content` text;
+ * the adapter forwards that text without a JSON copy or `structuredContent` for that
  * call: an engine reads structured content in preference to content text, so a
  * result carrying both would hide the reminder. A tool whose success can carry
  * text therefore advertises no output schema — a schema makes the MCP SDK
