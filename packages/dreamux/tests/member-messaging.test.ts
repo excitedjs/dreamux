@@ -82,11 +82,13 @@ for (const scope of ['team', 'dispatcher'] as const)
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(f.provider.runtimes).toHaveLength(2);
       const address = f.owner.memberOwner().name;
-      expect(await a.call('list')).toMatchObject({
+      expect(await a.call('list', { status: 'closed' })).toMatchObject({
         ok: true,
         structured: {
           owner: { name: address },
           teammates: [{ name: b.name, status: 'closed' }],
+          total: 1,
+          next_cursor: null,
         },
       });
       const receipt = await a.call('send', {

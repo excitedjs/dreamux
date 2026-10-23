@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/agent-runtime-claude-code",
-      "comment": "Keep recent Claude activity visible when attachments or control records follow the latest message, and remove provider capability declarations now owned by configured runtime metadata.",
+      "comment": "Keep recent Claude activity visible when attachments or control records follow the latest message, and remove provider capability declarations now owned by configured runtime metadata. Expose the canonical session transcript path on successful activity reads. Do not derive turn identity from prompt UUIDs or duration checkpoints.",
       "type": "minor"
     }
   ],

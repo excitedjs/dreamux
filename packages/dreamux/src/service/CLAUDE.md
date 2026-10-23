@@ -339,7 +339,9 @@ the Team.
   a `CronJobStore` it was handed.
   `requests.ts` holds the request readers (`cronCreateRequest`,
   `cronUpdateRequest`, `cronJobIdParam`) and the result projections
-  (`cronJobResult`, `cronListResult`) shared by `commands.ts` and `mcp.ts`.
+  (`cronJobResult`) shared by mutation Commands and MCP tools. `cronListResult`
+  remains the full Command view; compact MCP inventory belongs to `mcp.ts`
+  (see the scheduled-work KB).
   `commands.ts` declares the `scheduler.cron.*` Commands; `mcp.ts` is the cron
   MCP delegate; `errors.ts` holds `CronJobNotFoundError`. `types.ts` holds the
   domain types (`CronJob`/`CronJobAction`/`CronPromptAgentAction`/

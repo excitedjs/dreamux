@@ -847,6 +847,8 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       tool: { delegate: 'team', name: 'list', args: {} },
       expected: { teams: [teamRow] },
       expectedMcp: {
+        total: 1,
+        next_cursor: null,
         teams: [
           {
             team_name: 'blue-1a2b',
@@ -874,6 +876,8 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       tool: { delegate: 'teammate', name: 'list', args: {} },
       expected: { teammates: [teammateRow] },
       expectedMcp: {
+        total: 1,
+        next_cursor: null,
         teammates: [
           {
             name: 'mate-9z',
@@ -929,6 +933,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
             ],
             next_cursor: null,
             truncated: false,
+            transcript_path: null,
           }),
         },
       },
@@ -945,6 +950,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         records: [{ kind: 'assistant_message', text: 'hi', occurred_at: null }],
         next_cursor: null,
         truncated: false,
+        transcript_path: null,
       },
       expectedMcp: {
         status: 'running',
@@ -953,6 +959,7 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         records: [{ kind: 'assistant_message', text: 'hi', occurred_at: null }],
         next_cursor: null,
         truncated: false,
+        transcript_path: null,
       },
     },
     {
@@ -974,6 +981,22 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
       command: { name: 'scheduler.cron.list', params: {} },
       tool: { delegate: 'cron', name: 'cron_list', args: {} },
       expected: { jobs: [cronJob] },
+      expectedMcp: {
+        jobs: [
+          {
+            id: 'job-1',
+            title: 'nightly',
+            cron: '17 3 * * *',
+            tz: 'UTC',
+            recurring: true,
+            enabled: true,
+            next_run_at: 3,
+            last_fired_at: null,
+            prompt_preview: 'sweep',
+            prompt_bytes: 5,
+          },
+        ],
+      },
     },
     {
       operation: 'cron.create',

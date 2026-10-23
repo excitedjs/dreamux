@@ -222,7 +222,7 @@ describe.each(['dispatcher', 'team_leader'] as const)(
       const f = await scoped(kind);
       expect(await f.delegate.call({ name: 'list', arguments: {} })).toEqual({
         ok: true,
-        structured: { teammates: [] },
+        structured: { teammates: [], total: 0, next_cursor: null },
       });
     });
   },

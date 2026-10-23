@@ -38,6 +38,11 @@ import {
 } from '../../command/schema.js';
 import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import {
+  LIST_PAGE_PROPERTIES,
+  listInputProperties,
+  listPage,
+} from '../mcp/list-page.js';
+import {
   createToolRecordDelegate,
   type McpToolRecord,
   type McpToolSuccess,
@@ -62,6 +67,7 @@ import {
 import type { TeamsPort } from './teams-port.js';
 
 export const TEAM_MCP_SERVER_NAME = 'team';
+const TEAM_LIST_STATUSES = ['starting', 'running', 'closed'] as const;
 
 export function createTeamMcpDelegate(input: {
   teams: TeamsPort;
@@ -213,10 +219,14 @@ async function send(
   };
 }
 
-async function list(teams: TeamsPort): Promise<McpToolSuccess> {
+async function list(
+  teams: TeamsPort,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  const page = listPage(await teams.list(), args, TEAM_LIST_STATUSES);
   return {
     structured: {
-      teams: (await teams.list()).map((team) => ({
+      teams: page.items.map((team) => ({
         team_name: team.team_name,
         status: team.status,
         intent: team.intent,
@@ -225,6 +235,8 @@ async function list(teams: TeamsPort): Promise<McpToolSuccess> {
         member_count: team.member_count,
         worktree_cleanup: team.worktree_cleanup,
       })),
+      total: page.total,
+      next_cursor: page.next_cursor,
     },
   };
 }
@@ -369,18 +381,19 @@ function teamToolRecords(teams: TeamsPort): McpToolRecord[] {
     {
       descriptor: tool(
         'list',
-        "List Teams owned by this dispatcher (compact scan rows: team_name, status, intent, source_repo, leader_state, member_count, and worktree_cleanup). Read status for one Team's full detail. Where a Team is reachable from the outside is a channel fact; ask the channel that owns the route.",
-        {},
+        'List a page of Teams owned by this dispatcher. Defaults to non-closed Teams; use status all or closed to inspect closed records. Read status for full detail. Channel tools own external routing facts.',
+        listInputProperties(TEAM_LIST_STATUSES),
         [],
         {
           title: 'List Teams',
-          output: objectSchema({ teams: arrayOf(TEAM_LIST_ROW_SCHEMA) }, [
-            'teams',
-          ]),
+          output: objectSchema(
+            { teams: arrayOf(TEAM_LIST_ROW_SCHEMA), ...LIST_PAGE_PROPERTIES },
+            ['teams', 'total', 'next_cursor'],
+          ),
           annotations: READ_ONLY_ANNOTATIONS,
         },
       ),
-      execute: () => list(teams),
+      execute: (args) => list(teams, args),
     },
     {
       descriptor: tool(

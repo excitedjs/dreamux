@@ -66,7 +66,16 @@ import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type { AgentEntitySpawnResult } from './identity.js';
 import { createMemberMcpDelegate, type MemberMcpScope } from './member-mcp.js';
-import { TEAMMATE_ROSTER_ROW_SCHEMA, teammateRosterRow } from './mcp-roster.js';
+import {
+  TEAMMATE_LIST_STATUSES,
+  TEAMMATE_ROSTER_ROW_SCHEMA,
+  teammateRosterRow,
+} from './mcp-roster.js';
+import {
+  LIST_PAGE_PROPERTIES,
+  listInputProperties,
+  listPage,
+} from '../mcp/list-page.js';
 import {
   agentCloseRequest,
   agentEntityLastQuery,
@@ -193,6 +202,7 @@ const TEAMMATE_LAST_SCHEMA: JsonSchema = objectSchema(
     records: arrayOf(OBJECT),
     next_cursor: NULLABLE_STRING,
     truncated: BOOLEAN,
+    transcript_path: NULLABLE_STRING,
   },
   [
     'status',
@@ -201,6 +211,7 @@ const TEAMMATE_LAST_SCHEMA: JsonSchema = objectSchema(
     'records',
     'next_cursor',
     'truncated',
+    'transcript_path',
   ],
 );
 
@@ -427,19 +438,22 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
     {
       descriptor: tool(
         'list',
-        'List this TeamMate set (compact rows: concrete name, status, agent runtime, intent essentials).',
-        {},
+        'List a page of this TeamMate set. Defaults to non-closed members; use status all or closed to find members for recovery. Rows contain concrete name, status, runtime, and intent.',
+        listInputProperties(TEAMMATE_LIST_STATUSES),
         [],
         {
           title: 'List TeamMates',
           output: objectSchema(
-            { teammates: arrayOf(TEAMMATE_ROSTER_ROW_SCHEMA) },
-            ['teammates'],
+            {
+              teammates: arrayOf(TEAMMATE_ROSTER_ROW_SCHEMA),
+              ...LIST_PAGE_PROPERTIES,
+            },
+            ['teammates', 'total', 'next_cursor'],
           ),
           annotations: READ_ONLY_ANNOTATIONS,
         },
       ),
-      execute: () => list(scope),
+      execute: (args) => list(scope, args),
     },
     {
       descriptor: tool(
@@ -465,7 +479,7 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
     {
       descriptor: tool(
         'last',
-        "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records.",
+        "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records. Native turn_id is included only when known (not a Core submission ID). transcript_path is the provider-confirmed current-session file, or null; it may be compressed and does not list ancestor files.",
         {
           name: {
             type: 'string',
@@ -669,11 +683,17 @@ async function history(
   };
 }
 
-async function list(scope: OwnerMcpScope): Promise<McpToolSuccess> {
+async function list(
+  scope: OwnerMcpScope,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
   const rows = await (await teammates(scope)).list();
+  const page = listPage(rows, args, TEAMMATE_LIST_STATUSES);
   return {
     structured: {
-      teammates: rows.map(teammateRosterRow),
+      teammates: page.items.map(teammateRosterRow),
+      total: page.total,
+      next_cursor: page.next_cursor,
     },
   };
 }
@@ -709,6 +729,7 @@ async function last(
         records: result.records,
         next_cursor: result.next_cursor,
         truncated: result.truncated,
+        transcript_path: result.transcript_path,
       },
     };
   } catch (error) {

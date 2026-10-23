@@ -556,9 +556,11 @@ native identifiers.
   reject, and does not resolve until every already-started input admission has
   settled and can no longer return a newly accepted Turn.
 
-Codex keeps app-server `turn.id` values inside its package. Claude Code keeps its
+Codex keeps app-server turn correlation inside its package. Claude Code keeps
 command UUIDs inside its stream-json adapter. Neither identifier is Dreamux
-service state.
+service state or a Core settlement key. The cold activity read may expose an
+opaque native turn ID as observation metadata under the usability requirement;
+Core passes it through without interpreting it or relating it to submissions.
 
 Source:
 
@@ -991,6 +993,22 @@ not become leaves. This keeps selection and parent tracing distinct without
 exposing native control records as activity. Source:
 `/packages/agent-runtime/claude-code/src/activity/reader.ts`;
 regression coverage: `/packages/agent-runtime/claude-code/tests/activity-reader.test.ts`.
+
+Cold activity pages optionally expose `transcriptPath`, the canonical current
+session file already verified by the provider. Core maps its absence to null in
+`last.transcript_path`. Claude supplies its opened JSONL; Codex supplies the tail
+rollout (possibly `.jsonl.zst`), not all ancestor lineage files that contributed
+records. Only successful reads carry paths. No home fallback, persistence or
+error contract is added.
+
+Cold records optionally carry native `turnId`, projected as `turn_id`. Codex
+uses native task_started/turn_started and turn_context IDs, clears matching
+completion/abort context and isolates each scan window/lineage segment. Tool
+completion retains the original call's ID. Unknown context yields no ID. Claude
+user UUIDs can be folded into one native result; conditional turn_duration
+checkpoints may aggregate multiple deferred turns. Neither proves native turn
+identity or a single end boundary, so Claude emits no turnId. No synthetic role,
+turn grouping or settlement is inferred from timestamps or prompt records.
 
 `RuntimeActivity` (this section) and `AgentActivityRecord` (the cold-read
 member of `readRecentActivity`'s page, projected into Core's own `last`-read

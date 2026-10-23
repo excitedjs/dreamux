@@ -177,3 +177,54 @@ passed all nine checks, including the complete Linux and macOS
 pipelines. Subsequent Dispatcher usability feedback is recorded separately in
 [the input note](/.agents/tasks/mcp/simplify-mcp-results/usability-feedback.md);
 it adds no production changes to that validated code.
+
+
+## Usability continuation
+
+The operator asked to include the reported gaps in this PR. Source-backed
+changes now bound Team/TeamMate MCP list output, provide cron prompt preview/full
+read options, and carry verified native activity metadata. Command list values
+remain complete and the space identity handler already returns the requested
+text; the original contradictory live observation remains unverified.
+
+Focused evidence:
+
+- Six Core projection/metadata/list/member suites passed 113 cases. The synthetic
+  large-roster tests use the reported populations (998 members and 420 Teams),
+  verify default pages and remaining counts, exact closed lookup and the
+  member's owner/self distinction. This is synthetic behavior coverage, not a
+  replay or measurement of the reporter's live state.
+- Cron has six real-scheduler/SDK cases, plus 30 scheduler and 20 Command adapter
+  cases. Complete prompt retrieval followed by update remains possible; input
+  and compact output schemas stay closed.
+- Provider/type tests passed 51 cases (18 Claude, 23 Codex, 10 type-contract).
+  They cover canonical files, compression, ancestor pages, native ID boundaries,
+  unknown window context, and Claude inputs that must never manufacture IDs.
+  All fixtures are synthetic; no private transcripts were copied.
+- Initial integration caught a schema helper typed as a generic object; its
+  owner now returns JsonSchema. Test typechecking also caught an un-narrowed
+  delegate result. A member fixture needed Dispatcher preparation before asking
+  for its owner. The full test run found two shared reminder cases still
+  expecting an empty list without total/cursor; those exact equality assertions
+  now include the new metadata and still forbid success text on reads. These
+  fixes preserve the behavior assertions.
+- Independent whole-diff source review found no new blocker. It explicitly
+  requires reporting that Claude has no native turn_id, and Codex omits it when
+  its scan window lacks native context. It did not run tests itself.
+- Devbox approved the preceding style version and identified one additional
+  nonblocking backslash-rendering nit. The utility now avoids double-escaping
+  JSON backslashes; a table covers Windows/UNC paths, mixed backslash/Markdown,
+  controls, links, tags and code spans. No live visual result is claimed.
+
+Rush build, lint, test and typecheck:tests passed on the completed code.
+Across eight test packages, 3,023 cases passed and six opt-in real-model cases
+were not enabled. The final independent architecture review found no blocker.
+The KB check passed (59 task records, 397 reachable files), as did Rush change
+verification.
+
+Pure-code delta for this continuation (excluding comments, blanks, docs and
+generated files): production +290/-41, tests +1162/-15. For the complete PR
+against its merge base: production +1015/-624, tests +3732/-85.
+No deployment, live configuration write, restart, or merge is part of this
+continuation. Runtime-home drift and activity failures without a verified path
+keep their existing behavior.

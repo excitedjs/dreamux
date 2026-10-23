@@ -97,25 +97,55 @@ attachment. No private transcript data or home-search fallback is introduced.
 
 ## Exact MCP projections
 
-### Activity path recommendation (not implemented)
+### Bounded lists and activity metadata
 
-The operator separately asked for a `last` recommendation. Keep its bounded
-activity records, cursor and truncation facts, and attach `transcript_path` when
-the provider has actually located the session file. If a subsequent read fails,
-carry that already-located path on the existing neutral activity error and
-include it in the failure text. A locator failure supplies no verified path.
-Core must not infer native layouts, scan other configured homes, or persist a
-second path fact. External providers may omit a filesystem path.
+`service/mcp/list-page.ts` owns MCP-only status filtering and pagination for
+Team, owner TeamMate, and member TeamMate lists. It reuses the existing history
+limit/cursor primitives: default 20, maximum 100, opaque offset cursor. Inputs
+are `status?`, `limit?`, and `cursor?`; default `non_closed` excludes only closed,
+while `all` and exact statuses preserve explicit discovery. Rows keep domain
+ordering. Member scope removes itself before filtering/counting/slicing and
+keeps its owner separately. `total` is the matching count before pagination;
+`next_cursor: null` means this page has no remaining rows. No redundant truncated
+flag is added. Callers retain the same status filter while paging; these are
+fresh reads, not frozen snapshots. Core/Command full lists remain unchanged,
+so output is bounded but the underlying collection still scans all records.
 
-For Codex the path means the current session's rollout file, which may be
-compressed and may reference ancestor rollouts; it is not a claim that every
-record in the page came from that one file. Replacing `last` with only a path
-would remove its neutral activity read and force callers to parse native logs.
-The current implementation still returns no transcript path.
+`last` keeps records and pagination and adds nullable `transcript_path` through
+the existing provider page, Core result, Command, and MCP. Providers may omit
+`transcriptPath`; Core emits null. Both builtin readers return the actual
+canonical path only on successful reads. Codex returns the current tail rollout,
+possibly `.jsonl.zst`, even when a page includes ancestor lineage records. This
+is not a complete list of source files. Failed reads keep existing errors;
+locate failure does not invent a candidate path. Configuration-home drift remains
+unresolved; there is no cross-home search, new persisted fact, or error contract.
+
+The earlier provider-private-ID rule remains intact for admission and settlement.
+The activity usability requirement adds a narrow observation exception: Core
+passes an opaque ID without interpretation, persistence or submission mapping.
+Activity records optionally include native `turn_id`. Codex reads only native
+start/context IDs, scopes them to each scanned segment, and clears context at
+matching completion/abort. Unknown window context remains unknown. Claude user
+UUIDs are prompt identities, not native turns: multiple prompts can fold into
+one result. Its conditional duration checkpoints can aggregate deferred turns,
+so neither supplies a reliable turn ID or end marker. Claude therefore omits
+turn_id; records, cursor and truncation retain their existing semantics. No
+redundant role field or manufactured boundary is introduced.
+
+### Cron inventory
+
+`cron_list({id?, include_prompt?})` returns `{jobs:[{id,title?,cron,tz,enabled,
+recurring,next_run_at,last_fired_at,prompt_preview,prompt_bytes,prompt?}]}`.
+Preview is the first 200 Unicode code points; bytes measures the full UTF-8
+prompt. `include_prompt:true` adds its full top-level prompt; `id` is an exact
+filter and an unknown id returns an empty array. MCP omits action/kind and
+created/updated timestamps. Input and rows stay closed. Scheduler Command,
+DTO, state, create and update results remain unchanged. This is an output
+reduction, not a new indexed store lookup.
 
 ### Implemented result values
 
-Except for the capability catalog and added status timestamps, these are
+Except for the capability catalog, status timestamps and activity metadata, these are
 MCP-only projections of complete Command/domain records. The tables list the
 internal compact business values: on nonempty text branches their actionable
 facts are authored in prose instead of exposing these objects on the wire.
@@ -128,9 +158,9 @@ history and activity pages retain `next_cursor`.
 | `spawn` | `name, status, error?`; Dispatcher also gets `repo: {path, branch}` | Full teammate snapshot; Team members already share the Team workspace |
 | `send` (owner/member) | `status, error?` | Full owner-side teammate snapshot; member-side name echo |
 | `close` | `status, repo: {path, cleanup_state}` | Full teammate snapshot |
-| `list` | Rows: `name, status, agent_runtime, intent` | Full teammate snapshots; member scope retains `owner: {name, status}` |
+| `list` | `teammates, total, next_cursor`; rows: `name, status, agent_runtime, intent` | Full teammate snapshots; member scope retains `owner: {name, status}` |
 | `history` | Rows: `name, status, agent_runtime, intent, source_repo, updated_at, close_note_preview` | `created_at, runtime_status, closed_at, close_note, cleanup_state, resume` |
-| `last` | `status, runtime_status, last_error, records, next_cursor, truncated` | Full teammate snapshot and `requested_records, returned_records` |
+| `last` | `status, runtime_status, last_error, records, next_cursor, truncated, transcript_path` | Full teammate snapshot and `requested_records, returned_records` |
 | `status` | Full `teammate` detail plus `created_at, updated_at` | None |
 
 TeamMate detail keeps `session_id`, complete repo policy/outcome, runtime status,
@@ -141,7 +171,7 @@ The full closure note remains searchable even though history returns its preview
 | --- | --- | --- |
 | `create` | `team_name, status, leader_name, leader_agent_runtime, source_repo, runtime_cwd, worktree_mode, worktree_cleanup_mode` | Remaining summary details: 22 top-level fields become 8 |
 | `send` | `status, error?` | `turn_id`; Command receipts retain it |
-| `list` | Rows: `team_name, status, intent, source_repo, leader_state, member_count, worktree_cleanup` | `leader_name, leader_agent_runtime, created_at, updated_at, closed_at` |
+| `list` | `teams, total, next_cursor`; rows: `team_name, status, intent, source_repo, leader_state, member_count, worktree_cleanup` | `leader_name, leader_agent_runtime, created_at, updated_at, closed_at` |
 | `history` | Rows: `team_name, status, intent, source_repo, updated_at, closed_at, close_note_preview, worktree_cleanup` | `leader_name, leader_agent_runtime, leader_state, member_count, created_at, close_note` |
 | `dissolve` (Dispatcher/Leader) | `status: submitted` | Constant `accepted` and addressed/bound `team_name` |
 | `status` (Dispatcher/Leader) | Full existing 22-field TeamSummary | None; Leader gains a zero-argument own-Team entry |

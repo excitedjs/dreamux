@@ -1,4 +1,5 @@
 import type {
+  AgentActivityPage,
   AgentRuntime,
   AgentRuntimeCreateContext,
   AgentRuntimeProvider,
@@ -85,7 +86,7 @@ export class ControlledRuntimeProvider implements AgentRuntimeProvider<unknown> 
   readonly runtimes: ControlledRuntime[] = [];
   private readonly plans: ControlledRuntimePlan[] = [];
 
-  async readRecentActivity() {
+  async readRecentActivity(): Promise<AgentActivityPage> {
     return { records: [], truncated: false };
   }
 

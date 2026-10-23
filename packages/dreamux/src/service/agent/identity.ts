@@ -203,12 +203,15 @@ export type AgentEntityActivityRecord =
       kind: 'assistant_message';
       text: string;
       occurred_at: string | null;
+      /** Provider-native turn ID, absent when the native log does not identify it. */
+      turn_id?: string;
     }
   | {
       kind: 'tool';
       name: string;
       status: 'started' | 'completed' | 'failed';
       occurred_at: string | null;
+      turn_id?: string;
     };
 
 export interface AgentEntityLastQuery {
@@ -224,6 +227,8 @@ export interface AgentEntityLastResult {
   records: AgentEntityActivityRecord[];
   next_cursor: string | null;
   truncated: boolean;
+  /** Canonical current-session transcript path, not all ancestor lineage files. */
+  transcript_path: string | null;
 }
 
 /** One configured runtime and its operator-authored selection metadata. */

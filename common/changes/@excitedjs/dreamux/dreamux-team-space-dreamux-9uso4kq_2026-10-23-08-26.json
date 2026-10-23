@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Keep receipt values literal in Markdown, preserve empty capability descriptions, and consolidate compact MCP schemas and dispatch.",
+      "comment": "Keep receipt values literal in Markdown, preserve empty capability descriptions, and consolidate compact MCP schemas and dispatch. Bound Team/TeamMate MCP lists with status, limit and cursor (default 20 non-closed rows); retain explicit closed lookup and complete Command lists. cron_list now returns prompt_preview and prompt_bytes; use include_prompt:true for the full top-level prompt and optional id for exact lookup. last adds nullable transcript_path and optional provider-native turn_id; Claude has no reliable native turn identity.",
       "type": "minor",
       "packageName": "@excitedjs/dreamux"
     }

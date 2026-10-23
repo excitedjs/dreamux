@@ -352,7 +352,10 @@ the same change that touches it.
   TeamMate MCP tools project operation-specific results independently of the
   Command/domain values. Creation keeps allocated names and actionable workspace
   facts; submission keeps status/errors; close keeps lifecycle and cleanup
-  outcomes. List supports scanning and history preserves recovery search,
+  outcomes. MCP lists accept status/limit/cursor and default to the first 20 non-closed
+  rows (maximum 100), returning total and next_cursor. Exact status or all
+  includes closed resources; paging reads current state rather than a frozen
+  snapshot. History preserves recovery search,
   close-note previews, and pagination. Full `status` reads retain session IDs,
   workspace, intent, lifecycle/error details, and full close notes. A TeamMate's
   `created_at` and `updated_at` are identity timestamps, not recent Activity;
@@ -408,7 +411,9 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
 
 - **Members can address their actual owner and peers.** Ordinary members of a
   Team and a Dispatcher's root collection receive `teammate.send` and `list`.
-  `list` gives the concrete owner address and peers, including closed peers.
+  `list` gives the concrete owner address and a filtered, bounded peer page.
+  Self is excluded before counting/paging; closed peers remain selectable using
+  status:closed or status:all.
   Its compact owner row contains `name` and `status`; peer rows contain name,
   status, configured runtime, and intent, excluding the caller itself. `send`
   returns admission status and any error, with a reminder on successful
@@ -470,7 +475,13 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   running for forty minutes without returning; the operator asks the
   TeamLeader, who pulls the member's recent activity — while the turn is still
   open. It returns assistant messages and tool names/statuses, not tool
-  arguments or outputs.
+  arguments or outputs. It also returns the provider-confirmed canonical
+  transcript_path, or null when unavailable. Codex may return a compressed tail
+  rollout path even when records came from ancestor segments; failed reads do
+  not guess a path. Optional turn_id names only an evidenced native turn, not
+  a Core submission. Codex supplies it when native context is in the scanned
+  segment; Claude omits it because user UUIDs and aggregated duration checkpoints
+  cannot identify native turns. Unknown IDs remain absent.
   Claude reads preserve that active tail when attachments or queue/control
   records follow the newest conversation message; those native records are
   not themselves exposed as Activity.
@@ -621,6 +632,17 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 
 ## Scheduled work
 
+- **Cron inventory is compact, with full prompts available before editing.**
+  `cron_list` returns job ids, optional titles, schedules, time zones, enabled
+  and recurring flags, next-run and last-fired times, the first 200 Unicode
+  code points of each prompt as `prompt_preview`, and the complete prompt's
+  UTF-8 byte count as `prompt_bytes`. `include_prompt:true` adds the complete
+  top-level `prompt`; omitted or false leaves it out. Optional `id` returns
+  only an exact match in the `jobs` array, or an empty array for an unknown id;
+  omitted `id` lists all jobs. Neither mode exposes the stored action object
+  or creation/update timestamps. The `scheduler.cron.list` Command retains
+  complete job records, and persisted cron state is unchanged.
+  (Domain: [scheduled-work](/.agents/domains/scheduled-work.md#mcp-surface).)
 - **Cron fires submit immediately.** At the tick, the prompt is submitted to
   the agent; the provider may fold it into an ongoing turn. There is no
   held-fire waiting, no idle gating, and the only job action is prompting the

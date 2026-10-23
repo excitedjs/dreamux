@@ -28,8 +28,9 @@ shared structural types.
   `RuntimeSubmission`/`RuntimeCompletion` settlement, leased state and event
   sinks, MCP server descriptors, and optional operational capabilities;
 - live `RuntimeActivity` and cold `AgentActivityRecord` shapes, with recent
-  activity queries/pages/errors. Provider-native turn identifiers, cursor
-  positions, and history formats remain private inside provider packages;
+  activity queries/pages/errors. Cold reads may expose opaque native turn
+  identifiers and a verified transcript path as observations; cursor positions,
+  history parsing and settlement correlation remain provider-owned;
 - Channel provider/session contracts, target shapes, inbound envelope shapes,
   tool descriptor/call shapes, config/session contexts, optional strict
   collaboration operations, and dispatcher-scoped read-only core event DTOs.
@@ -95,8 +96,11 @@ fallbacks.
   runtime closes. The query carries `sessionId`, optional opaque `cursor`,
   `limit`, and `includeTools`; the context supplies config, cwd, and a logger.
   A chronological page contains assistant text and tool names/statuses, optional
-  `nextCursor`, and `truncated`. Tool arguments/results and native history paths
-  do not appear in these records. Providers own native read and cursor bounds;
+  `nextCursor`, and `truncated`. Optional record `turnId` must be a genuine native
+  turn identity, never a prompt/submission ID or inferred group. A page may
+  expose canonical `transcriptPath` for its current session file (not every
+  ancestor segment); omit it when unavailable. Tool arguments/results do not
+  appear in these records. Providers own native read and cursor bounds;
   recognized failures use the `AgentActivityError` contract.
 
 Optional operational members are `config.read`, `onboard`, `diagnostic`

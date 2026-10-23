@@ -15,7 +15,8 @@ selection guidance on 2026-10-22. Original wording is quoted as evidence:
 - Reminder delivery: "我们返回了 Content 的那些工具，反而应该不再返回 Structured Content".
 - Text refinement on 2026-10-23: "精简掉 Structured Content，就是需要把一些事实直接拼到文字里"; implementation authorization: "可以，按照这个模式来改一下".
 - Separate activity question: "last 这边，你有什么建议的方案吗？" requests a
-  recommendation; this follow-up does not implement a native log path contract.
+  recommendation. The later usability direction includes its verified-path implementation.
+- Usability continuation on 2026-10-23: "另外那几个为什么变成了后续改进记录？这次为什么不一起做了？" This puts the reported usability gaps into this PR; concrete default limits and fields below are implementation choices.
 
 ## Desired behavior and boundary
 
@@ -34,9 +35,9 @@ or empty text retains structured output. Admission/completion and member reply s
 remain unchanged. Space details return the stored identity text or null.
 
 Scope includes owner/member TeamMate, workflow, Team, space tools and the shared
-wire adapter. Domain/Command DTOs keep facts needed by administration and routing.
+wire adapter, plus bounded list scans, cron prompt read options, and optional provider-owned activity metadata. Domain/Command DTOs keep facts needed by administration and routing.
 Existing config files stay readable. No new version, migration, health probe,
-output mode, native log path contract, or message-history database is introduced.
+output mode or message-history database is introduced. Native paths are read-time provider facts, never guessed or persisted.
 Live settings, deployment and merge are outside this authorization.
 
 ## Acceptance criteria
@@ -58,6 +59,10 @@ Live settings, deployment and merge are outside this authorization.
    records must not turn an active conversation into a successful empty page.
 8. Historical findings include coverage limits; sensitive source logs stay out of
    the repo. Build, lint, tests, test typechecking and the KB check must pass.
+
+9. Team/TeamMate MCP lists accept status/limit/cursor, default to the first 20 non-closed rows, and return total plus next_cursor. Closed resources remain explicitly discoverable; member scans exclude self before paging. Commands keep full lists.
+10. Cron lists default to a 200-code-point prompt preview plus UTF-8 byte count; include_prompt returns the full top-level prompt and optional id selects exactly one job.
+11. Last retains records/cursor/truncation and adds the provider-confirmed current-session path (or null). Native turn IDs are optional and never inferred from user messages or timestamps. Claude has no reliable native turn identity in these logs; no boundary is fabricated.
 
 ## Decisions and unknowns
 

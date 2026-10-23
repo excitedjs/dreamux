@@ -31,20 +31,20 @@ function assertNever(value: never): never {
 }
 
 describe('AgentActivityRecord exposes no tool arguments, results, or native-line member', () => {
-  it('the assistant_message branch carries only kind/text/occurredAt', () => {
+  it('the assistant_message branch carries only text and optional native metadata', () => {
     assertType<
       Equal<
         keyof Extract<AgentActivityRecord, { kind: 'assistant_message' }>,
-        'kind' | 'text' | 'occurredAt'
+        'kind' | 'text' | 'occurredAt' | 'turnId'
       >
     >();
   });
 
-  it('the tool branch carries only kind/name/status/occurredAt — no arguments or result', () => {
+  it('the tool branch carries only name/status and optional native metadata', () => {
     assertType<
       Equal<
         keyof Extract<AgentActivityRecord, { kind: 'tool' }>,
-        'kind' | 'name' | 'status' | 'occurredAt'
+        'kind' | 'name' | 'status' | 'occurredAt' | 'turnId'
       >
     >();
   });

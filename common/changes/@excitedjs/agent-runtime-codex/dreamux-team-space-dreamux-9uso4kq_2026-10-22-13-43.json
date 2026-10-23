@@ -2,7 +2,7 @@
   "changes": [
     {
       "packageName": "@excitedjs/agent-runtime-codex",
-      "comment": "Remove the static getCapabilities declaration; runtime selection descriptions and tags are now owned by Dreamux agents configuration.",
+      "comment": "Remove the static getCapabilities declaration; runtime selection descriptions and tags are now owned by Dreamux agents configuration. Expose the canonical current rollout path on successful activity pages and native turn IDs when present in the scanned segment; compressed tail paths and ancestor pagination remain supported.",
       "type": "minor"
     }
   ],

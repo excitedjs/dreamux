@@ -197,6 +197,8 @@ describe('Team MCP result projections', () => {
     expect(await delegate.call({ name: 'list', arguments: {} })).toEqual({
       ok: true,
       structured: {
+        total: 1,
+        next_cursor: null,
         teams: [
           {
             team_name: team!.team_name,

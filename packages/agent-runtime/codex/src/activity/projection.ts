@@ -19,7 +19,7 @@ export interface CodexPositionedRecord {
  *
  * The projection is deliberately flat: it does not require a completed turn, so
  * an actively growing session yields records as soon as its lines are written.
- * Only assistant text and tool name/status cross the seam — never tool
+ * Only assistant text, tool name/status and evidenced native turn IDs cross the seam — never tool
  * arguments, tool results, or any native line shape.
  *
  * Codex writes an assistant message twice: a live `event_msg`/`agent_message`
@@ -39,14 +39,34 @@ export function projectCodexActivity(
 ): CodexPositionedRecord[] {
   const records: CodexPositionedRecord[] = [];
   const calls = new Map<string, CodexPositionedRecord>();
-  const live = new LiveAssistantMessages();
+  let live = new LiveAssistantMessages();
+  // Window/lineage boundaries without native evidence remain unassigned.
+  let turnId: string | null = null;
 
   for (const line of lines) {
     const occurredAt = timestampIso(line.value['timestamp']);
     const type = stringValue(line.value['type']);
     const payload = recordValue(line.value['payload']);
+    if (type === 'turn_context') {
+      const contextTurnId = nativeTurnId(payload);
+      if (contextTurnId !== turnId) live = new LiveAssistantMessages();
+      turnId = contextTurnId;
+      continue;
+    }
     if (type === 'event_msg') {
       const eventType = stringValue(payload?.['type']);
+      if (eventType === 'task_started' || eventType === 'turn_started') {
+        turnId = nativeTurnId(payload);
+        live = new LiveAssistantMessages();
+      } else if (
+        ((eventType === 'task_complete' || eventType === 'turn_complete') &&
+          nativeTurnId(payload) === turnId) ||
+        (eventType === 'turn_aborted' &&
+          (nativeTurnId(payload) === null || nativeTurnId(payload) === turnId))
+      ) {
+        turnId = null;
+        live = new LiveAssistantMessages();
+      }
       if (eventType === 'agent_message') {
         const text =
           stringValue(payload?.['message']) ?? stringValue(payload?.['text']);
@@ -57,6 +77,7 @@ export function projectCodexActivity(
               kind: 'assistant_message',
               text,
               ...(occurredAt !== null ? { occurredAt } : {}),
+              ...(turnId !== null ? { turnId } : {}),
             }),
           );
         }
@@ -75,6 +96,7 @@ export function projectCodexActivity(
           kind: 'assistant_message',
           text,
           ...(occurredAt !== null ? { occurredAt } : {}),
+          ...(turnId !== null ? { turnId } : {}),
         }),
       );
       continue;
@@ -89,6 +111,7 @@ export function projectCodexActivity(
         name,
         status: 'started',
         ...(occurredAt !== null ? { occurredAt } : {}),
+        ...(turnId !== null ? { turnId } : {}),
       });
       calls.set(callId, entry);
       records.push(entry);
@@ -106,12 +129,8 @@ export function projectCodexActivity(
       // the call keeps its own 'started' record on the page that holds it.
       if (entry === undefined || entry.record.kind !== 'tool') continue;
       entry.record = {
-        kind: 'tool',
-        name: entry.record.name,
+        ...entry.record,
         status: nativeOutputHasError(payload) ? 'failed' : 'completed',
-        ...(entry.record.occurredAt !== undefined
-          ? { occurredAt: entry.record.occurredAt }
-          : {}),
       };
     }
   }
@@ -119,6 +138,11 @@ export function projectCodexActivity(
   // Emission followed line order, so the result is already ascending by offset,
   // which is what the reader's newest-first walk assumes.
   return records;
+}
+
+function nativeTurnId(payload: Record<string, unknown> | null): string | null {
+  const id = stringValue(payload?.['turn_id']);
+  return id === '' ? null : id;
 }
 
 /**

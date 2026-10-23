@@ -451,6 +451,7 @@ export class TeammateCollection implements TeammateOps {
       teammate: entity?.status() ?? toStatus(identity, null),
       requested_records: activity.requestedRecords,
       returned_records: activity.records.length,
+      transcript_path: activity.transcriptPath,
       records: activity.records,
       next_cursor: activity.nextCursor,
       truncated: activity.truncated,

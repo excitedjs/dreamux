@@ -27,7 +27,15 @@ const silentLog: DreamuxLogger = {
  * native filesystem path ever crosses into a returned `AgentActivityRecord`.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -653,10 +661,207 @@ describe('readClaudeRecentActivity: no native leakage into records', () => {
       'occurredAt',
     ]);
 
-    const serialized = JSON.stringify(page);
+    expect(page.transcriptPath).toBe(await realpath(fixture.path));
+    const serialized = JSON.stringify(page.records);
     expect(serialized).not.toContain('/etc/native/secret-path.txt');
     expect(serialized).not.toContain('super secret file contents');
     expect(serialized).not.toContain(fixture.cwd);
     expect(serialized).not.toContain(fixture.configDir);
+  });
+});
+
+describe('readClaudeRecentActivity: native identity limits and canonical path', () => {
+  it('leaves prompt and tool continuations unassigned across cursor pages', async () => {
+    const fixture = await makeFixture();
+    const lines = conversation(fixture.sessionId);
+    const toolResult = lines[4]!;
+    const message = toolResult['message'] as { content: unknown[] };
+    message.content.push({
+      type: 'text',
+      text: 'a tool continuation with sibling text',
+    });
+    await fixture.write(lines);
+    const newest = await readClaudeRecentActivity(
+      query(fixture, { limit: 1 }),
+      fixture.context,
+    );
+    await fixture.append([
+      userText(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'steered-prompt',
+          parentUuid: 'a3',
+          timestamp: '2026-01-01T00:00:06.000Z',
+        },
+        'a new input is not a native turn ID',
+      ),
+      assistantText(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'steered-answer',
+          parentUuid: 'steered-prompt',
+          timestamp: '2026-01-01T00:00:07.000Z',
+        },
+        'later answer',
+      ),
+    ]);
+    const older = await readClaudeRecentActivity(
+      query(fixture, { limit: 2, cursor: newest.nextCursor! }),
+      fixture.context,
+    );
+    expect(newest.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'done reading',
+        occurredAt: expect.any(String),
+      },
+    ]);
+    expect(older.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'hi there',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'tool',
+        name: 'Read',
+        status: 'completed',
+        occurredAt: expect.any(String),
+      },
+    ]);
+    const current = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+    for (const record of [
+      ...newest.records,
+      ...older.records,
+      ...current.records,
+    ]) {
+      expect(record).not.toHaveProperty('turnId');
+    }
+    expect([
+      newest.transcriptPath,
+      older.transcriptPath,
+      current.transcriptPath,
+    ]).toEqual(Array(3).fill(await realpath(fixture.path)));
+    expect(older.nextCursor).toBeUndefined();
+  });
+
+  it('never promotes a compaction summary or duration checkpoint UUID to a turn ID', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    const input = (uuid: string, parentUuid: string | null) => ({
+      sessionId,
+      uuid,
+      parentUuid,
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+    await fixture.write([
+      ...conversation(sessionId),
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        ...input('compact-marker', null),
+        logicalParentUuid: 'a3',
+      },
+      {
+        ...userText(
+          input('compact-summary', 'compact-marker'),
+          'synthetic compact summary',
+        ),
+        isCompactSummary: true,
+      },
+      assistantText(
+        input('after-summary', 'compact-summary'),
+        'after compaction',
+      ),
+      {
+        type: 'system',
+        subtype: 'turn_duration',
+        ...input('duration-checkpoint', 'after-summary'),
+        durationMs: 45000,
+        messageCount: 9,
+      },
+      assistantText(
+        input('after-duration', 'duration-checkpoint'),
+        'after duration checkpoint',
+      ),
+    ]);
+    const newest = await readClaudeRecentActivity(
+      query(fixture, { limit: 2 }),
+      fixture.context,
+    );
+    const older = await readClaudeRecentActivity(
+      query(fixture, { limit: 3, cursor: newest.nextCursor! }),
+      fixture.context,
+    );
+    expect(
+      newest.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['after compaction', 'after duration checkpoint']);
+    expect(
+      older.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['hi there', 'Read', 'done reading']);
+    for (const record of [...newest.records, ...older.records])
+      expect(record).not.toHaveProperty('turnId');
+  });
+
+  it('keeps an orphaned tool-result continuation readable without inventing a turn ID', async () => {
+    const fixture = await makeFixture();
+    await fixture.write([
+      userToolResult(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'tool-return',
+          parentUuid: 'outside-window',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        },
+        'unknown-call',
+        'synthetic result',
+        false,
+      ),
+      assistantText(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'continuation',
+          parentUuid: 'tool-return',
+          timestamp: '2026-01-01T00:00:01.000Z',
+        },
+        'continuing without known boundary',
+      ),
+    ]);
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+    expect(page.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'continuing without known boundary',
+        occurredAt: expect.any(String),
+      },
+    ]);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  it('reports the canonical file actually opened through a symlink', async () => {
+    const fixture = await makeFixture();
+    await fixture.write(conversation(fixture.sessionId));
+    const canonicalDir = join(fixture.configDir, 'projects', 'canonical');
+    await mkdir(canonicalDir, { recursive: true });
+    const target = join(canonicalDir, `${fixture.sessionId}.jsonl`);
+    await rename(fixture.path, target);
+    await symlink(target, fixture.path);
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+    expect(page.records).toHaveLength(3);
+    expect(page.transcriptPath).toBe(await realpath(target));
+    expect(page.transcriptPath).not.toBe(fixture.path);
   });
 });

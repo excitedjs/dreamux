@@ -378,12 +378,14 @@ describe('list projection', () => {
 
     const result = await dispatcherDelegate(f.host).call({
       name: 'list',
-      arguments: {},
+      arguments: { status: 'all' },
     });
 
     expect(result).toEqual({
       ok: true,
       structured: {
+        total: 2,
+        next_cursor: null,
         teammates: [
           {
             name: 'mate-1',
@@ -447,9 +449,17 @@ describe('last projection', () => {
       }),
       requested_records: 20,
       returned_records: 1,
-      records: [{ kind: 'assistant_message', text: 'done', occurred_at: null }],
+      records: [
+        {
+          kind: 'assistant_message',
+          text: 'done',
+          occurred_at: null,
+          turn_id: 'turn-1',
+        },
+      ],
       next_cursor: 'cursor-3',
       truncated: true,
+      transcript_path: '/logs/session.jsonl',
     };
     vi.spyOn(f.host.teammates, 'last').mockResolvedValue(observation);
 
@@ -465,10 +475,16 @@ describe('last projection', () => {
         runtime_status: null,
         last_error: 'runtime exited',
         records: [
-          { kind: 'assistant_message', text: 'done', occurred_at: null },
+          {
+            kind: 'assistant_message',
+            text: 'done',
+            occurred_at: null,
+            turn_id: 'turn-1',
+          },
         ],
         next_cursor: 'cursor-3',
         truncated: true,
+        transcript_path: '/logs/session.jsonl',
       },
     });
   });

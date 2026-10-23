@@ -27,7 +27,16 @@ import {
 import type { McpServerDelegate } from '../mcp/types.js';
 import { toSubmissionResult } from './admission.js';
 import { agentEntityNameParam } from './requests.js';
-import { TEAMMATE_ROSTER_ROW_SCHEMA, teammateRosterRow } from './mcp-roster.js';
+import {
+  TEAMMATE_LIST_STATUSES,
+  TEAMMATE_ROSTER_ROW_SCHEMA,
+  teammateRosterRow,
+} from './mcp-roster.js';
+import {
+  LIST_PAGE_PROPERTIES,
+  listInputProperties,
+  listPage,
+} from '../mcp/list-page.js';
 import type { TeammateSubmitInput } from './submission.js';
 import type { TurnAdmission } from './turn.js';
 import type { TeammateOps } from './types.js';
@@ -118,8 +127,8 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
     {
       descriptor: tool(
         'list',
-        'Discover your owner address and same-collection peers, including closed peers. You are excluded from the peer rows.',
-        {},
+        'Discover your owner address and a page of same-collection peers. Defaults to non-closed peers; use status all or closed for recovery. You are excluded from peers and totals; the owner is always returned separately.',
+        listInputProperties(TEAMMATE_LIST_STATUSES),
         [],
         {
           title: 'List your owner and peers',
@@ -130,21 +139,27 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
                 'status',
               ]),
               teammates: arrayOf(TEAMMATE_ROSTER_ROW_SCHEMA),
+              ...LIST_PAGE_PROPERTIES,
             },
-            ['owner', 'teammates'],
+            ['owner', 'teammates', 'total', 'next_cursor'],
           ),
           annotations: READ_ONLY_ANNOTATIONS,
         },
       ),
-      execute: async () => {
+      execute: async (args) => {
         const peers = await scope.owner.teammates.list();
         const { name, status } = scope.owner.memberOwner();
+        const page = listPage(
+          peers.filter((peer) => peer.name !== scope.name),
+          args,
+          TEAMMATE_LIST_STATUSES,
+        );
         return {
           structured: {
             owner: { name, status },
-            teammates: peers
-              .filter((peer) => peer.name !== scope.name)
-              .map(teammateRosterRow),
+            teammates: page.items.map(teammateRosterRow),
+            total: page.total,
+            next_cursor: page.next_cursor,
           },
         };
       },

@@ -236,7 +236,12 @@ Each MCP delegate owns its model-facing result projection; Command and domain
 DTOs retain the facts their callers use. Compact creation, submission, roster,
 and history results do not narrow the detailed `status` read. Keep result
 schemas beside their projections when a schema is published. Owner and member
-TeamMate scans share the row schema and mapper in `agent/mcp-roster.ts`; Team
+TeamMate scans share the row schema and mapper in `agent/mcp-roster.ts`.
+`service/mcp/list-page.ts` applies status selection and bounded paging to Team
+and both TeamMate scopes, reusing history limit/cursor primitives. Default
+non_closed does not mean currently running; exact status/all preserves closed
+resource discovery. Total counts matching rows before paging and member self
+exclusion precedes that count. Domain/Command lists stay whole. Team
 list/history rows are closed, including their cleanup result. Team dissolve
 receipts share their MCP-only declaration in `team/requests.ts`. Ordinary
 top-level result objects stay closed unless a named JSON-valued extension field

@@ -10,8 +10,8 @@ tool-call payloads accompanied the report.
 
 The central observation is that smaller rows do not bound the number of rows:
 single-resource reads improved, but accumulated closed resources still dominate
-list responses. This note records follow-up candidates; it does not authorize
-changing list defaults, adding pagination, or altering activity contracts.
+list responses. The original note recorded candidates only. The operator subsequently asked,
+"另外那几个为什么变成了后续改进记录？这次为什么不一起做了？" These gaps are now included in this PR, with the implementation limits below.
 
 ## Reported observations
 
@@ -74,27 +74,31 @@ retrieval as a confirmed missing feature.
 
 The [activity projection](/packages/dreamux/src/service/agent/activity.ts)
 returns assistant records with `kind`, `text`, and `occurred_at`, and tool records
-with `kind`, `name`, `status`, and `occurred_at` when tools are included. It has no
+with `kind`, `name`, `status`, and `occurred_at` when tools are included. The reported installed build has no
 turn identifier. A role field that merely repeats `assistant_message` would not
 resolve the reported turn-boundary problem. Any boundary fact must come from
 the runtime activity seam rather than be inferred from timestamps in Core.
 
-## Follow-up candidates in reported priority order
+## Disposition in reported priority order
 
-1. Add status filtering and bounded pagination to TeamMate/Team lists. Evaluate
-   a non-closed or recent-items default, explicit total/truncation semantics, and
-   a cursor. Default filtering is a behavior decision: retain an explicit way
-   to find closed resources for recovery, and account for member roster scope.
-2. Replace complete cron prompts in list rows with a bounded preview and
-   `prompt_bytes`, with an explicit way to retrieve the full prompt before editing.
-   The proposed preview length is approximately 200 characters. The current
-   [scheduler MCP](/packages/dreamux/src/service/scheduler/mcp.ts) returns complete
-   job results; do not remove the only full-prompt read without a replacement.
-3. Resolve the space-identity observation mismatch. The requested identity read
-   already exists in the checked installed implementation.
-4. Evaluate provider-backed turn boundaries for `teammate.last`. Preserve
-   existing records, pagination and tool observations. The separate proposed
-   `transcript_path` capability remains unimplemented in this release.
+1. Implemented status/limit/cursor on TeamMate and Team MCP lists: default first
+   20 non-closed rows, maximum 100, total and next_cursor. Closed resources remain
+   explicitly selectable; member scope excludes self before paging. Command
+   full lists and underlying record enumeration are unchanged.
+2. Implemented cron preview (200 Unicode code points) and full UTF-8 prompt_bytes;
+   include_prompt:true retrieves the full top-level prompt before editing.
+   Optional id filters exactly; missing jobs return an empty array.
+3. Space identity already exists in the checked implementation. No new production
+   fix is justified by the conflicting report; original live-call evidence is
+   still needed to diagnose that observation.
+4. Implemented optional native turn_id and successful-read transcript_path.
+   Codex supplies native IDs when present in the scanned segment; Claude logs
+   do not supply trustworthy native turn identity. Prompt UUIDs and conditional,
+   potentially aggregated turn_duration checkpoints are not substitutes. Claude
+   gets a canonical transcript path but no invented boundary. Paths can be null
+   for external providers; Codex paths name the tail, including compressed files,
+   not every ancestor that supplied a page. Existing failure behavior remains.
 
-No production behavior, configuration, installed package or service lifecycle
-was changed while recording this input.
+Recording the original input changed no production behavior. The later in-PR
+implementation changes the surfaces above, but does not install, configure,
+restart, or merge anything. See the task's requirement and verification records.
