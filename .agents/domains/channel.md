@@ -1472,16 +1472,20 @@ The neutral conversation projection is a capability of the dispatcher agent and
 team-scoped entities, not a Feishu role filter in core. TeamLeaders and Team
 members publish the event surface; team-less dispatcher-spawned TeamMates do not
 participate. Its scope is either a team-less dispatcher or a named
-TeamLeader/Team member. Core carries no Channel origin; the Channel decides
-whether its recipient has an anchor where the activity can be displayed.
+TeamLeader/Team member. Core's `actorScope` predicate rejects out-of-scope actors,
+including team-less non-dispatchers, before any fact enters the bus. Separately,
+Core carries no Channel origin; the Channel decides whether its recipient has an
+anchor where the activity can be displayed.
 
 The Feishu session subscribes through `FeishuCotAdapter`, which owns recipient
 anchors and card transitions. `CotCardWriter` owns serialized create/append,
 500ms pacing, terminal writes, drain, and failure cleanup; `CotOutbox` in
 `recipients.ts` owns bounded event buffering. `reasoning.ts` plans native part
-events and updates the open-part set only after admission, while `card.ts`
-owns wire event shapes. Presentation is keyed by *recipient*: every TeamLeader, and the
-Dispatcher Agent, owns one standing anchor and at most one open card, whichever
+events and updates the open-part map only after admission. This map retains
+each native part's display id until that part closes, avoiding a hash for every
+increment. `card.ts` owns wire event shapes. Presentation is keyed by
+*recipient*: every TeamLeader, and the Dispatcher Agent, owns one standing anchor
+and at most one open card, whichever
 Feishu chat, DM, group, or topic supplied that anchor. A target is an attribute
 of the anchor, not a state key or a card partition, so a conversation that moves
 between chats moves its one card rather than growing a second. None of it is

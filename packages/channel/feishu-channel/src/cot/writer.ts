@@ -222,14 +222,12 @@ export class CotCardWriter {
         return;
       }
       // Wait first, then take the batch: increments that arrive during the
-      // cadence window belong to this batch, not the next one.
+      // cadence window belong to this batch, not the next one. The first
+      // queued event always fits one append — its content is capped at 4KiB,
+      // so even twice-escaped it is far inside the 50-event / 64KiB bounds —
+      // and a lone terminal always fits too.
       await this.waitForAppendSlot(presentation);
       const batch = presentation.outbox.takeAppendBatch(cotId, messageId);
-      if (batch.length === 0 && presentation.outbox.hasEvents()) {
-        this.abandon(state, presentation, 'append_batch_too_large');
-        await io.completeWithError({ cotId, messageId });
-        return;
-      }
       let finishing = false;
       if (
         !presentation.outbox.hasEvents() &&
@@ -244,7 +242,6 @@ export class CotCardWriter {
           finishing = true;
         }
       }
-      if (batch.length === 0) return;
       presentation.lastAppendStartedAt = Date.now();
       try {
         await io.append({ cotId, messageId, events: batch });

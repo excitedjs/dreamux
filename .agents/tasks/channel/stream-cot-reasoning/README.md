@@ -8,6 +8,7 @@
 - Final solution: [Technical solution](/.agents/tasks/channel/stream-cot-reasoning/technical-design/final.md)
 - Verification: [Evidence and coverage limits](/.agents/tasks/channel/stream-cot-reasoning/verification.md)
 - Scope authority: The operator requested the four changes on 2026-10-22; the direct request is quoted in the requirement. No separate authorization card was sent.
+- Follow-up authority: On 2026-10-23 the operator requested the latest PR comments be fetched and their code-style issues addressed: "拉一下最新评论，把这些代码风格问题调整一下。"
 - Next action: Follow the delivery PR in GitHub, which owns CI, review, and merge status.
 - Related tasks: Builds on [conversation cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md) and [member messaging](/.agents/tasks/mcp/enable-team-member-messaging/README.md).
 

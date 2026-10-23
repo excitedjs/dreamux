@@ -37,11 +37,11 @@ Both runtime providers passed targeted Rush build, lint, test and
 in 13 files. Feishu Channel passed its targeted four gates with 793 tests in
 38 files.
 
-The final full-repository Rush run passed `build`, `lint`, `test`, and
+The initial delivery's full-repository Rush run passed `build`, `lint`, `test`, and
 `typecheck:tests`, including installed-CLI contract checks. The optional live
 model-behavior gate was not enabled; the separate native reasoning probes above
-are the live upstream evidence for this change. No implementation source changed
-after these four gates. The KB check, Rush change verification, and mandatory
+are the live upstream evidence for this change. The subsequent style follow-up
+and its validation are recorded below. The KB check, Rush change verification, and mandatory
 pre-commit lint/author/anti-leak checks also passed.
 
 Additional Channel tests cover:
@@ -82,3 +82,35 @@ type and arrival order; it does not claim arbitrary out-of-order correlation.
 The new Dreamux implementation has not been deployed or validated visually in a
 live Feishu client; native upstream probes and synthetic integration tests prove
 only their stated boundaries.
+
+## Simplification follow-up (2026-10-23)
+
+The operator requested fixes for the latest review comments. The
+[simplification review](https://github.com/excitedjs/dreamux/pull/479#pullrequestreview-5623847063)
+contains ten inline findings and three additional observations in its body.
+The follow-up keeps the existing behavior and addresses them together:
+
+- Reuse the shared JSON shape guards and one block initializer; remove the
+  unused constructor allocation and the presentation's redundant generation.
+- Keep each open part's display id in its existing presentation state rather
+  than hashing each fragment. Share refusal accounting in the outbox.
+- Count appended content and wire bytes separately, with exact corrections
+  when fragments join a UTF-16 surrogate pair. Retain only the tail content
+  size; partial dequeue preserves it and emptying the queue clears it.
+- Select append batches with a local remaining-byte counter and one shared
+  request-budget formula. Fit small text directly before walking characters.
+  `truncateEscaped` already had the requested whole-text fast path.
+- Remove the unreachable oversized-first-event abandon branch. Preserve the
+  separate generation check for tool calls crossing an anchor transition.
+- Share COT fixtures while preserving each suite's clock-advance defaults.
+  Binding tests fake the cadence timers and Date while leaving real filesystem
+  work and `setImmediate` yields intact; production pacing is unchanged.
+- Give the reasoning-redaction ruling its own switch arm and restore the KB's
+  Core actor-scope invariant alongside the Channel's anchor decision.
+
+Full-repository Rush `build`, `lint`, `test`, and `typecheck:tests` passed for
+this follow-up. The Channel's 804 tests cover the negative byte increments,
+continued merging after partial dequeue, and a fresh tail after clearing the
+queue. Its binding suite ran in about 150ms in the targeted run. Independent
+review of the complete follow-up found no remaining issues; the original
+behavioral assertions were preserved. No new live-client validation is claimed.

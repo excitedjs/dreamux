@@ -29,12 +29,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
-  DreamuxLogger,
   ChannelCoreEvent,
-  TeamStateEvent,
-  RuntimeActivity,
-  TeammateActivityEvent,
-  TeammateRole,
   TeammateInputEvent,
 } from '@excitedjs/dreamux-types';
 
@@ -51,6 +46,22 @@ import { createFeishuBot } from '../src/bot.js';
 import { defaultDispatcherAccessState } from '../src/access/state.js';
 import { createFakeFeishuBot } from './helpers/fake-feishu-bot.js';
 import { chatTarget, topicTarget } from '../src/routing/target.js';
+import {
+  DISPATCHER,
+  LEADER,
+  anchorAt,
+  cotTestClock,
+  input,
+  message,
+  nativeEnd,
+  restoreCotClock,
+  silentLog,
+  submitInbound,
+  teamState,
+  toolCall,
+  useCotClock,
+  type Recipient,
+} from './helpers/feishu-cot-fixtures.js';
 import {
   cotTerminalCount,
   cotTerminal,
@@ -72,196 +83,10 @@ function expectOpeningTexts(
   expect(texts.slice(1)).toEqual(expectedAfterOpening);
 }
 
-const silentLog: DreamuxLogger = {
-  error: () => undefined,
-  warn: () => undefined,
-  info: () => undefined,
-  debug: () => undefined,
-  trace: () => undefined,
-  child: () => silentLog,
-};
+const { settle, closeWithin } = cotTestClock({ settleMs: 5_000 });
 
-beforeEach(() => {
-  vi.useFakeTimers();
-  vi.setSystemTime(1_700_000_000_000);
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-});
-
-/**
- * The cadence the adapter must honor between append starts. The whole file
- * runs on a fake clock so a test can advance to the instant an append becomes
- * legal instead of sleeping it out in real time.
- */
-const APPEND_INTERVAL_MS = 500;
-const CLOSE_DRAIN_MS = 10_000;
-
-/**
- * Let the adapter's serialized tail run and advance through its cadence.
- *
- * Card creation and every append are queued behind one per-recipient promise
- * chain, and every append after a card's first waits one cadence from the
- * previous start. A single published fact needs one window; a burst that
- * straddles an append already in flight can need a short chain of them, so
- * the default covers that chain. A test asserting cadence itself passes the
- * exact window it means instead.
- */
-async function settle(ms = APPEND_INTERVAL_MS * 10): Promise<void> {
-  for (let index = 0; index < 12; index += 1) await Promise.resolve();
-  await vi.advanceTimersByTimeAsync(ms);
-  for (let index = 0; index < 12; index += 1) await Promise.resolve();
-}
-
-/**
- * Close an owner whose terminal append is itself paced.
- *
- * Close is synchronous up to the point it fences its cards, so the terminal
- * append's cadence timer exists by the time this returns; advancing past the
- * drain window delivers it and lets close resolve.
- */
-async function closeWithin(owner: { close(): Promise<void> }): Promise<void> {
-  const closing = owner.close();
-  await vi.advanceTimersByTimeAsync(CLOSE_DRAIN_MS);
-  await closing;
-}
-
-function anchorAt(
-  chatId: string,
-  messageId: string,
-  target = chatTarget(chatId, 'group'),
-): VisibleMessageAnchor {
-  return { chatId, messageId, target, servingTarget: null };
-}
-
-interface RecipientScope {
-  readonly teammateName: string;
-  readonly role: TeammateRole;
-  readonly teamName: string | null;
-}
-
-/**
- * One recipient, described the way Core publishes it.
- *
- * The two kinds differ only in these three fields, which is the whole point of
- * running the same scenarios over both.
- */
-interface Recipient {
-  readonly label: string;
-  readonly scope: RecipientScope;
-}
-
-const LEADER: Recipient = {
-  label: 'TeamLeader',
-  scope: {
-    teammateName: 'alpha-leader',
-    role: 'team_leader',
-    teamName: 'alpha',
-  },
-};
-
-const DISPATCHER: Recipient = {
-  label: 'Dispatcher',
-  scope: {
-    teammateName: 'dispatcher-agent',
-    role: 'dispatcher',
-    teamName: null,
-  },
-};
-
-let sequence = 0;
-
-function input(
-  recipient: Recipient,
-  content: string,
-  source = 'feishu',
-  sourceId: string | null = null,
-  notice: TeammateInputEvent['notice'] = null,
-): TeammateInputEvent {
-  return {
-    schemaVersion: 1,
-    kind: 'teammate.input',
-    occurredAt: 1_700_000_000_000 + (sequence += 1),
-    ...recipient.scope,
-    source,
-    sourceId: sourceId,
-    content,
-    notice,
-  };
-}
-
-function activity(
-  recipient: Recipient,
-  payload: RuntimeActivity,
-): TeammateActivityEvent {
-  return {
-    schemaVersion: 1,
-    kind: 'teammate.activity',
-    occurredAt: 1_700_000_000_000 + (sequence += 1),
-    ...recipient.scope,
-    activity: payload,
-  };
-}
-
-function message(recipient: Recipient, content: string): TeammateActivityEvent {
-  return activity(recipient, {
-    kind: 'assistant.message',
-    occurredAt: 1,
-    id: `event-${(sequence += 1)}`,
-    text: content,
-  });
-}
-
-function toolCall(
-  recipient: Recipient,
-  callId: string,
-  status: 'started' | 'completed' | 'failed',
-): TeammateActivityEvent {
-  return activity(recipient, {
-    kind: 'tool.call',
-    occurredAt: 1,
-    id: callId,
-    toolName: 'Read',
-    action: 'read',
-    summary: null,
-    invocation: null,
-    items: [],
-    status,
-    arguments: status === 'started' ? '{"file_path":"/tmp/example"}' : null,
-    result: status === 'started' ? null : 'file contents',
-    error: null,
-  });
-}
-
-function nativeEnd(
-  recipient: Recipient,
-  status: 'completed' | 'failed' | 'interrupted',
-  reason: string | null = null,
-): TeammateActivityEvent {
-  return activity(recipient, {
-    kind: 'turn.ended',
-    occurredAt: 1,
-    status,
-    reason,
-  });
-}
-
-function teamState(
-  teamName: string,
-  leaderName: string,
-  status: 'starting' | 'running' | 'closed',
-): TeamStateEvent {
-  return {
-    schemaVersion: 1,
-    kind: 'team.state',
-    occurredAt: 1_700_000_000_000 + (sequence += 1),
-    teamName: teamName,
-    leaderName: leaderName,
-    status,
-    teammates: [],
-  };
-}
+beforeEach(useCotClock);
+afterEach(restoreCotClock);
 
 interface Harness {
   readonly adapter: FeishuCotAdapter;
@@ -279,25 +104,6 @@ function harness(): Harness {
     cotReasoning: false,
   });
   return { adapter, cot };
-}
-
-function submitInbound(
-  adapter: FeishuCotAdapter,
-  recipient: Recipient,
-  turnId: string,
-  anchor: VisibleMessageAnchor,
-): void {
-  const sourceId = `message-${turnId}`;
-  const lease = adapter.beginInboundSubmission({
-    teamName:
-      recipient.scope.role === 'dispatcher' ? null : recipient.scope.teamName,
-    anchor,
-    sourceId,
-  });
-  adapter.handle(
-    input(recipient, 'the already visible inbound', 'feishu', sourceId),
-  );
-  lease?.release();
 }
 
 /**
@@ -603,11 +409,9 @@ describe('Feishu COT — the two recipients are independent presentations', () =
     const { adapter, cot } = harness();
     const member: Recipient = {
       label: 'member',
-      scope: {
-        teammateName: 'alpha-worker',
-        role: 'teammate',
-        teamName: 'alpha',
-      },
+      teammateName: 'alpha-worker',
+      role: 'teammate',
+      teamName: 'alpha',
     };
 
     adapter.handle(input(member, 'member brief', 'task', 'other-source'));
@@ -883,35 +687,11 @@ describe('Feishu COT adapter — default-show, without a source whitelist', () =
     return { seam, cot, lifecycle };
   }
 
-  function submitThroughAdapter(
-    seam: FeishuCotAdapter,
-    recipient: Recipient,
-    turnId: string,
-    anchor: VisibleMessageAnchor,
-  ): void {
-    const sourceId = `message-${turnId}`;
-    const lease = seam.beginInboundSubmission({
-      teamName:
-        recipient.scope.role === 'dispatcher' ? null : recipient.scope.teamName,
-      anchor,
-      sourceId,
-    });
-    seam.handle(
-      input(recipient, 'the already visible inbound', 'feishu', sourceId),
-    );
-    lease?.release();
-  }
-
   it.each(['task', 'task-notification', 'a-future-source'])(
     'shows a %s input body once the recipient has an anchor',
     async (source) => {
       const { seam, cot } = adapterHarness();
-      submitThroughAdapter(
-        seam,
-        LEADER,
-        'turn-channel',
-        anchorAt('oc_team', 'om_1'),
-      );
+      submitInbound(seam, LEADER, 'turn-channel', anchorAt('oc_team', 'om_1'));
       await settle();
 
       // Another producer submits to the same recipient, and no source whitelist
@@ -989,12 +769,7 @@ describe('Feishu COT adapter — default-show, without a source whitelist', () =
     },
   ])('reduces $what to one line on the card', async ({ event, shown }) => {
     const { seam, cot } = adapterHarness();
-    submitThroughAdapter(
-      seam,
-      LEADER,
-      'turn-channel',
-      anchorAt('oc_team', 'om_1'),
-    );
+    submitInbound(seam, LEADER, 'turn-channel', anchorAt('oc_team', 'om_1'));
     await settle();
 
     seam.handle(event());
@@ -1012,7 +787,7 @@ describe('Feishu COT adapter — default-show, without a source whitelist', () =
    */
   it('shows a member-message body to a recipient the label does not address', async () => {
     const { seam, cot } = adapterHarness();
-    submitThroughAdapter(
+    submitInbound(
       seam,
       DISPATCHER,
       'turn-dispatcher',
@@ -1039,7 +814,7 @@ describe('Feishu COT adapter — default-show, without a source whitelist', () =
 
   it('forwards the turn end, which is the only terminal a card has', async () => {
     const { seam, cot } = adapterHarness();
-    submitThroughAdapter(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
+    submitInbound(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
     await settle();
 
     seam.handle(message(LEADER, 'still working'));
@@ -1073,7 +848,7 @@ describe('Feishu COT adapter — default-show, without a source whitelist', () =
 
   it('presents nothing once the session fence is no longer current', async () => {
     const { seam, cot, lifecycle } = adapterHarness();
-    submitThroughAdapter(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
+    submitInbound(seam, LEADER, 'turn-1', anchorAt('oc_team', 'om_1'));
     await settle();
 
     lifecycle.abort();

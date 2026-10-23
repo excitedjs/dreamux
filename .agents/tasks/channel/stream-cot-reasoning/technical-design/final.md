@@ -14,7 +14,7 @@ The operator subsequently requested no chunk redaction. Core returns the reasoni
 
 ## Feishu presentation
 
-Add compatible optional `cot: { reasoning: boolean }` config, normalizing omission to false. Render native `REASONING_START`, `REASONING_MESSAGE_START` (role reasoning), content increments, message end, and reasoning end. Add `Thinking...` once per visible block on each presentation. Derive display IDs inside Channel from native ID and native part position. No encrypted-value event is used.
+Add compatible optional `cot: { reasoning: boolean }` config, normalizing omission to false. Render native `REASONING_START`, `REASONING_MESSAGE_START` (role reasoning), content increments, message end, and reasoning end. Add `Thinking...` once per visible block on each presentation. Derive display IDs inside Channel from native ID and native part position, retaining each id in the presentation's open-part map until completion. No encrypted-value event is used.
 
 Put the 500ms cadence at the actual append boundary, covering create-triggered flushes, multiple batches, and final terminal batches. Merge only adjacent pending deltas for the same block before outbox admission, respecting existing event/request byte and count limits. Text/tool events are ordering barriers. The adapter retains recipient/card policy; a single card writer owns the existing create/append/failure pipeline together with pacing and bounded drain. The pure reasoning projector commits its open-part changes only after outbox admission. Timers participate in close/drain. Anchor replacement and append failure abandon prior presentation state; the next chunk opens a new native block with a fresh prefix and no replay.
 

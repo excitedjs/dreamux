@@ -1,4 +1,5 @@
 import type { AgentRuntimeEventSink } from '@excitedjs/dreamux-types';
+import { isPlainObject, nonEmptyString } from '@excitedjs/dreamux-utils';
 import type { JsonObject } from './types.js';
 
 interface ContentBlock {
@@ -20,22 +21,27 @@ export class ClaudeReasoningActivity {
   constructor(private readonly events: AgentRuntimeEventSink) {}
 
   stream(raw: JsonObject): void {
-    const event = record(raw['event']);
-    if (event === null) return;
+    const event = raw['event'];
+    if (!isPlainObject(event)) return;
     if (event['type'] === 'message_start') {
-      const id = nonempty(record(event['message'])?.['id']);
+      const message = event['message'];
+      const id = isPlainObject(message)
+        ? nonEmptyString(message['id'])
+        : undefined;
       if (this.currentId !== null) this.closeMessage(this.currentId);
-      this.currentId = id;
-      if (id !== null && !this.messages.has(id))
+      this.currentId = id ?? null;
+      if (id !== undefined && !this.messages.has(id))
         this.messages.set(id, { blocks: new Map(), activeIndex: null });
       return;
     }
     // New CLI builds also carry the API id on partial envelopes, including
     // synthetic stops for responses cut short before an assistant snapshot.
-    const abandoned = record(raw['abandoned_blocks']);
+    const abandoned = raw['abandoned_blocks'];
     const id =
-      nonempty(raw['api_message_id']) ??
-      nonempty(abandoned?.['api_message_id']) ??
+      nonEmptyString(raw['api_message_id']) ??
+      (isPlainObject(abandoned)
+        ? nonEmptyString(abandoned['api_message_id'])
+        : undefined) ??
       this.currentId;
     if (id === null) return;
     let message = this.messages.get(id);
@@ -53,26 +59,16 @@ export class ClaudeReasoningActivity {
     const index = event['index'];
     if (typeof index !== 'number') return;
     if (event['type'] === 'content_block_start') {
-      const block = record(event['content_block']);
-      if (typeof block?.['type'] !== 'string') return;
-      if (!message.blocks.has(index))
-        message.blocks.set(index, {
-          type: block['type'],
-          status: 'unseen',
-          snapshot: false,
-        });
+      const block = event['content_block'];
+      if (!isPlainObject(block) || typeof block['type'] !== 'string') return;
+      ensureBlock(message, index, block['type']);
       message.activeIndex = index;
       if (block['type'] === 'thinking')
         this.delta(id, index, block['thinking']);
     } else if (event['type'] === 'content_block_delta') {
-      const delta = record(event['delta']);
-      if (delta?.['type'] === 'thinking_delta') {
-        if (!message.blocks.has(index))
-          message.blocks.set(index, {
-            type: 'thinking',
-            status: 'unseen',
-            snapshot: false,
-          });
+      const delta = event['delta'];
+      if (isPlainObject(delta) && delta['type'] === 'thinking_delta') {
+        ensureBlock(message, index, 'thinking');
         this.delta(id, index, delta['thinking']);
       }
     } else if (event['type'] === 'content_block_stop') {
@@ -82,19 +78,24 @@ export class ClaudeReasoningActivity {
   }
 
   snapshot(raw: JsonObject, offset: number): void {
-    const message = record(raw['message']);
-    const content = message?.['content'];
+    const message = raw['message'];
+    if (!isPlainObject(message)) return;
+    const content = message['content'];
     if (!Array.isArray(content)) return;
-    const block = record(content[offset]);
-    if (block === null) return;
-    const id = nonempty(message?.['id']);
-    const native = id === null ? undefined : this.messages.get(id);
-    if (native === undefined || id === null) {
+    const block = content[offset];
+    if (!isPlainObject(block)) return;
+    const id = nonEmptyString(message['id']);
+    const native = id === undefined ? undefined : this.messages.get(id);
+    if (native === undefined || id === undefined) {
       // No partial context: the envelope UUID and its own array positions
       // are native identities too. Never synthesize an API block index.
-      const uuid = nonempty(raw['uuid']);
-      const thinking = nonempty(block['thinking']);
-      if (uuid !== null && block['type'] === 'thinking' && thinking !== null)
+      const uuid = nonEmptyString(raw['uuid']);
+      const thinking = nonEmptyString(block['thinking']);
+      if (
+        uuid !== undefined &&
+        block['type'] === 'thinking' &&
+        thinking !== undefined
+      )
         this.publish(uuid, offset, thinking, 'completed');
       return;
     }
@@ -103,8 +104,8 @@ export class ClaudeReasoningActivity {
     const known = native.blocks.get(index)!;
     known.snapshot = true;
     if (known.type !== 'thinking') return;
-    const thinking = nonempty(block['thinking']);
-    if (known.status === 'unseen' && thinking !== null) {
+    const thinking = nonEmptyString(block['thinking']);
+    if (known.status === 'unseen' && thinking !== undefined) {
       this.publish(id, index, thinking, 'completed');
       known.status = 'completed';
     } else this.closeBlock(id, index);
@@ -180,12 +181,11 @@ export class ClaudeReasoningActivity {
   }
 }
 
-function record(value: unknown): JsonObject | null {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as JsonObject)
-    : null;
-}
-
-function nonempty(value: unknown): string | null {
-  return typeof value === 'string' && value !== '' ? value : null;
+function ensureBlock(
+  message: NativeMessage,
+  index: number,
+  type: string,
+): void {
+  if (!message.blocks.has(index))
+    message.blocks.set(index, { type, status: 'unseen', snapshot: false });
 }

@@ -64,18 +64,19 @@ import {
 let dir: string;
 const adapters: FeishuCotAdapter[] = [];
 
-/**
- * The least interval the Channel keeps between two COT append starts.
- *
- * This suite uses a real clock because it also drives real fs commits, so a
- * turn is the ordinary event-loop yield plus one cadence window: enough for a
- * fact just published to reach a legal append start before the card is read.
- */
+/** The least interval the Channel keeps between two COT append starts. */
 const COT_APPEND_INTERVAL_MS = 500;
+const CLOSE_DRAIN_MS = 10_000;
 
+/**
+ * Let real work settle, then advance one cadence window.
+ *
+ * Only timers and the wall clock are faked; `setImmediate` stays real so the
+ * real fs commits this suite drives settle through genuine event-loop turns.
+ */
 async function nextAppendTurn(): Promise<void> {
   await nextTurn();
-  await new Promise((resolve) => setTimeout(resolve, COT_APPEND_INTERVAL_MS));
+  await vi.advanceTimersByTimeAsync(COT_APPEND_INTERVAL_MS);
   await nextTurn();
 }
 const log: DreamuxLogger = {
@@ -88,11 +89,17 @@ const log: DreamuxLogger = {
 };
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   dir = mkdtempSync(join(tmpdir(), 'dreamux-feishu-binding-ops-'));
 });
 
 afterEach(async () => {
-  await Promise.all(adapters.splice(0).map((adapter) => adapter.close()));
+  for (const adapter of adapters.splice(0)) {
+    const closing = adapter.close();
+    await vi.advanceTimersByTimeAsync(CLOSE_DRAIN_MS);
+    await closing;
+  }
+  vi.useRealTimers();
   vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });

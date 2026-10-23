@@ -20,8 +20,9 @@ import {
   boundedTextMessageEventGroup,
   checkedEvent,
   cotEventContentBytes,
-  EVENT_CONTENT_RESERVE_BYTES,
   escapedBytes,
+  escapedDeltaBytes,
+  EVENT_CONTENT_RESERVE_BYTES,
   FEISHU_COT_EVENT_CONTENT_MAX_BYTES,
   shrinkForContentBudget,
   splitForEventContent,
@@ -30,6 +31,7 @@ import {
   TRUNCATION_MARKER,
   truncateEscaped,
 } from './bytes.js';
+import type { CotAdjacentMergeResult } from './recipients.js';
 
 /** The one activity member this display layer renders as a tool row. */
 export type CotToolCallActivity = Extract<
@@ -241,18 +243,30 @@ export type CotReasoningActivity = Extract<
 >;
 
 /**
+ * The native identity of one reasoning part: the provider's item id plus its
+ * content position. Both are needed — a provider reuses an item id across
+ * parts — and the pair is the key a presentation uses to recognize a part it
+ * has already opened.
+ */
+export function reasoningPartKey(
+  activity: Pick<CotReasoningActivity, 'id' | 'partIndex'>,
+): string {
+  return `${activity.id}\0${activity.partIndex}`;
+}
+
+/**
  * The display identity of one native reasoning part inside one presentation.
  *
- * A native id and its content position are separate facts — a provider reuses
- * an item id across parts — so both feed the digest, never a concatenation the
- * platform or the card could read back. The identity is stable across a part's
- * increments, which is what makes the client append them to one block, and
- * scoped to a presentation because a replacement card starts empty.
+ * Derived from the native part key, never from concatenating ids the platform
+ * could read back. The identity is stable across a part's increments, which is
+ * what makes the client append them to one block, and scoped to a presentation
+ * because a replacement card starts empty. Hashing is only needed when a part
+ * first opens; callers that already hold this card's part map reuse its value.
  */
 export function reasoningDisplayId(
   activity: Pick<CotReasoningActivity, 'id' | 'partIndex'>,
 ): string {
-  return opaqueDisplayId('reasoning', `${activity.id}\0${activity.partIndex}`);
+  return opaqueDisplayId('reasoning', reasoningPartKey(activity));
 }
 
 /**
@@ -320,14 +334,16 @@ export function reasoningContentEvents(input: {
  * event instead of every provider chunk.
  *
  * A text or tool event between them is a barrier: the tail is a different
- * event, so nothing merges across it. The merged content must still fit one
- * event's budget; beyond that the increment stays its own event and the client
- * appends it to the same block anyway.
+ * event, so nothing merges across it. The byte increases come from the
+ * incoming fragment alone plus the one boundary code unit, never from
+ * serializing the accumulated text again; whether the merged content still
+ * fits one event's budget is the outbox's decision, because it holds the
+ * tail's measured size.
  */
 export function mergeAdjacentReasoningDelta(
   tail: FeishuCotEventInput,
   next: FeishuCotEventInput,
-): FeishuCotEventInput | null {
+): CotAdjacentMergeResult | null {
   if (
     tail.eventType !== 'REASONING_MESSAGE_CONTENT' ||
     next.eventType !== 'REASONING_MESSAGE_CONTENT'
@@ -347,13 +363,15 @@ export function mergeAdjacentReasoningDelta(
   const incoming =
     typeof next.content['delta'] === 'string' ? next.content['delta'] : '';
   if (incoming === '') return null;
-  const merged: FeishuCotEventInput = {
-    eventType: 'REASONING_MESSAGE_CONTENT',
-    content: { messageId, delta: `${previous}${incoming}` },
+  const { contentBytes, wireBytes } = escapedDeltaBytes(previous, incoming);
+  return {
+    event: {
+      eventType: 'REASONING_MESSAGE_CONTENT',
+      content: { messageId, delta: `${previous}${incoming}` },
+    },
+    extraContentBytes: contentBytes,
+    extraWireBytes: wireBytes,
   };
-  return cotEventContentBytes(merged) <= FEISHU_COT_EVENT_CONTENT_MAX_BYTES
-    ? merged
-    : null;
 }
 
 /** `TOOL_CALL_START.icon` as the COT Message Brief documents it: a built-in

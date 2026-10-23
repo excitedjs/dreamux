@@ -452,7 +452,6 @@ export class FeishuCotAdapter {
     const presentation = state.active;
     if (
       presentation === null ||
-      presentation.generation !== state.generation ||
       presentation.closed ||
       presentation.terminalIntent !== null
     ) {
@@ -686,14 +685,13 @@ export class FeishuCotAdapter {
       if (anchor === null) return false;
       const created: CotPresentation = {
         id: randomUUID(),
-        generation: state.generation,
         chatId: anchor.chatId,
         originMessageId: anchor.messageId,
         phase: 'creating',
         cotId: null,
         messageId: null,
         outbox: new CotOutbox(),
-        reasoningParts: new Set(),
+        reasoningParts: new Map(),
         lastAppendStartedAt: null,
         terminalIntent: null,
         flushQueued: false,

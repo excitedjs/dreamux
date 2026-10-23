@@ -9,7 +9,7 @@
  * one, which is what makes an authoritative snapshot with no increments
  * harmless. Completion closes only the part, not the turn.
  *
- * The projector is pure: it plans events from the open set it is given, and
+ * The projector is pure: it plans events from the parts map it is given, and
  * the caller commits the plan only after admission. A dropped increment
  * therefore never makes the next one believe the prefix was already shown.
  * Concrete event shapes stay in `./card.js`; this module owns only which parts
@@ -23,6 +23,7 @@ import {
   reasoningEndEvent,
   reasoningMessageEndEvent,
   reasoningMessageStartEvent,
+  reasoningPartKey,
   reasoningStartEvent,
   type CotReasoningActivity,
 } from './card.js';
@@ -30,6 +31,8 @@ import {
 /** The events one activity adds, and the part whose state it changes. */
 export interface ReasoningProjection {
   readonly events: FeishuCotEventInput[];
+  /** The native identity this card keys the part by. */
+  readonly partKey: string;
   readonly displayId: string;
   /** The activity closes this part rather than leaving it open. */
   readonly completed: boolean;
@@ -45,13 +48,17 @@ export interface ReasoningProjection {
  *
  * `openParts` is absent when no card is open at all; that presentation has no
  * parts, so the activity opens the first block on the card about to be made.
+ * A continuing part reuses the display id it was given when it opened, so the
+ * digest runs once per part rather than once per fragment.
  */
 export function planReasoningActivity(
   activity: CotReasoningActivity,
-  openParts: ReadonlySet<string> | undefined,
+  openParts: ReadonlyMap<string, string> | undefined,
 ): ReasoningProjection | null {
-  const displayId = reasoningDisplayId(activity);
-  const opening = openParts === undefined || !openParts.has(displayId);
+  const partKey = reasoningPartKey(activity);
+  const known = openParts?.get(partKey);
+  const displayId = known ?? reasoningDisplayId(activity);
+  const opening = known === undefined;
 
   if (activity.text === '') {
     if (activity.status !== 'completed' || opening) return null;
@@ -60,6 +67,7 @@ export function planReasoningActivity(
         reasoningMessageEndEvent(displayId),
         reasoningEndEvent(displayId),
       ],
+      partKey,
       displayId,
       completed: true,
       coalescible: false,
@@ -88,6 +96,7 @@ export function planReasoningActivity(
   }
   return {
     events,
+    partKey,
     displayId,
     completed,
     coalescible: events.length === 1,
@@ -96,11 +105,11 @@ export function planReasoningActivity(
 
 /** Apply an admitted projection to the card's open parts. */
 export function commitReasoningProjection(
-  openParts: Set<string>,
+  openParts: Map<string, string>,
   projection: ReasoningProjection,
 ): void {
-  if (projection.completed) openParts.delete(projection.displayId);
-  else openParts.add(projection.displayId);
+  if (projection.completed) openParts.delete(projection.partKey);
+  else openParts.set(projection.partKey, projection.displayId);
 }
 
 /**
@@ -110,10 +119,10 @@ export function commitReasoningProjection(
  * the message ends; the caller queues these before the run terminal.
  */
 export function closeReasoningParts(
-  openParts: Set<string>,
+  openParts: Map<string, string>,
 ): FeishuCotEventInput[] {
   const events: FeishuCotEventInput[] = [];
-  for (const displayId of openParts) {
+  for (const displayId of openParts.values()) {
     events.push(
       reasoningMessageEndEvent(displayId),
       reasoningEndEvent(displayId),

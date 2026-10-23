@@ -70,7 +70,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   private stopped = false;
   private readonly pendingAdmissions = new Set<Promise<RuntimeAdmission>>();
   private session: ClaudeCodeSession | null = null;
-  private activity: NativeActivityState;
+  private activity!: NativeActivityState;
   private sessionStarting: Promise<ClaudeCodeSession> | null = null;
   private startTask: Promise<AgentRuntimeStartOutcome> | null = null;
   private stopTask: Promise<void> | null = null;
@@ -97,7 +97,6 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.threadId = priorSessionId;
     this.resumed = priorSessionId !== null;
     this.logger = deps.logger;
-    this.activity = createNativeActivityState(deps.events);
   }
 
   start(): Promise<AgentRuntimeStartOutcome> {

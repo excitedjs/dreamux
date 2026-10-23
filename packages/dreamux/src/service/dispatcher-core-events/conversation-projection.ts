@@ -170,10 +170,12 @@ function projectedActivity(
   const redact = (text: string | null): string | null =>
     text === null ? null : redactText(text, cwd, homePathPrefixes).value;
   switch (activity.kind) {
+    case 'assistant.reasoning':
+      // The operator's 2026-10-22 ruling exempts reasoning chunks from redaction.
+      return activity;
     case 'context.compacted':
     case 'turn.interrupted':
     case 'token.usage':
-    case 'assistant.reasoning':
       return activity;
     case 'assistant.message':
       return {
