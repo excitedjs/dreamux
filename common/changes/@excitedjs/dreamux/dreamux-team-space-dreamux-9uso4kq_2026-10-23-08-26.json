@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Keep receipt values literal in Markdown, preserve empty capability descriptions, and consolidate compact MCP schemas and dispatch.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

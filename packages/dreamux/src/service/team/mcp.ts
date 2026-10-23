@@ -28,26 +28,33 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
+import {
+  INTEGER,
+  NULLABLE_STRING,
+  OBJECT,
+  STRING,
+  arrayOf,
+  objectSchema,
+} from '../../command/schema.js';
 import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
-import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
+import {
+  createToolRecordDelegate,
+  type McpToolRecord,
+  type McpToolSuccess,
+} from '../mcp/projection.js';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
   READ_ONLY_ANNOTATIONS,
   tool,
-  type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
-import type {
-  McpDelegateCall,
-  McpDelegateDescription,
-  McpDelegateResult,
-  McpServerDelegate,
-} from '../mcp/types.js';
+import type { McpServerDelegate } from '../mcp/types.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import {
+  dissolveReceiptSchema,
   teamHistoryQuery,
   teamNameParam,
   teamSubmitResult,
@@ -56,37 +63,58 @@ import type { TeamsPort } from './teams-port.js';
 
 export const TEAM_MCP_SERVER_NAME = 'team';
 
-/** One tool this delegate advertises, paired with the handler that serves it. */
-interface TeamMcpToolRecord {
-  readonly descriptor: McpToolDescriptor;
-  readonly execute: (args: CommandPayload) => Promise<McpToolSuccess>;
-}
-
 export function createTeamMcpDelegate(input: {
   teams: TeamsPort;
 }): McpServerDelegate {
-  const records = teamToolRecords(input.teams);
-  const tools = records.map((record) => record.descriptor);
-  return {
-    name: TEAM_MCP_SERVER_NAME,
-    describe(): McpDelegateDescription {
-      return { tools };
-    },
-    call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(() => callTool(records, call));
-    },
-  };
+  return createToolRecordDelegate(
+    TEAM_MCP_SERVER_NAME,
+    teamToolRecords(input.teams),
+  );
 }
 
-async function callTool(
-  records: readonly TeamMcpToolRecord[],
-  call: McpDelegateCall,
-): Promise<McpToolSuccess> {
-  const record = records.find(
-    (candidate) => candidate.descriptor.name === call.name,
-  );
-  return record!.execute(call.arguments as CommandPayload);
-}
+const TEAM_LIST_ROW_SCHEMA = objectSchema(
+  {
+    team_name: STRING,
+    status: STRING,
+    intent: NULLABLE_STRING,
+    source_repo: NULLABLE_STRING,
+    leader_state: NULLABLE_STRING,
+    member_count: INTEGER,
+    worktree_cleanup: STRING,
+  },
+  [
+    'team_name',
+    'status',
+    'intent',
+    'source_repo',
+    'leader_state',
+    'member_count',
+    'worktree_cleanup',
+  ],
+);
+
+const TEAM_HISTORY_ROW_SCHEMA = objectSchema(
+  {
+    team_name: STRING,
+    status: STRING,
+    intent: NULLABLE_STRING,
+    source_repo: NULLABLE_STRING,
+    updated_at: INTEGER,
+    closed_at: { type: ['integer', 'null'] },
+    close_note_preview: NULLABLE_STRING,
+    worktree_cleanup: STRING,
+  },
+  [
+    'team_name',
+    'status',
+    'intent',
+    'source_repo',
+    'updated_at',
+    'closed_at',
+    'close_note_preview',
+    'worktree_cleanup',
+  ],
+);
 
 async function create(
   teams: TeamsPort,
@@ -142,11 +170,11 @@ async function create(
     ...(prompt !== null
       ? {
           text:
-            `Created Team ${result.team_name} (status: ${result.status}). ` +
-            `Leader: ${result.leader_name} (${result.leader_agent_runtime}). ` +
-            `Workspace: ${result.runtime_cwd} (${result.worktree_mode}; cleanup: ${result.worktree_cleanup_mode}).` +
+            `Created Team ${quoteModelValue(result.team_name)} (status: ${result.status}). ` +
+            `Leader: ${quoteModelValue(result.leader_name)} (${quoteModelValue(result.leader_agent_runtime)}). ` +
+            `Workspace: ${quoteModelValue(result.runtime_cwd)} (${result.worktree_mode}; cleanup: ${result.worktree_cleanup_mode}).` +
             (result.source_repo !== null
-              ? ` Source repository: ${result.source_repo}.`
+              ? ` Source repository: ${quoteModelValue(result.source_repo)}.`
               : '') +
             `\n\n${TEAM_DISPATCH_SUCCESS_REMINDER}`,
         }
@@ -245,7 +273,7 @@ async function dissolve(
   return { structured: { status: dissolved.status } };
 }
 
-function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
+function teamToolRecords(teams: TeamsPort): McpToolRecord[] {
   return [
     {
       descriptor: tool(
@@ -346,7 +374,9 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
         [],
         {
           title: 'List Teams',
-          output: objectSchema({ teams: arrayOf(OBJECT) }, ['teams']),
+          output: objectSchema({ teams: arrayOf(TEAM_LIST_ROW_SCHEMA) }, [
+            'teams',
+          ]),
           annotations: READ_ONLY_ANNOTATIONS,
         },
       ),
@@ -432,7 +462,7 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
           title: 'Search Teams',
           output: objectSchema(
             {
-              items: arrayOf(OBJECT),
+              items: arrayOf(TEAM_HISTORY_ROW_SCHEMA),
               next_cursor: { type: ['string', 'null'] },
             },
             ['items', 'next_cursor'],
@@ -472,10 +502,7 @@ function teamToolRecords(teams: TeamsPort): TeamMcpToolRecord[] {
         ['team_name', 'note'],
         {
           title: 'Dissolve a Team',
-          output: objectSchema(
-            { status: { type: 'string', enum: ['submitted'] } },
-            ['status'],
-          ),
+          output: dissolveReceiptSchema(),
           annotations: DESTRUCTIVE_ANNOTATIONS,
         },
       ),

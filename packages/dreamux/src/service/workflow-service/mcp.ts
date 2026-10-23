@@ -9,8 +9,8 @@
  * in the same `{descriptor, execute}` tool-record shape every domain's `mcp.ts`
  * uses.
  *
- * The request readers and the result projection live in `requests.ts`, shared
- * unchanged with `commands.ts`.
+ * Request readers are shared with Commands through `requests.ts`. This module
+ * owns compact MCP results; Commands keep their full record projections there.
  */
 import type { JsonSchema } from '@excitedjs/dreamux-types';
 
@@ -18,6 +18,7 @@ import type { CommandPayload } from '../../command/payload.js';
 import { arrayOf, objectSchema } from '../../command/schema.js';
 import { WORKFLOW_RUN_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import type { McpToolSuccess } from '../mcp/projection.js';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
@@ -170,7 +171,7 @@ async function workflowRun(
   return {
     structured: { run_id: accepted.run_id },
     text:
-      `Started workflow run ${JSON.stringify(accepted.run_id)}.` +
+      `Started workflow run ${quoteModelValue(accepted.run_id)}.` +
       `\n\n${WORKFLOW_RUN_SUCCESS_REMINDER}`,
   };
 }

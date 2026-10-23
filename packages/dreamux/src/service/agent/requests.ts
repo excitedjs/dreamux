@@ -225,9 +225,9 @@ export function agentCloseRequest(params: CommandPayload): AgentCloseRequest {
  * Deliberately not the runtime admission ledger's own status union: its
  * internal `skipped` outcome is normalized to `stopped` at every
  * caller-facing boundary, so a receipt schema built from the raw union would
- * advertise a status no caller ever receives. One array instead of the three
- * independent spellings `teammate.spawn`/`teammate.submit`'s Command schema,
- * the TeamMate MCP tools' schema, and `team.submit`'s schema each carried.
+ * advertise a status no caller ever receives. TeamMate submission Commands and
+ * `team.submit` share this vocabulary; text-capable MCP tools publish no output
+ * schema.
  */
 export const SUBMISSION_STATUS_VALUES = [
   'submitted',
@@ -238,9 +238,8 @@ export const SUBMISSION_STATUS_VALUES = [
 ] as const;
 
 /**
- * The declared output of a TeamMate submission receipt: `teammate.spawn`,
- * `teammate.submit`, and their MCP `spawn`/`send` equivalents all return this
- * one shape instead of each declaring their own copy.
+ * The full submission receipt shared by the `teammate.spawn` and
+ * `teammate.submit` Commands. MCP tools own their compact result projections.
  */
 export const teammateReceiptSchema: JsonSchema = objectSchema(
   {

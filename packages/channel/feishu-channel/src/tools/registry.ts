@@ -108,7 +108,7 @@ export function toolRegistration(
       title: def.title,
       description: def.description,
       inputSchema: def.inputSchema,
-      ...(def.successText === undefined
+      ...(def.successText === undefined && def.outputSchema !== undefined
         ? { outputSchema: def.outputSchema }
         : {}),
       annotations: def.annotations,

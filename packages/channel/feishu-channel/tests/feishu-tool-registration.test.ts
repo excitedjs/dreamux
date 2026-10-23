@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ChannelMcpCaller } from '@excitedjs/dreamux-types';
-import { feishuToolRegistrations } from '../src/tools/registry.js';
+import {
+  feishuToolRegistrations,
+  toolRegistration,
+} from '../src/tools/registry.js';
 
 const callers: ChannelMcpCaller[] = [
   { kind: 'dispatcher' },
@@ -8,6 +11,19 @@ const callers: ChannelMcpCaller[] = [
 ];
 
 describe('Feishu model-facing output schemas', () => {
+  it('omits an absent schema even when the tool has no success text', () => {
+    const registration = toolRegistration({
+      name: 'schema_free',
+      title: 'Schema-free tool',
+      description: 'A tool without an output schema or success text.',
+      inputSchema: { type: 'object' },
+      annotations: {},
+      callers: ['dispatcher'],
+    });
+
+    expect(registration.tool).not.toHaveProperty('outputSchema');
+  });
+
   it.each(callers)(
     'leaves reminder-capable binding tools without schemas for $kind',
     (caller) => {

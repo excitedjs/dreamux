@@ -110,3 +110,54 @@ Final repository gate results are recorded in the task README. Real-model gates
 are opt-in and were not enabled; these checks do not certify live model behavior
 or every installed Codex/Claude client. No deployed daemon or live settings were
 changed.
+
+## Style review corrections (2026-10-23)
+
+The operator requested: "拉一下最新评论，把那些代码风格问题都修一下"
+(Fetch the latest comments and fix the code-style issues.) The latest PR review
+contains ten inline comments and one additional stale ownership comment. The
+pre-edit architect review verified each against the rebased PR source.
+
+- Quote names, paths, refs and runtime ids as Markdown-safe prose; JSON scalar
+  quoting alone left links and backticks active. The pure formatter has one owner
+  in dreamux-utils, shared by Core and Feishu without a Channel-to-Core dependency.
+  URL autolinks, emphasis and entities stay literal; structured facts are unchanged.
+- Publish the domain capability catalog directly, preserving a supplied empty
+  description. Replace the stale pre-refactor provider-shaped test fixture.
+- Share the two MCP dissolve receipt schemas without narrowing Command results.
+- Give the owner/member compact roster schema and mapper one owner.
+- Replace three identical record-delegate interfaces, finders and catalog
+  wrappers with one implementation; handler admission and parsing order stay put.
+- Close Team list/history schemas around their actual compact rows, including
+  cleanup results; detailed Team status retains its open DTO contract.
+- Correct workflow and TeamMate request comments to distinguish Command result
+  ownership from MCP projections.
+- Remove unused Feishu routing output schemas and allow definitions to omit
+  them, while preserving registration behavior for existing extensions.
+- Share only the routing target phrase; quote actual and previous Team names
+  without changing routing facts, no-op behavior or notification guidance.
+- Explain the alternate prompt representations without changing launch/resume
+  instruction application or adding provider-specific conditions.
+
+These corrections add no activity-path capability and perform no live service
+upgrade, configuration write, or restart. Validation below applies to this
+follow-up rather than treating earlier CI as evidence of the current diff.
+
+Final style-review validation:
+
+- Rush build, lint, test and typecheck:tests passed on the completed change.
+  Across the eight test packages, 2,989 tests passed; six opt-in real-model cases
+  were not enabled. No live service or native model-consumption claim is made.
+- The first full run exposed a history fixture relying on two operations landing
+  in different milliseconds. Its close operation now uses a distinct clock value,
+  restored in finally; the original first/second page, full-note search and detail
+  assertions remain intact. Production history sorting did not change.
+- The independent architect reviewed the whole change and final deltas with no
+  remaining findings. Direct Markdown-parser checks confirmed literal values;
+  these are parser evidence, not a live Feishu-client visual check.
+- Real SDK checks accept the compact Team list/history projections and reject an
+  added internal field. Receipt fixtures cover literal rich-text inputs and keep
+  the original structured facts, including Feishu chat/thread and binding names.
+- Knowledge validation passed: 59 task records and 396 reachable files. Three
+  ordinary minor change files cover Core, shared utils and Feishu; no migration
+  or persisted-format change is introduced.

@@ -318,6 +318,9 @@ export class RuntimeGeneration {
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
     let systemPrompt = this.options.systemPrompt;
     if (agent.developerInstructions) {
+      // replace and append are alternative representations, not cumulative
+      // instructions: Codex prefers replace; Claude Code uses append. Extend
+      // both when supplied so either provider sees the same final addition.
       systemPrompt = {
         ...systemPrompt,
         ...(systemPrompt?.replace !== undefined

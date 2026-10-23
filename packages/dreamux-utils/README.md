@@ -13,6 +13,9 @@ against.
 
 ## Exports
 
+- **model-text** — literal Markdown result values (`quoteModelValue`): quote a
+  string and escape inline markup, URL autolinks and entities, so Core and
+  Channel receipts preserve names, paths and runtime ids as facts.
 - **json-shape** — generic JSON-shape primitives with no error-message
   vocabulary (`isPlainObject`, `asString`, `nonEmptyString`).
 - **error-info** — reading an arbitrary thrown value (`errorMessage`,

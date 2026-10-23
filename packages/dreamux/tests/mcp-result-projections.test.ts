@@ -154,30 +154,19 @@ function memberDelegate() {
 }
 
 describe('get_capabilities projection', () => {
-  it('projects capability rows to id, description and tags', async () => {
+  it('publishes the configured catalog without a second normalization', async () => {
     const f = await dispatcherFixture();
-    const capabilities = {
-      verbs: ['spawn'],
+    const capabilities: AgentEntityCapabilities = {
       agent_runtimes: [
         {
           id: 'codex-a',
           description: 'Fast read-only exploration',
           tags: ['explorer', 'fast'],
-          spawn: { agent_runtime: 'codex-a' },
-          runtime_available: true,
-          unsupported_reason: null,
-          public_config: { model: 'hidden' },
         },
-        {
-          id: 'claude-b',
-          tags: [],
-          spawn: { agent_runtime: 'claude-b' },
-          runtime_available: false,
-          unsupported_reason: 'missing binary',
-          public_config: null,
-        },
+        { id: 'claude-b', description: '' },
+        { id: 'plain' },
       ],
-    } as unknown as AgentEntityCapabilities;
+    };
     vi.spyOn(f.host.teammates, 'getCapabilities').mockResolvedValue(
       capabilities,
     );
@@ -196,7 +185,8 @@ describe('get_capabilities projection', () => {
             description: 'Fast read-only exploration',
             tags: ['explorer', 'fast'],
           },
-          { id: 'claude-b' },
+          { id: 'claude-b', description: '' },
+          { id: 'plain' },
         ],
       },
     });
@@ -243,6 +233,50 @@ describe.each(['dispatcher', 'team_leader'] as const)(
           structured: expect.objectContaining({ repo: expect.anything() }),
         });
       }
+    });
+  },
+);
+
+it.each([
+  {
+    path: '/workspace/[link](target)`code`<tag>',
+    branch: 'feature/`code`(target)',
+    location:
+      '"/workspace/\\[link\\]\\(target\\)\\`code\\`\\<tag\\>" on branch "feature/\\`code\\`\\(target\\)"',
+  },
+  {
+    path: '/workspace/www.example.com/~~old~~&amp;',
+    branch: 'feature/example.com',
+    location:
+      '"/workspace/www\\.example\\.com/\\~\\~old\\~\\~\\&amp;" on branch "feature/example\\.com"',
+  },
+])(
+  'quotes a Dispatcher workspace $path and branch without changing their values',
+  async ({ path, branch, location }) => {
+    const f = await dispatcherFixture();
+    const repo = {
+      ...REPO,
+      path,
+      branch,
+    };
+    vi.spyOn(f.host.teammates, 'spawn').mockResolvedValue({
+      status: 'submitted',
+      teammate: teammateStatus({ repo }),
+    });
+    const result = await dispatcherDelegate(f.host).call({
+      name: 'spawn',
+      arguments: { name_prefix: 'mate', prompt: 'go', intent: 'review' },
+    });
+    expect(result).toEqual({
+      ok: true,
+      structured: {
+        name: 'mate-1',
+        status: 'submitted',
+        repo: { path: repo.path, branch: repo.branch },
+      },
+      text:
+        `Started TeamMate "mate-1" in ${location}.\n\n` +
+        TEAMMATE_DISPATCH_SUCCESS_REMINDER,
     });
   },
 );

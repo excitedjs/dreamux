@@ -11,28 +11,23 @@
  * member sender is never sent a completion push, so the text says only that
  * admission proves neither receipt nor execution.
  */
-import {
-  mustNonEmptyString,
-  type CommandPayload,
-} from '../../command/payload.js';
+import { mustNonEmptyString } from '../../command/payload.js';
 import { ValidationError } from '../../platform/errors.js';
 import { STRING, arrayOf, objectSchema } from '../../command/schema.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
-import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
+import {
+  createToolRecordDelegate,
+  type McpToolRecord,
+} from '../mcp/projection.js';
 import {
   MUTATING_ANNOTATIONS,
   READ_ONLY_ANNOTATIONS,
   tool,
-  type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
-import type {
-  McpDelegateCall,
-  McpDelegateDescription,
-  McpDelegateResult,
-  McpServerDelegate,
-} from '../mcp/types.js';
+import type { McpServerDelegate } from '../mcp/types.js';
 import { toSubmissionResult } from './admission.js';
 import { agentEntityNameParam } from './requests.js';
+import { TEAMMATE_ROSTER_ROW_SCHEMA, teammateRosterRow } from './mcp-roster.js';
 import type { TeammateSubmitInput } from './submission.js';
 import type { TurnAdmission } from './turn.js';
 import type { TeammateOps } from './types.js';
@@ -57,54 +52,17 @@ export interface MemberMcpScope {
   readonly owner: TeamMateMessagingOwner;
 }
 
-/** One peer row: the same compact roster shape the owner scan publishes. */
-const MEMBER_ROSTER_ROW_SCHEMA = objectSchema(
-  {
-    name: STRING,
-    status: STRING,
-    agent_runtime: STRING,
-    intent: { type: ['string', 'null'] },
-  },
-  ['name', 'status', 'agent_runtime', 'intent'],
-);
-
-/** One tool this delegate advertises, paired with the handler that serves it. */
-interface MemberMcpToolRecord {
-  readonly descriptor: McpToolDescriptor;
-  readonly execute: (args: CommandPayload) => Promise<McpToolSuccess>;
-}
-
 export function createMemberMcpDelegate(
   scope: MemberMcpScope,
   serverName: string,
 ): McpServerDelegate {
-  const records = memberToolRecords(scope);
-  const tools = records.map((record) => record.descriptor);
-  return {
-    name: serverName,
-    describe(): McpDelegateDescription {
-      return { tools };
-    },
-    call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(() => serve(records, call));
-    },
-  };
-}
-
-async function serve(
-  records: readonly MemberMcpToolRecord[],
-  call: McpDelegateCall,
-): Promise<McpToolSuccess> {
-  const record = records.find(
-    (candidate) => candidate.descriptor.name === call.name,
-  );
-  return record!.execute(call.arguments as CommandPayload);
+  return createToolRecordDelegate(serverName, memberToolRecords(scope));
 }
 
 const MEMBER_RECEIPT_REMINDER =
   "This is an admission receipt, not a response or completion. A reply arrives only if the recipient explicitly sends one. The recipient's applicable turn results are reported to its owner.";
 
-function memberToolRecords(scope: MemberMcpScope): MemberMcpToolRecord[] {
+function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
   return [
     {
       descriptor: tool(
@@ -171,7 +129,7 @@ function memberToolRecords(scope: MemberMcpScope): MemberMcpToolRecord[] {
                 'name',
                 'status',
               ]),
-              teammates: arrayOf(MEMBER_ROSTER_ROW_SCHEMA),
+              teammates: arrayOf(TEAMMATE_ROSTER_ROW_SCHEMA),
             },
             ['owner', 'teammates'],
           ),
@@ -186,12 +144,7 @@ function memberToolRecords(scope: MemberMcpScope): MemberMcpToolRecord[] {
             owner: { name, status },
             teammates: peers
               .filter((peer) => peer.name !== scope.name)
-              .map(({ name, status, agent_runtime, intent }) => ({
-                name,
-                status,
-                agent_runtime,
-                intent,
-              })),
+              .map(teammateRosterRow),
           },
         };
       },

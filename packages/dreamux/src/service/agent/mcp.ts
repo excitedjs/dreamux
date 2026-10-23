@@ -42,20 +42,19 @@ import {
   objectSchema,
 } from '../../command/schema.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
-import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
+import {
+  createToolRecordDelegate,
+  type McpToolRecord,
+  type McpToolSuccess,
+} from '../mcp/projection.js';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
   READ_ONLY_ANNOTATIONS,
   tool,
-  type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
-import type {
-  McpDelegateCall,
-  McpDelegateDescription,
-  McpDelegateResult,
-  McpServerDelegate,
-} from '../mcp/types.js';
+import type { McpServerDelegate } from '../mcp/types.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 import { WORKFLOW_TOOL_RECORDS } from '../workflow-service/mcp.js';
 import {
@@ -67,6 +66,7 @@ import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { mapAgentActivityCommandError } from './activity.js';
 import type { AgentEntitySpawnResult } from './identity.js';
 import { createMemberMcpDelegate, type MemberMcpScope } from './member-mcp.js';
+import { TEAMMATE_ROSTER_ROW_SCHEMA, teammateRosterRow } from './mcp-roster.js';
 import {
   agentCloseRequest,
   agentEntityLastQuery,
@@ -115,39 +115,16 @@ export type TeamMateMcpScope =
 
 type OwnerMcpScope = Exclude<TeamMateMcpScope, { kind: 'member' }>;
 
-/** One tool this delegate advertises, paired with the handler that serves it. */
-interface TeammateMcpToolRecord {
-  readonly descriptor: McpToolDescriptor;
-  readonly execute: (args: CommandPayload) => Promise<McpToolSuccess>;
-}
-
 export function createTeamMateMcpDelegate(
   scope: TeamMateMcpScope,
 ): McpServerDelegate {
   if (scope.kind === 'member') {
     return createMemberMcpDelegate(scope, TEAMMATE_MCP_SERVER_NAME);
   }
-  const records = teammateToolRecords(scope);
-  const tools = records.map((record) => record.descriptor);
-  return {
-    name: TEAMMATE_MCP_SERVER_NAME,
-    describe(): McpDelegateDescription {
-      return { tools };
-    },
-    call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(() => callTool(records, call));
-    },
-  };
-}
-
-async function callTool(
-  records: readonly TeammateMcpToolRecord[],
-  call: McpDelegateCall,
-): Promise<McpToolSuccess> {
-  const record = records.find(
-    (candidate) => candidate.descriptor.name === call.name,
+  return createToolRecordDelegate(
+    TEAMMATE_MCP_SERVER_NAME,
+    teammateToolRecords(scope),
   );
-  return record!.execute(call.arguments as CommandPayload);
 }
 
 /**
@@ -183,17 +160,6 @@ const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
     tags: arrayOf({ type: 'string' }),
   },
   ['id'],
-);
-
-/** One roster scan row: exactly what `list` returns today. */
-const TEAMMATE_ROSTER_ROW_SCHEMA: JsonSchema = objectSchema(
-  {
-    name: STRING,
-    status: STRING,
-    agent_runtime: STRING,
-    intent: NULLABLE_STRING,
-  },
-  ['name', 'status', 'agent_runtime', 'intent'],
 );
 
 /** One recovery-search row; all fields are the record's own facts. */
@@ -250,7 +216,7 @@ const TEAMMATE_CLOSE_SCHEMA: JsonSchema = objectSchema(
   ['status', 'repo'],
 );
 
-function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
+function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
   const callerKind = scope.kind;
   // Dispatcher handoffs discover their guide at the tool. The TeamLeader's
   // launch prompt already routes missing collaboration guidance to teamwork.
@@ -616,15 +582,15 @@ async function spawn(
 
   let location = '';
   if (repo !== null) {
-    location = ` in ${JSON.stringify(repo.path)}`;
+    location = ` in ${quoteModelValue(repo.path)}`;
     if (repo.branch !== null) {
-      location += ` on branch ${JSON.stringify(repo.branch)}`;
+      location += ` on branch ${quoteModelValue(repo.branch)}`;
     }
   }
   return {
     structured,
     text:
-      `Started TeamMate ${JSON.stringify(result.teammate.name)}${location}.` +
+      `Started TeamMate ${quoteModelValue(result.teammate.name)}${location}.` +
       `\n\n${TEAMMATE_DISPATCH_SUCCESS_REMINDER}`,
   };
 }
@@ -707,12 +673,7 @@ async function list(scope: OwnerMcpScope): Promise<McpToolSuccess> {
   const rows = await (await teammates(scope)).list();
   return {
     structured: {
-      teammates: rows.map(({ name, status, agent_runtime, intent }) => ({
-        name,
-        status,
-        agent_runtime,
-        intent,
-      })),
+      teammates: rows.map(teammateRosterRow),
     },
   };
 }
@@ -760,18 +721,5 @@ async function last(
 }
 
 async function capabilities(scope: OwnerMcpScope): Promise<McpToolSuccess> {
-  const result = await (await teammates(scope)).getCapabilities();
-  return {
-    structured: {
-      agent_runtimes: result.agent_runtimes.map(
-        ({ id, description, tags }) => ({
-          id,
-          ...(typeof description === 'string' && description !== ''
-            ? { description }
-            : {}),
-          ...(tags !== undefined && tags.length > 0 ? { tags: [...tags] } : {}),
-        }),
-      ),
-    },
-  };
+  return { structured: await (await teammates(scope)).getCapabilities() };
 }

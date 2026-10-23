@@ -406,8 +406,8 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
         },
         text: expect.stringContaining(
           threadId === null
-            ? 'Bound whole chat oc_target to Team my-team.'
-            : 'Bound topic omt_topic in chat oc_target to Team my-team.',
+            ? 'Bound whole chat "oc\\_target" to Team "my-team".'
+            : 'Bound topic "omt\\_topic" in chat "oc\\_target" to Team "my-team".',
         ),
       });
       expect(result).toMatchObject({
@@ -450,10 +450,55 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
       ok: true,
       value: { previous_team_name: previousTeam },
       text: expect.stringContaining(
-        `Bound topic omt_topic in chat oc_target to Team my-team. Previous binding: ${previousTeam}.`,
+        `Bound topic "omt\\_topic" in chat "oc\\_target" to Team "my-team". Previous binding: "${previousTeam}".`,
       ),
     });
   });
+
+  it.each(['bind_channel', 'unbind_channel'])(
+    'keeps actual and previous Team names literal in %s receipts',
+    async (name) => {
+      const session = fakeSession();
+      vi.spyOn(session.bindings, 'bindChannel').mockResolvedValue({
+        team_name: 'a-__bold__-1234',
+        previous_team_name: 'www.example.com-5678',
+      });
+      vi.spyOn(session.bindings, 'unbindChannel').mockResolvedValue({
+        team_name: 'a-__bold__-1234',
+      });
+      const result = await mcpFor(session).invoke(
+        {
+          name,
+          arguments: {
+            chat_id: 'www.example.com',
+            thread_id: '[topic](url)',
+            ...(name === 'bind_channel' && caller.kind === 'dispatcher'
+              ? { team_name: 'a-__bold__-1234' }
+              : {}),
+          },
+        },
+        context,
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        value: {
+          chat_id: 'www.example.com',
+          thread_id: '[topic](url)',
+          team_name: 'a-__bold__-1234',
+        },
+        text:
+          (name === 'bind_channel'
+            ? 'Bound topic "\\[topic\\]\\(url\\)" in chat "www\\.example\\.com" to Team "a-\\_\\_bold\\_\\_-1234". Previous binding: "www\\.example\\.com-5678". '
+            : 'Unbound topic "\\[topic\\]\\(url\\)" in chat "www\\.example\\.com" from Team "a-\\_\\_bold\\_\\_-1234". ') +
+          'The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.',
+      });
+      if (name === 'bind_channel') {
+        expect(result).toMatchObject({
+          value: { previous_team_name: 'www.example.com-5678' },
+        });
+      }
+    },
+  );
 
   it.each([
     { teamName: 'my-team', threadId: null },
@@ -493,8 +538,8 @@ describe.each([dispatcher, teamLeader])('$kind binding receipts', (caller) => {
         expect(result).toMatchObject({
           text: expect.stringContaining(
             threadId === null
-              ? 'Unbound whole chat oc_target from Team my-team.'
-              : 'Unbound topic omt_topic in chat oc_target from Team my-team.',
+              ? 'Unbound whole chat "oc\\_target" from Team "my-team".'
+              : 'Unbound topic "omt\\_topic" in chat "oc\\_target" from Team "my-team".',
           ),
         });
         expect(result).toMatchObject({

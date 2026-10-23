@@ -1,10 +1,8 @@
 /**
- * Request readers and result projections shared by Command and MCP.
+ * Shared request readers and full record projections for Commands.
  *
- * `workflow.run`/`workflow.status`/`workflow.list` Commands and the TeamMate
- * MCP delegate's own workflow tools ask for the same run request and read the
- * same record shape, so both surfaces read them from here rather than each
- * keeping its own copy.
+ * Command and MCP tools read the same run requests here. Commands also use the
+ * full record projections below; compact MCP results belong to `mcp.ts`.
  *
  * These readers are shape only: the domain bound on `max_concurrency` is the
  * service's own rule, checked once by `WorkflowService.createRun`

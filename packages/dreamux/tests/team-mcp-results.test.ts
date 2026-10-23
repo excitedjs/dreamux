@@ -3,12 +3,16 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
+import { runMcpServer } from '../src/mcp/server.js';
+import { isPlainObject } from '../src/platform/json-value.js';
 import { validateMcpToolCatalog } from '../src/service/mcp/catalog.js';
 import { TEAM_DISPATCH_SUCCESS_REMINDER } from '../src/service/mcp/dispatch-reminders.js';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import { createLeaderTeamMcpDelegate } from '../src/service/team/leader-mcp.js';
 import { createTeamMcpDelegate } from '../src/service/team/mcp.js';
 import { TeamService } from '../src/service/team/service.js';
 import { deferred } from './helpers/controlled-runtime-provider.js';
+import { callTool, connectMcpClient } from './helpers/mcp-client.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 
 describe('Team MCP result projections', () => {
@@ -50,19 +54,19 @@ describe('Team MCP result projections', () => {
       const actual = await fixture.teams.summary(row!.team_name);
       expect(actual.team_name).not.toBe('receipt');
       expect(result.text).toContain(
-        `Created Team ${actual.team_name} (status: running).`,
+        `Created Team "${actual.team_name}" (status: running).`,
       );
       expect(result.text).toContain(
-        `Leader: ${actual.leader_name} (controlled).`,
+        `Leader: "${actual.leader_name}" ("controlled").`,
       );
       expect(result.text).toContain(
-        `Workspace: ${actual.runtime_cwd} (${mode}; cleanup: ${mode === 'managed' ? 'delete-on-close' : 'keep'}).`,
+        `Workspace: ${quoteModelValue(actual.runtime_cwd)} (${mode}; cleanup: ${mode === 'managed' ? 'delete-on-close' : 'keep'}).`,
       );
       if (mode === 'managed') {
         expect(actual.runtime_cwd).not.toBe(repo);
         expect(actual.source_repo).not.toBeNull();
         expect(result.text).toContain(
-          `Source repository: ${actual.source_repo}.`,
+          `Source repository: ${quoteModelValue(actual.source_repo!)}.`,
         );
       } else {
         expect(actual.runtime_cwd).toBe(repo);
@@ -104,7 +108,7 @@ describe('Team MCP result projections', () => {
         ok: true,
         structured: { team_name: team!.team_name, status: 'closed' },
         text: expect.stringContaining(
-          `Created Team ${team!.team_name} (status: closed).`,
+          `Created Team "${team!.team_name}" (status: closed).`,
         ),
       });
       expect(result).toMatchObject({
@@ -113,6 +117,51 @@ describe('Team MCP result projections', () => {
     } finally {
       starting.mockRestore();
     }
+  });
+
+  it('keeps dynamic create facts literal in Markdown while retaining their structured values', async () => {
+    const fixture = await dispatcherFixture();
+    const created = await fixture.teams.createFromRequest(
+      teamRequest('quoted'),
+    );
+    const actual = {
+      ...created,
+      team_name: 'a-__bold__-1234',
+      leader_name: 'tl-a-__bold__-1234',
+      leader_agent_runtime: 'engine[link](target)`code`',
+      runtime_cwd: '/workspace/[link](target)`code`',
+      source_repo: 'https://example.com/repo',
+    };
+    vi.spyOn(fixture.teams, 'createFromRequest').mockResolvedValue(actual);
+    const result = await createTeamMcpDelegate({ teams: fixture.teams }).call({
+      name: 'create',
+      arguments: {
+        name_prefix: 'quoted',
+        intent: 'Read the allocated facts',
+        leader_agent_runtime: 'controlled',
+        prompt: 'Start review',
+      },
+    });
+    expect(result).toEqual({
+      ok: true,
+      structured: {
+        team_name: actual.team_name,
+        status: actual.status,
+        leader_name: actual.leader_name,
+        leader_agent_runtime: actual.leader_agent_runtime,
+        source_repo: actual.source_repo,
+        runtime_cwd: actual.runtime_cwd,
+        worktree_mode: actual.worktree_mode,
+        worktree_cleanup_mode: actual.worktree_cleanup_mode,
+      },
+      text:
+        `Created Team "a-\\_\\_bold\\_\\_-1234" (status: ${actual.status}). ` +
+        'Leader: "tl-a-\\_\\_bold\\_\\_-1234" ("engine\\[link\\]\\(target\\)\\`code\\`"). ' +
+        'Workspace: "/workspace/\\[link\\]\\(target\\)\\`code\\`" ' +
+        `(${actual.worktree_mode}; cleanup: ${actual.worktree_cleanup_mode}). ` +
+        'Source repository: "https\\://example\\.com/repo".\n\n' +
+        TEAM_DISPATCH_SUCCESS_REMINDER,
+    });
   });
 
   it('returns the allocated names and actual workspace while status retains the full detail', async () => {
@@ -184,8 +233,14 @@ describe('Team MCP result projections', () => {
     await fixture.teams.createFromRequest(teamRequest('open'));
     const service = await fixture.teams.open(closed.team_name);
     const note = `${'Finished the implementation. '.repeat(30)}recoverable-only-tail`;
-    await fixture.teams.dissolve(closed.team_name, { note, force: false });
-    await service.closed;
+    // Distinct record times make the newest-first pagination order deterministic.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 1000);
+    try {
+      await fixture.teams.dissolve(closed.team_name, { note, force: false });
+      await service.closed;
+    } finally {
+      clock.mockRestore();
+    }
     const delegate = createTeamMcpDelegate({ teams: fixture.teams });
     const domain = await fixture.teams.history({ limit: 1 });
     const first = domain.items[0]!;
@@ -299,4 +354,66 @@ describe('Team MCP result projections', () => {
       );
     }
   });
+
+  it.each([
+    { name: 'list', key: 'teams' },
+    { name: 'history', key: 'items' },
+  ])(
+    'validates the compact $name rows over MCP and rejects extra detail',
+    async ({ name, key }) => {
+      const fixture = await dispatcherFixture();
+      await fixture.teams.createFromRequest(teamRequest('schema'));
+      const delegate = createTeamMcpDelegate({ teams: fixture.teams });
+      const descriptor = validateMcpToolCatalog(
+        delegate.describe().tools,
+        'Team MCP catalog',
+      ).find((tool) => tool.name === name)!;
+      const outcome = await delegate.call({ name, arguments: {} });
+      if (!outcome.ok) throw new Error(outcome.message);
+      const structured = outcome.structured;
+      if (!isPlainObject(structured))
+        throw new Error('Expected structured result');
+      const rows = structured[key];
+      if (!Array.isArray(rows)) throw new Error('Expected compact rows');
+      const row: unknown = rows[0];
+      if (!isPlainObject(row)) throw new Error('Expected a compact row');
+      let extraDetail = false;
+      const connection = await connectMcpClient((transport) =>
+        runMcpServer({
+          identity: { name: 'team-row-contract', version: '1.0.0' },
+          transport,
+          log: () => {},
+          tools: [
+            {
+              ...descriptor,
+              handler: async () => ({
+                structured: extraDetail
+                  ? {
+                      ...structured,
+                      [key]: [{ ...row, session_id: 'internal-detail' }],
+                    }
+                  : structured,
+              }),
+            },
+          ],
+        }),
+      );
+      try {
+        expect(await callTool(connection.client, name, {})).toMatchObject({
+          structuredContent: outcome.structured,
+        });
+        extraDetail = true;
+        expect(await callTool(connection.client, name, {})).toMatchObject({
+          isError: true,
+          content: [
+            expect.objectContaining({
+              text: expect.stringMatching(/output validation error/i),
+            }),
+          ],
+        });
+      } finally {
+        await connection.close();
+      }
+    },
+  );
 });

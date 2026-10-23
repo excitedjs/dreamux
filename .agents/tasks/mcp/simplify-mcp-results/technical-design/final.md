@@ -4,7 +4,8 @@
 
 `agents[]` owns optional description, tags and developerInstructions. Parsing and
 stringification preserve supplied values. Capability selection reads resolved
-entries, omitting unspecified descriptions and empty tags. Onboarding preserves
+entries, omitting unspecified descriptions and empty tags. MCP publishes that
+domain catalog unchanged, including a supplied empty description. Onboarding preserves
 metadata on existing ids and does not copy it into a new id. Remove the unused
 provider declaration/validation/snapshot chain instead of retaining two owners.
 
@@ -19,6 +20,12 @@ Ordinary-member messaging has its own MCP module and authority object; the owner
 catalog routes member scopes there without adding a generic projection framework.
 Replace the old MCP/Command byte-equality test with explicit independent expected
 results from the same owner. Keep admin/Channel Command equivalence unchanged.
+The owner, member and Team record-based delegates share catalog publication and
+dispatch through `service/mcp/projection.ts`; argument parsing and admission stay
+in their existing handlers. Owner/member roster rows have one MCP schema and
+mapper, and both Team dissolve tools share one compact receipt declaration.
+Team list/history schemas close their actual compact rows and cleanup
+values; full Team status remains open.
 
 ## Wire behavior
 
@@ -31,7 +38,9 @@ Feishu binding target and previous exact binding. A successful member send
 explicitly states that the message was submitted while retaining its distinct
 reply and owner-completion semantics. Non-submitted results keep their existing
 structured status and errors. Team creation can return closed after its first
-Leader self-dissolves; the text must report that actual status.
+Leader self-dissolves; the text must report that actual status. Dynamic prose
+values use one Markdown-safe quoted-value formatter, including arbitrary runtime
+ids and workspace/source/branch values. Structured values remain unchanged.
 
 Absent or empty text keeps structured output. Internal `{structured,text?}` and
 errors remain unchanged. The shim preserves text unchanged, including empty
@@ -41,7 +50,9 @@ under the operator's 2026-10-23 direction to put facts directly into prose.
 
 Core text-capable tools omit outputSchema. Feishu's existing successText hook
 supplies the same fact for builtin/extension registration. Ordinary schemas and
-validation remain. No new mode or redundant runtime validation is added.
+validation remain. Internal Feishu definitions allow absent output schemas;
+routing tools no longer declare schemas that registration would discard.
+No new mode or redundant runtime validation is added.
 
 External Channel providers and Feishu extensions own complete nonempty success
 text, including all business facts the model needs; the adapter no longer

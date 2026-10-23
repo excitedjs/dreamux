@@ -228,11 +228,17 @@ or an old concept, fix the projection rather than documenting around it.
 Every externally supplied value rendered into user- or model-visible rich text
 (Team and space names, runtime ids, paths, target display names) is escaped;
 none of them may construct a Markdown link, mention, tag, or card action.
+Core and Feishu MCP prose quote dynamic values through
+`dreamux-utils/src/model-text.ts`; JSON scalar quoting alone does not escape
+Markdown punctuation in paths, refs or runtime ids.
 
 Each MCP delegate owns its model-facing result projection; Command and domain
 DTOs retain the facts their callers use. Compact creation, submission, roster,
 and history results do not narrow the detailed `status` read. Keep result
-schemas beside their projections when a schema is published. Ordinary
+schemas beside their projections when a schema is published. Owner and member
+TeamMate scans share the row schema and mapper in `agent/mcp-roster.ts`; Team
+list/history rows are closed, including their cleanup result. Team dissolve
+receipts share their MCP-only declaration in `team/requests.ts`. Ordinary
 top-level result objects stay closed unless a named JSON-valued extension field
 is intentionally open. Team entity DTO schemas remain open under the
 [Team projection ruling](/.agents/tasks/architecture/unify-team-command-projections/requirement.md);
@@ -250,8 +256,10 @@ Any tool that can return success text omits its published `outputSchema`, even
 when a particular invocation returns no text: the SDK requires structured
 content when a schema is advertised. This applies to dispatch reminders and
 Channel success text through `ChannelMcpToolOutcome`. Feishu registration uses
-the presence of `successText` for built-ins and extensions; the tool definition
-can retain its schema for other consumers. External providers and extensions
+the presence of `successText` for built-ins and extensions. Internal Feishu tool
+definitions allow omitted output schemas, so text-only routing tools declare
+none. Existing extensions that supply both still have the schema omitted at
+registration. External providers and extensions
 must supply complete text, rather than assuming their structured value is also
 visible. See
 `/packages/dreamux/src/mcp/server.ts`,

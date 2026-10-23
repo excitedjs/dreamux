@@ -1,7 +1,7 @@
 import type { TeamSummary } from '@excitedjs/dreamux-types';
 
 import { mustNonBlankString } from '../../command/payload.js';
-import { OBJECT, objectSchema } from '../../command/schema.js';
+import { OBJECT } from '../../command/schema.js';
 import { runDelegateTool } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -9,6 +9,7 @@ import {
   tool,
 } from '../mcp/tool-metadata.js';
 import type { McpServerDelegate } from '../mcp/types.js';
+import { dissolveReceiptSchema } from './requests.js';
 import type { TeamDissolveCommand, TeamDissolveReceipt } from './types.js';
 
 /** This Team owns access to its leader's status and dissolve tools. */
@@ -54,10 +55,7 @@ export function createLeaderTeamMcpDelegate(team: {
     ['note'],
     {
       title: 'Dissolve this Team',
-      output: objectSchema(
-        { status: { type: 'string', enum: ['submitted'] } },
-        ['status'],
-      ),
+      output: dissolveReceiptSchema(),
       annotations: DESTRUCTIVE_ANNOTATIONS,
     },
   );

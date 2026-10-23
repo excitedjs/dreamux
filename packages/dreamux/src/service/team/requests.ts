@@ -147,3 +147,10 @@ export function teamSubmitResult(admission: TurnAdmission): TeamSubmitResult {
       };
   }
 }
+
+/** Shared MCP admission receipt; Commands retain their full dissolve result. */
+export function dissolveReceiptSchema(): Record<string, unknown> {
+  return objectSchema({ status: { type: 'string', enum: ['submitted'] } }, [
+    'status',
+  ]);
+}

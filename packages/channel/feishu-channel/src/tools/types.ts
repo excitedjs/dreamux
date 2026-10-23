@@ -74,7 +74,7 @@ export interface FeishuToolDef<TInput = unknown> {
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   annotations: ChannelMcpToolAnnotations;
   /** Which callers this tool is advertised to. */
   callers: readonly ChannelMcpCaller['kind'][];
