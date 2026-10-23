@@ -271,3 +271,26 @@ comments, blanks, docs and generated files: production +9/-3, tests +81/-2.
 Publication and self-upgrade will use this new revision rather than the earlier
 alpha, whose first installation attempt failed dependency resolution before any
 service restart. No live COT rendering or model-use claim is made.
+
+## Canonical-path fixture correction after macOS CI
+
+[CI for the default change](https://github.com/excitedjs/dreamux/actions/runs/39944041356)
+passed Linux but exposed a pre-existing error in the new Claude canonical-path
+fixture. It replaced the JSONL leaf with a symlink, although the shared opener
+explicitly refuses leaf symlinks with O_NOFOLLOW. Linux's exact locator candidate
+could canonicalize that leaf first; macOS's lexical/canonical cwd difference
+could instead enter fallback discovery and reach the raw link, producing ELOOP.
+
+The fixture now links only the config-home directory and retains a regular JSONL.
+It still uses the real reader and checks three records plus the canonical
+transcript path. Removing the alias while retaining the real file must produce
+not_found, proving that the configured alias is actually used. Production code
+and the existing leaf-symlink refusal test remain unchanged.
+
+The activity file passed all 18 cases both normally and with TMPDIR itself a
+directory alias, reproducing the lexical/canonical cwd distinction on Linux.
+Independent source review found no blocker. Build, lint, test and typecheck:tests
+passed again; the suite remains 3,026 passing cases with six opt-in model cases
+excluded. KB validation passed. The simulation does not replace actual macOS CI;
+installation remains pending that check on the corrected revision. This fix
+changes only tests (+20/-13 nonblank code lines) and this verification record.

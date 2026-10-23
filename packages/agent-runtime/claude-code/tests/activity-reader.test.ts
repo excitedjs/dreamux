@@ -31,7 +31,6 @@ import {
   mkdir,
   mkdtemp,
   realpath,
-  rename,
   rm,
   symlink,
   writeFile,
@@ -848,20 +847,30 @@ describe('readClaudeRecentActivity: native identity limits and canonical path', 
     expect(page.nextCursor).toBeUndefined();
   });
 
-  it('reports the canonical file actually opened through a symlink', async () => {
+  it('reports the canonical file through a config-home directory symlink', async () => {
     const fixture = await makeFixture();
     await fixture.write(conversation(fixture.sessionId));
-    const canonicalDir = join(fixture.configDir, 'projects', 'canonical');
-    await mkdir(canonicalDir, { recursive: true });
-    const target = join(canonicalDir, `${fixture.sessionId}.jsonl`);
-    await rename(fixture.path, target);
-    await symlink(target, fixture.path);
-    const page = await readClaudeRecentActivity(
-      query(fixture),
-      fixture.context,
-    );
+    const configAlias = `${fixture.configDir}-alias`;
+    await symlink(fixture.configDir, configAlias);
+    const context = {
+      ...fixture.context,
+      config: {
+        ...fixture.context.config,
+        extra_env: {
+          ...fixture.context.config.extra_env,
+          CLAUDE_CONFIG_DIR: configAlias,
+        },
+      },
+    };
+    const page = await readClaudeRecentActivity(query(fixture), context);
     expect(page.records).toHaveLength(3);
-    expect(page.transcriptPath).toBe(await realpath(target));
-    expect(page.transcriptPath).not.toBe(fixture.path);
+    expect(page.transcriptPath).toBe(await realpath(fixture.path));
+    expect(page.transcriptPath).not.toContain(configAlias);
+
+    // The real transcript remains; discovery must depend on the configured alias.
+    await rm(configAlias);
+    await expect(
+      readClaudeRecentActivity(query(fixture), context),
+    ).rejects.toMatchObject({ detail: 'not_found' });
   });
 });
