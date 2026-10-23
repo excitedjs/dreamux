@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import {
   TEAM_DISPATCH_SUCCESS_REMINDER,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
@@ -178,11 +179,17 @@ describe.each(['dispatcher', 'team_leader'] as const)(
               text: expect.stringMatching(/automatically push.*Do not poll/),
             });
             if (result.ok && name === 'spawn') {
-              expect(result.text).toContain(actual.teammate.name);
+              expect(result.text).toContain(
+                quoteModelValue(actual.teammate.name),
+              );
               if (kind === 'dispatcher') {
-                expect(result.text).toContain(actual.teammate.repo.path);
+                expect(result.text).toContain(
+                  quoteModelValue(actual.teammate.repo.path),
+                );
                 if (actual.teammate.repo.branch !== null)
-                  expect(result.text).toContain(actual.teammate.repo.branch);
+                  expect(result.text).toContain(
+                    quoteModelValue(actual.teammate.repo.branch),
+                  );
               }
             }
           } else expect(result).not.toHaveProperty('text');

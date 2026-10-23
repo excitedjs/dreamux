@@ -161,3 +161,14 @@ Final style-review validation:
 - Knowledge validation passed: 59 task records and 396 reachable files. Three
   ordinary minor change files cover Core, shared utils and Feishu; no migration
   or persisted-format change is introduced.
+
+The first style-review CI run passed Linux but exposed one macOS-only stale
+assertion: the reminder fixture searched for the raw temporary path in Markdown
+text, while the macOS temporary directory contained an underscore. The failure
+was reproduced on Linux with an underscore-bearing temporary root. The fixture
+now compares quoted model-text values for its nondeterministic name/path/branch;
+its original structured facts and reminder checks remain unchanged. Independent
+literal rich-text expectations in the projection tests remain unchanged as well.
+The two focused suites passed all 49 cases under that same temporary root after
+the assertion update. No production code changed in this correction.
+The four full Rush gates also passed again after this test-only correction.
