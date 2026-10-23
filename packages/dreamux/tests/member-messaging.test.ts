@@ -8,8 +8,12 @@ import {
   type ControlledRuntime,
 } from './helpers/controlled-runtime-provider.js';
 
-async function setup(scope: 'team' | 'dispatcher', activeOwner = true) {
-  const f = await dispatcherFixture();
+async function setup(
+  scope: 'team' | 'dispatcher',
+  activeOwner = true,
+  channel = false,
+) {
+  const f = await dispatcherFixture({ channel });
   await f.host.start();
   const owner =
     scope === 'dispatcher'
@@ -61,7 +65,7 @@ const result = (text: string): RuntimeCompletion =>
 for (const scope of ['team', 'dispatcher'] as const)
   describe(`${scope} ordinary members`, () => {
     it('advertises exactly send/list, discovers the actual owner and closed peers, and binds sender', async () => {
-      const f = await setup(scope, false);
+      const f = await setup(scope, false, true);
       const a = await f.spawn('alice');
       const b = await f.spawn('bob');
       await f.members.close({ name: b.name, note: 'pause' });
@@ -97,6 +101,21 @@ for (const scope of ['team', 'dispatcher'] as const)
       const ownerRuntime = f.provider.runtimes.at(-1)!;
       expect(ownerRuntime.inputs).toEqual([
         `<task from="${a.name}">blocked</task>`,
+      ]);
+      const memberInputs = f.channel.sessions
+        .get('fixture-channel')!
+        .receivedEvents.filter(
+          (event) =>
+            event.kind === 'teammate.input' &&
+            event.notice?.kind === 'teammate_message',
+        );
+      expect(memberInputs).toEqual([
+        expect.objectContaining({
+          kind: 'teammate.input',
+          role: scope === 'team' ? 'team_leader' : 'dispatcher',
+          content: 'blocked',
+          notice: { kind: 'teammate_message', producer: a.name },
+        }),
       ]);
       ownerRuntime.submissions[0]!.complete('owner response requires send');
       await new Promise<void>((resolve) => setImmediate(resolve));

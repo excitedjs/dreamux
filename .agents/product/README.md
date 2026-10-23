@@ -461,6 +461,16 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   presentation is a deliberately tuned surface; changes to it are their own
   requirement, never a refactor side effect.
   (Decision: [feishu-cot-conversation-display](/.agents/tasks/channel/feishu-cot-conversation-cards/accepted-decision.md).)
+- **Reasoning is opt-in and incremental.** The Feishu channel's optional
+  `cot.reasoning` boolean defaults to false. When enabled, native reasoning
+  blocks append provider increments with a `Thinking...` prefix per visible
+  block; ordinary assistant text remains completed-block output. Only these
+  reasoning fragments bypass Core redaction (operator, 2026-10-22: "chunk
+  先不脱敏了，麻烦"). Feishu uses native reasoning events even when a client's
+  visual style matches ordinary text. Adjacent increments are coalesced; COT
+  append requests start at least 500ms apart per presentation, including the
+  final batch. A replacement card starts from new increments without replay.
+  (Task: [stream COT reasoning](/.agents/tasks/channel/stream-cot-reasoning/README.md).)
 - **A native turn closes with a compact usage line when metrics are available.**
   Both built-in runtimes emit a dedicated `token.usage` activity immediately
   before the native end, carrying the native runtime's cumulative session
@@ -528,7 +538,11 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   `CRON TRIGGERED`, a Workflow callback is `WORKFLOW FINISHED` without a name,
   and the current Dispatcher restart input is `SYSTEM RESTARTED`. These are
   human display labels; the receiving agent still gets the full original body.
-  Actual task submissions and ordinary input remain visible, and the Channel
+  A member's explicit `send` to its TeamLeader instead shows
+  `TEAMMATE MESSAGE FROM <sender>` using its authenticated identity; the leader
+  still receives the full body. Completion callbacks and other send directions
+  retain their existing display. Other task submissions and ordinary input
+  remain visible, and the Channel
   still suppresses its own already-visible inbound body by source ID.
   (Task: [COT tool details and notifications](/.agents/tasks/channel/refine-cot-tool-details-and-notifications/README.md).)
 - **A compaction is one line.** When the runtime compacts its context, the

@@ -709,6 +709,10 @@ function memberToolRecords(
                   source: AGENT_TASK_SOURCE,
                   text: prompt,
                   attrs,
+                  notice: {
+                    kind: 'teammate_message',
+                    producer: scope.name,
+                  },
                 }),
               )
             : await scope.owner.teammates.send({

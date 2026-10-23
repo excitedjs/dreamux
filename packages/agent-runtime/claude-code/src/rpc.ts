@@ -246,6 +246,7 @@ export class ClaudeCodeStreamRpc {
         break;
       case 'user':
       case 'compact_boundary':
+      case 'stream_event':
         this.options.onProtocolEvent?.({ kind: 'stream', line });
         break;
       case 'command_lifecycle': {

@@ -133,6 +133,7 @@ async function harness(): Promise<Harness> {
     log: silentLog,
     cotClient: undefined,
     lifecycle,
+    cotReasoning: false,
   });
   const submitter = new FeishuTeamSubmitter({ lifecycle, cot, commands });
   vi.spyOn(submitter, 'submit').mockImplementation(

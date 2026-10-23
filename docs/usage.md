@@ -106,6 +106,8 @@ with the same member when continuity matters:
 Ordinary TeamMates can discover and message their owner and peers in the same
 collection. They cannot address arbitrary agents in other Teams. A send receipt
 means the message was admitted; the recipient must explicitly send a reply.
+Feishu COT labels an explicit message to a TeamLeader as
+`TEAMMATE MESSAGE FROM <sender>` while preserving its full content for the model.
 Native completed or failed turns report to the member's owner, including work
 started by a peer. This is live coordination, not a durable offline mailbox:
 owner delivery is not guaranteed to replay after an outage.

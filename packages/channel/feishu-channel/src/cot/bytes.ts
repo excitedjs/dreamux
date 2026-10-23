@@ -68,6 +68,39 @@ export function cotEventContentBytes(event: FeishuCotEventInput): number {
 }
 
 /**
+ * One raw fragment's size after both content and wire escaping, matching
+ * the encoding that `cotEventBytes` accounts for.
+ */
+function wireEscapedBytes(value: string): number {
+  return escapedBytes(JSON.stringify(value).slice(1, -1));
+}
+
+/**
+ * The exact byte increase from appending one fragment to another.
+ *
+ * Two encodings matter: the content event's own serialized size (single
+ * escape) and the wire event's size (`cotEventBytes` serializes the content a
+ * second time). Escaping is additive per code unit except where a split UTF-16
+ * surrogate pair joins: a lone surrogate is written `\uXXXX` (six bytes single,
+ * seven after the outer escape), while the joined pair is its raw character
+ * (four UTF-8 bytes). The discount is therefore eight bytes for the content and
+ * ten for the wire. No other character changes its escaped form at a boundary.
+ */
+export function escapedDeltaBytes(
+  previous: string,
+  incoming: string,
+): { readonly contentBytes: number; readonly wireBytes: number } {
+  const last = previous.charCodeAt(previous.length - 1);
+  const first = incoming.charCodeAt(0);
+  const joinsPair =
+    last >= 0xd800 && last <= 0xdbff && first >= 0xdc00 && first <= 0xdfff;
+  return {
+    contentBytes: escapedBytes(incoming) - (joinsPair ? 8 : 0),
+    wireBytes: wireEscapedBytes(incoming) - (joinsPair ? 10 : 0),
+  };
+}
+
+/**
  * Conservative encoded-size estimate used for outbox and append bounds.
  * Transport owns the private request envelope; fixed reserves cover its
  * framing without reproducing that wire shape here.
@@ -81,15 +114,18 @@ export function cotEventBytes(event: FeishuCotEventInput): number {
   );
 }
 
-function cotAppendBatchBytes(input: {
-  readonly cotId: string;
-  readonly messageId: string;
-  readonly events: readonly FeishuCotEventInput[];
-}): number {
+/**
+ * The bytes one append request may spend on its events: the request bound
+ * minus the ids' encoded sizes and the request envelope reserve.
+ */
+export function appendEventBytesBudget(
+  cotId: string,
+  messageId: string,
+): number {
   return (
-    input.events.reduce((total, event) => total + cotEventBytes(event), 0) +
-    jsonBytes(input.messageId) +
-    jsonBytes(input.cotId) +
+    FEISHU_COT_APPEND_MAX_BYTES -
+    jsonBytes(messageId) -
+    jsonBytes(cotId) -
     COT_REQUEST_ENCODING_RESERVE_BYTES
   );
 }
@@ -107,6 +143,9 @@ export function splitForEventContent(
   text: string,
   content: (chunk: string) => Record<string, unknown>,
 ): Record<string, unknown>[] {
+  if (text === '') return [];
+  const whole = content(text);
+  if (jsonBytes(whole) <= FEISHU_COT_EVENT_CONTENT_MAX_BYTES) return [whole];
   const emptyBytes = jsonBytes(content(''));
   const payloadBudget = FEISHU_COT_EVENT_CONTENT_MAX_BYTES - emptyBytes;
   if (payloadBudget <= 0) return [];
@@ -179,6 +218,17 @@ export function outboxAdmits(
   return { fits, incomingBytes };
 }
 
+/**
+ * Whether an outbox can absorb `extraBytes` without gaining an event — the
+ * case an increment merged into the queued tail rather than queued beside it.
+ */
+export function outboxAbsorbs(
+  bufferedBytes: number,
+  extraBytes: number,
+): boolean {
+  return bufferedBytes + extraBytes <= FEISHU_COT_OUTBOX_MAX_BYTES;
+}
+
 /** Whether one append call carrying `events` fits Feishu's per-append bounds. */
 export function appendBatchFits(
   cotId: string,
@@ -187,7 +237,7 @@ export function appendBatchFits(
 ): boolean {
   return (
     events.length <= FEISHU_COT_APPEND_MAX_EVENTS &&
-    cotAppendBatchBytes({ cotId, messageId, events }) <=
-      FEISHU_COT_APPEND_MAX_BYTES
+    events.reduce((total, event) => total + cotEventBytes(event), 0) <=
+      appendEventBytesBudget(cotId, messageId)
   );
 }

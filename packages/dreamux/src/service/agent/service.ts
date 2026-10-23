@@ -424,20 +424,11 @@ export class AgentService {
         case 'session.title.changed':
           this.events.emit('session.title.changed', event.title);
           return;
-        case 'assistant.message':
-        case 'context.compacted':
-        case 'turn.interrupted':
-        case 'tool.call':
-        case 'token.usage':
-        case 'turn.ended':
+        default:
           return this.deps.conversationProjection.projectActivity(
             { identity: this.current(), role: this.role },
             event,
           );
-        default: {
-          const exhaustive: never = event;
-          return exhaustive;
-        }
       }
     } catch (error) {
       this.deps.log.error(

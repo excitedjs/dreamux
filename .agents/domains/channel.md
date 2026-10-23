@@ -1394,8 +1394,9 @@ remaining snake_case types in `@excitedjs/dreamux-types` are tracked in
 `teammate.input` is published at the moment of submission, before any runtime
 has accepted it, so a submission that fails is visible together with the text
 that failed. `teammate.activity` carries the runtime's own `RuntimeActivity`
-(`assistant.message`, `tool.call`, `token.usage`, `context.compacted`,
-`turn.interrupted`, `turn.ended`), redacted in place and otherwise unchanged —
+(`assistant.message`, `assistant.reasoning`, `tool.call`, `token.usage`, `context.compacted`,
+`turn.interrupted`, `turn.ended`), with reasoning fragments passed unchanged and
+other payloads redacted in place —
 native ids, `occurredAt`, structured `arguments`, `result` and `error` — so
 there is one activity vocabulary from runtime to Channel, and a runtime that
 learns to report something new adds a member and changes no event catalog, no
@@ -1420,9 +1421,11 @@ an event changes only that catalog and its consumers.
 
 No event carries a turn identity: presentation correlation is the `source_id` a
 caller supplied, echoed back on its own input as `sourceId`, and nothing exposes a
-runtime-native Turn object or transcript. Every payload a conversation event
-carries is redacted whole: user/assistant display text, tool results, and the
-argument payloads and invocation strings alike. The 2026-09-09 argument
+runtime-native Turn object or transcript. Conversation payloads other than
+reasoning append fragments are redacted whole: user/assistant display text, tool results, and the
+argument payloads and invocation strings alike. Reasoning is the narrow exception
+requested on 2026-10-22 ("chunk 先不脱敏了，麻烦"); there is no streaming
+redaction buffer in Core. The 2026-09-09 argument
 exemption was withdrawn ("全量脱敏，跟其它成员一视同仁", 2026-09-11; see
 [the task record](../tasks/channel/redact-tool-call-arguments/README.md)) — a
 secret in a command reaches a chat surface the same way a secret in a result
@@ -1469,13 +1472,20 @@ The neutral conversation projection is a capability of the dispatcher agent and
 team-scoped entities, not a Feishu role filter in core. TeamLeaders and Team
 members publish the event surface; team-less dispatcher-spawned TeamMates do not
 participate. Its scope is either a team-less dispatcher or a named
-TeamLeader/Team member; an origin-less dispatcher turn is rejected by one core
-predicate before any input or activity fact can enter the bus.
+TeamLeader/Team member. Core's `actorScope` predicate rejects out-of-scope actors,
+including team-less non-dispatchers, before any fact enters the bus. Separately,
+Core carries no Channel origin; the Channel decides whether its recipient has an
+anchor where the activity can be displayed.
 
-The Feishu session subscribes through `feishu-cot-adapter`. It owns card
-anchoring, event-to-card projection, bounded outbox batching, serialized I/O, and
-diagnostics. Presentation is keyed by *recipient*: every TeamLeader, and the
-Dispatcher Agent, owns one standing anchor and at most one open card, whichever
+The Feishu session subscribes through `FeishuCotAdapter`, which owns recipient
+anchors and card transitions. `CotCardWriter` owns serialized create/append,
+500ms pacing, terminal writes, drain, and failure cleanup; `CotOutbox` in
+`recipients.ts` owns bounded event buffering. `reasoning.ts` plans native part
+events and updates the open-part map only after admission. This map retains
+each native part's display id until that part closes, avoiding a hash for every
+increment. `card.ts` owns wire event shapes. Presentation is keyed by
+*recipient*: every TeamLeader, and the Dispatcher Agent, owns one standing anchor
+and at most one open card, whichever
 Feishu chat, DM, group, or topic supplied that anchor. A target is an attribute
 of the anchor, not a state key or a card partition, so a conversation that moves
 between chats moves its one card rather than growing a second. None of it is
@@ -1541,11 +1551,34 @@ producer name, `CRON TRIGGERED`, `WORKFLOW FINISHED` without a name, and
 producer name come from structured provenance supplied by the completion owner,
 never from parsing its notification text. `TeammateInputEvent.notice` carries
 `TeammateInputNotice`: `{kind: 'teammate_completion', producer}`,
-`{kind: 'workflow_completion'}`, or null for other inputs. The producer is the
+`{kind: 'workflow_completion'}`, `{kind: 'teammate_message', producer}`, or null
+for ordinary inputs. A member-to-owner send supplies the message notice from
+its authenticated member scope. For a TeamLeader recipient, Feishu renders
+`TEAMMATE MESSAGE FROM <producer>` instead of the body. Dispatcher owners and
+peer sends retain their existing presentation; completion callbacks remain
+separate. The producer is the
 host's Agent identity name and travels unchanged, like `teammateName` in the
 actor scope; it is not part of the redacted notification body. Its owning
 identity store validates the name before creation.
 The model-facing body stays intact.
+
+The optional Feishu channel config `cot.reasoning` defaults to false. Enabled
+reasoning uses native `REASONING_START` / `REASONING_MESSAGE_START` (role
+`reasoning`) / `REASONING_MESSAGE_CONTENT` / `REASONING_MESSAGE_END` /
+`REASONING_END` events (40, 41, 42, 43, 45). The first nonempty fragment opens a
+block with `Thinking...`; subsequent fragments append to the same block. An
+empty completion closes an existing block but opens nothing. Native IDs and
+part positions determine Channel-owned display IDs. No signature or encrypted
+value is sent, and these activities remain live-only. A new presentation opens
+its own block on new text without replaying an earlier presentation.
+
+COT append requests start at least 500ms apart per presentation, including
+successive batches and terminal events; the first append is immediate. Adjacent
+pending reasoning content for the same block coalesces before bounded outbox
+admission. Text and tool events remain ordering barriers, and the existing
+4096-byte event / 50-event and 64KB request limits still apply. Timers participate
+in close/drain so pending content precedes reasoning ends and the run terminal.
+See [stream COT reasoning](../tasks/channel/stream-cot-reasoning/README.md).
 The Channel suppresses only its own already-visible inbound body by comparing
 `sourceId` with the bounded set it issued; a source ID's presence alone proves
 nothing. Before an anchor exists, there is no place to send a card.
@@ -1657,7 +1690,7 @@ reasoning in the
 Every admitted input publishes exactly one `teammate.input`, and the runtime's
 own stream carries everything after it; an entity whose conversation is out of
 scope publishes nothing. Core redacts input bodies and live activity except
-argument/invocation values, and never bounds them there: a surface cuts what it cannot send, where it sends it —
+reasoning append fragments, and never bounds them there: a surface cuts what it cannot send, where it sends it —
 and paths in the fields covered by redaction are renamed rather than blanked — the workspace
 reads `.` and this host's home reads `~`, from prefixes `Server.start()` resolves
 once and injects into each conversation projection as a value. Card I/O has a
@@ -1679,6 +1712,8 @@ Source:
 - `/packages/dreamux/src/platform/home-paths.ts`
 - `/packages/channel/feishu-channel/src/cot/adapter.ts`
 - `/packages/channel/feishu-channel/src/cot/recipients.ts`
+- `/packages/channel/feishu-channel/src/cot/reasoning.ts`
+- `/packages/channel/feishu-channel/src/cot/writer.ts`
 - `/packages/channel/feishu-channel/src/cot/card.ts`
 - `/packages/channel/feishu-channel/src/cot/bytes.ts`
 - `/packages/channel/feishu-channel/src/cot/diagnostics.ts`

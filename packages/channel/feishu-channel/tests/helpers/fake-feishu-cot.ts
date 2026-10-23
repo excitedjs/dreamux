@@ -23,6 +23,12 @@ export interface FakeCotCard {
   readonly chatId: string;
   readonly originMessageId: string | undefined;
   readonly events: FeishuCotEventInput[];
+  /** Clock reading when `createCot` was called. */
+  readonly createdAt: number;
+  /** Clock readings at which each `appendCot` call started. */
+  readonly appendStarts: number[];
+  /** The events each `appendCot` call carried, in call order. */
+  readonly appendBatches: FeishuCotEventInput[][];
   /** The reason a `completeCot` call closed this card, if one ever did. */
   completedReason: string | null;
 }
@@ -33,6 +39,12 @@ export interface FakeCotClient extends FeishuCotClient {
   createError: Error | null;
   /** Fail every `appendCot` with this error while it is set. */
   appendError: Error | null;
+  /**
+   * Delay the next `appendCot` call by this many milliseconds, once. The card
+   * records the call's start before waiting, so a stalled test can see when
+   * the platform call was really issued.
+   */
+  stallNextAppendMs: number | null;
 }
 
 export function createFakeCotClient(): FakeCotClient {
@@ -42,6 +54,7 @@ export function createFakeCotClient(): FakeCotClient {
     cards,
     createError: null,
     appendError: null,
+    stallNextAppendMs: null,
     async createCot(
       input: FeishuCotCreateInput,
     ): Promise<FeishuCotCreateResult> {
@@ -56,6 +69,9 @@ export function createFakeCotClient(): FakeCotClient {
         chatId: input.chatId,
         originMessageId: input.originMessageId,
         events: [],
+        createdAt: Date.now(),
+        appendStarts: [],
+        appendBatches: [],
         completedReason: null,
       });
       return created;
@@ -65,6 +81,13 @@ export function createFakeCotClient(): FakeCotClient {
       const card = cards.find((candidate) => candidate.cotId === input.cotId);
       if (card === undefined)
         throw new Error(`no fake COT card ${input.cotId}`);
+      card.appendStarts.push(Date.now());
+      card.appendBatches.push([...input.events]);
+      const stall = client.stallNextAppendMs;
+      if (stall !== null) {
+        client.stallNextAppendMs = null;
+        await new Promise<void>((resolve) => setTimeout(resolve, stall));
+      }
       card.events.push(...input.events);
     },
     async completeCot(input: FeishuCotCompleteInput): Promise<void> {
@@ -105,6 +128,64 @@ export function cotMessages(card: FakeCotCard): RenderedCotMessage[] {
 /** Just the visible text bodies, which is what most assertions care about. */
 export function cotTexts(card: FakeCotCard): string[] {
   return cotMessages(card).map((message) => message.text);
+}
+
+export interface RenderedReasoningBlock {
+  readonly messageId: string;
+  /** All increments appended to this block, in order. */
+  text: string;
+  /** How many `REASONING_MESSAGE_START` events named this block. */
+  starts: number;
+  /** How many `REASONING_MESSAGE_END` events closed it. */
+  ends: number;
+}
+
+/** The reasoning blocks a card shows, in display order. */
+export function cotReasoningBlocks(
+  card: FakeCotCard,
+): RenderedReasoningBlock[] {
+  const order: string[] = [];
+  const byId = new Map<string, RenderedReasoningBlock>();
+  for (const event of card.events) {
+    const messageId = String(event.content['messageId'] ?? '');
+    if (event.eventType === 'REASONING_MESSAGE_START') {
+      let block = byId.get(messageId);
+      if (block === undefined) {
+        block = { messageId, text: '', starts: 0, ends: 0 };
+        byId.set(messageId, block);
+        order.push(messageId);
+      }
+      block.starts += 1;
+      continue;
+    }
+    const block = byId.get(messageId);
+    if (block === undefined) continue;
+    if (event.eventType === 'REASONING_MESSAGE_CONTENT') {
+      block.text += String(event.content['delta'] ?? '');
+    } else if (event.eventType === 'REASONING_MESSAGE_END') {
+      block.ends += 1;
+    }
+  }
+  return order.map((id) => byId.get(id)!);
+}
+
+/** How many reasoning sections the card opened and closed. */
+export function cotReasoningSections(card: FakeCotCard): {
+  started: number;
+  ended: number;
+  messageStarts: number;
+  messageEnds: number;
+  contents: number;
+} {
+  const count = (eventType: string): number =>
+    card.events.filter((event) => event.eventType === eventType).length;
+  return {
+    started: count('REASONING_START'),
+    ended: count('REASONING_END'),
+    messageStarts: count('REASONING_MESSAGE_START'),
+    messageEnds: count('REASONING_MESSAGE_END'),
+    contents: count('REASONING_MESSAGE_CONTENT'),
+  };
 }
 
 /** The tool rows a card opened, by the name it displayed them under. */

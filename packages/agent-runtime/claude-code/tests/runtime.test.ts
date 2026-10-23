@@ -210,6 +210,7 @@ function fireAssistantText(session: FakeSession, text: string): void {
 }
 
 class Harness {
+  readonly activities: RuntimeActivity[] = [];
   readonly sessions: FakeSession[] = [];
   readonly stateCalls: AgentRuntimeStateUpdate[] = [];
   /** Every native turn end this runtime reported, in order. */
@@ -285,6 +286,7 @@ class Harness {
         )
           return;
         if (activity.kind === 'turn.ended') this.nativeEnds.push(activity);
+        this.activities.push(activity);
       },
     };
   }
@@ -318,6 +320,64 @@ async function tracked(runtime: Promise<AgentRuntime>): Promise<AgentRuntime> {
   runtimesToStop.push(resolved);
   return resolved;
 }
+
+describe('ClaudeCodeRuntime reasoning teardown', () => {
+  it.each(['stop', 'crash'] as const)(
+    'closes native reasoning before the %s terminal',
+    async (ending) => {
+      const h = new Harness();
+      const runtime = await tracked(h.createRuntime());
+      await runtime.start();
+      const session = h.sessions[0]!;
+      expect(session.spec.args).toContain('--include-partial-messages');
+      session.emit({
+        type: 'stream_event',
+        event: { type: 'message_start', message: { id: 'native-message' } },
+      });
+      session.emit({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 4,
+          content_block: { type: 'thinking' },
+        },
+      });
+      session.emit({
+        type: 'stream_event',
+        event: {
+          type: 'content_block_delta',
+          index: 4,
+          delta: { type: 'thinking_delta', thinking: 'unfinished' },
+        },
+      });
+      if (ending === 'stop') await runtime.stop();
+      else {
+        session.fail(new Error('native process exited'));
+        await drain();
+      }
+      expect(h.activities).toEqual([
+        expect.objectContaining({
+          kind: 'assistant.reasoning',
+          id: 'native-message',
+          partIndex: 4,
+          text: 'unfinished',
+          status: 'streaming',
+        }),
+        expect.objectContaining({
+          kind: 'assistant.reasoning',
+          id: 'native-message',
+          partIndex: 4,
+          text: '',
+          status: 'completed',
+        }),
+        expect.objectContaining({
+          kind: 'turn.ended',
+          status: ending === 'stop' ? 'interrupted' : 'failed',
+        }),
+      ]);
+    },
+  );
+});
 
 // ─── System prompt: append-only, ordered, re-supplied on every spawn ───────
 

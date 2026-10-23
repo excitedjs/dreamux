@@ -157,6 +157,22 @@ export interface ItemStartedNotification {
   item: ThreadItem;
 }
 
+export interface ReasoningTextDeltaNotification {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+  contentIndex: number;
+}
+
+export interface ReasoningSummaryTextDeltaNotification {
+  threadId: string;
+  turnId: string;
+  itemId: string;
+  delta: string;
+  summaryIndex: number;
+}
+
 /** JSON-RPC envelope shapes (codex omits the `jsonrpc` version field). */
 export interface RequestEnvelope {
   method: string;

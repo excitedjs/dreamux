@@ -21,6 +21,51 @@ function realProjection(
   });
 }
 describe('display fact correlation', () => {
+  it('passes reasoning append fragments unchanged while ordinary text stays redacted', () => {
+    const publisher = createCapturingPublisher();
+    const projection = realProjection(publisher);
+    const agent: ProjectedAgent = {
+      identity: makeIdentity({ team_id: 'alpha', name: 'scout' }),
+      role: 'teammate',
+    };
+    const fragments = [
+      { partIndex: 0, text: 'token=', status: 'streaming' as const },
+      { partIndex: 0, text: 'synthetic-value', status: 'streaming' as const },
+      { partIndex: 0, text: '', status: 'completed' as const },
+      {
+        partIndex: 1,
+        text: 'token=synthetic-value',
+        status: 'completed' as const,
+      },
+    ].map((fragment) => ({
+      kind: 'assistant.reasoning' as const,
+      id: 'native-reasoning-item',
+      occurredAt: 10,
+      ...fragment,
+    }));
+    for (const fragment of fragments)
+      projection.projectActivity(agent, fragment);
+    projection.projectActivity(agent, {
+      kind: 'assistant.message',
+      id: 'native-answer',
+      occurredAt: 11,
+      text: 'token=synthetic-value',
+    });
+    expect(
+      publisher.published.map(({ event }) =>
+        event.kind === 'teammate.activity' ? event.activity : null,
+      ),
+    ).toEqual([
+      ...fragments,
+      {
+        kind: 'assistant.message',
+        id: 'native-answer',
+        occurredAt: 11,
+        text: 'token=<redacted>',
+      },
+    ]);
+  });
+
   it('the input fact returns sourceId and source, and no event carries a turn_id', () => {
     const publisher = createCapturingPublisher();
     const projection = createConversationProjection({
@@ -213,6 +258,36 @@ describe('the real conversation projection presents a dispatcher completion deli
 
     expect(publisher.published).toHaveLength(0);
   });
+});
+
+it('forwards reasoning through the agent observer before its turn settles', async () => {
+  const f = await dispatcherFixture({ channel: true });
+  await f.host.start();
+  const result = await f.host.submitInput({ source: 'task', text: 'work' });
+  if (result.status !== 'submitted') throw new Error('turn was not admitted');
+  const runtime = f.provider.runtimes[0]!;
+  const fragment = {
+    kind: 'assistant.reasoning' as const,
+    id: 'native-message',
+    partIndex: 2,
+    occurredAt: 10,
+    text: 'token=synthetic-value',
+    status: 'streaming' as const,
+  };
+  runtime.context.events(fragment);
+  expect(
+    f.channel.sessions
+      .get('fixture-channel')!
+      .receivedEvents.filter((event) => event.kind === 'teammate.activity'),
+  ).toEqual([
+    expect.objectContaining({
+      kind: 'teammate.activity',
+      role: 'dispatcher',
+      activity: fragment,
+    }),
+  ]);
+  runtime.submissions[0]!.complete(null);
+  await result.turn.settled;
 });
 
 it('a turn still projects submitted/settled facts to a well-behaved sibling listener even with a hostile listener attached', async () => {

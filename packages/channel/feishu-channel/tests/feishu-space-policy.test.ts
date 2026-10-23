@@ -79,6 +79,7 @@ function fixtureProvisioning(opts: {
     log: opts.log,
     lifecycle,
     cotClient: undefined,
+    cotReasoning: false,
   });
   const submitter = new FeishuTeamSubmitter({ lifecycle, cot, commands });
   vi.spyOn(submitter, 'submit').mockImplementation(() =>

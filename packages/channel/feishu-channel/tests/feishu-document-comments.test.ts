@@ -114,6 +114,7 @@ async function harness(
     log,
     lifecycle,
     cotClient: undefined,
+    cotReasoning: false,
   });
   const submitter = new FeishuTeamSubmitter({
     lifecycle,

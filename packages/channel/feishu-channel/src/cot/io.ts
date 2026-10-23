@@ -2,9 +2,9 @@
  * Bounded, stateless platform I/O for one COT presentation.
  *
  * A handle captures one client so every batch and its failure cleanup use the
- * same transport instance. Private to the COT adapter: `cot/adapter.ts` is the
- * only consumer, holding one `FeishuCotIo` as a private member and resolving a
- * handle from it per presentation.
+ * same transport instance. Private to the card write pipeline: `cot/writer.ts`
+ * is the only consumer, holding one `FeishuCotIo` as a private member and
+ * resolving a handle from it per presentation.
  */
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 import type {
