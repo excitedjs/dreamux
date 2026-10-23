@@ -21,6 +21,7 @@
 ## Verification and delivery
 
 - Evidence: [Historical audit and independent review](/.agents/tasks/mcp/simplify-mcp-results/verification.md).
+- Follow-up input: [Dispatcher usability feedback](/.agents/tasks/mcp/simplify-mcp-results/usability-feedback.md), including reported list sizes and the independently checked space-identity discrepancy. These are follow-up proposals, not additional implementation approval.
 - Prior delivery gates: Rush build, lint, test and typecheck:tests passed after the authored-text refinement (2,914 tests passed; six opt-in real-model cases were not enabled). The whole-diff architecture review found no remaining production blocker. SDK/shim tests prove wire behavior, not live model consumption.
 - Style follow-up gates: Rush build, lint, test and typecheck:tests passed (2,989 tests passed; six opt-in real-model cases were not enabled). Independent whole-diff review and final delta review found no remaining blocker.
 - Knowledge closeout: Updated the product catalog, MCP writing/channel/orchestration/topology/runtime owners, provider author documentation and configuration maintenance reference. The full KB check passed (59 task records; 396 reachable files).

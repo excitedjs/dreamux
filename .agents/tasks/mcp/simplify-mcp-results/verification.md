@@ -172,3 +172,8 @@ literal rich-text expectations in the projection tests remain unchanged as well.
 The two focused suites passed all 49 cases under that same temporary root after
 the assertion update. No production code changed in this correction.
 The four full Rush gates also passed again after this test-only correction.
+CI run [39926763644](https://github.com/excitedjs/dreamux/actions/runs/39926763644)
+passed all nine checks, including the complete Linux and macOS
+pipelines. Subsequent Dispatcher usability feedback is recorded separately in
+[the input note](/.agents/tasks/mcp/simplify-mcp-results/usability-feedback.md);
+it adds no production changes to that validated code.
