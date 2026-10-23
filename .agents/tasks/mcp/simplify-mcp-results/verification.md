@@ -248,3 +248,26 @@ All four full Rush gates passed again: build, lint, test and typecheck:tests.
 The complete suite passed 3,024 cases; six opt-in real-model cases remained
 excluded. The KB check passed (59 task records, 397 reachable files).
 This follow-up adds 25 nonblank test code lines and no production code.
+
+## Assistant-only MCP last default
+
+The operator explicitly requested that last default to include_tools=false.
+Only the MCP entrypoint now supplies that default, before provider pagination;
+explicit true still includes tools. The shared parser, Command, provider default
+and live COT event path are unchanged. Existing cursors produced with true need
+that same explicit choice on continuation.
+
+Four focused suites passed 105 cases. The new parameterized cases exercise both
+Dispatcher and TeamLeader scopes with omitted, false and true arguments, assert
+the actual provider query and returned records, and verify direct Core reads
+still use the original default. The existing metadata test now explicitly asks
+for tools while preserving its exact tool assertions.
+
+Independent review of the complete follow-up diff found no blocker. All four
+Rush gates passed: build, lint, test and typecheck:tests. Across eight packages,
+3,026 cases passed; six opt-in real-model cases remained excluded. The KB check
+passed (59 task records, 397 reachable files). Pure-code follow-up delta excluding
+comments, blanks, docs and generated files: production +9/-3, tests +81/-2.
+Publication and self-upgrade will use this new revision rather than the earlier
+alpha, whose first installation attempt failed dependency resolution before any
+service restart. No live COT rendering or model-use claim is made.

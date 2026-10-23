@@ -479,7 +479,7 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
     {
       descriptor: tool(
         'last',
-        "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records. Native turn_id is included only when known (not a Core submission ID). transcript_path is the provider-confirmed current-session file, or null; it may be compressed and does not list ancestor files.",
+        "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages. include_tools defaults to false; set it to true to include tool records and keep that choice when paging. Native turn_id is included only when known (not a Core submission ID). transcript_path is the provider-confirmed current-session file, or null; it may be compressed and does not list ancestor files.",
         {
           name: {
             type: 'string',
@@ -502,8 +502,9 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
           },
           include_tools: {
             type: 'boolean',
+            default: false,
             description:
-              'false omits tool records and returns assistant messages only.',
+              'Include tool records; default false returns assistant messages only.',
           },
         },
         ['name'],
@@ -718,7 +719,12 @@ async function last(
   const name = agentEntityNameParam(args, 'name');
   const query = agentEntityLastQuery(args);
   try {
-    const result = await (await teammates(scope)).last(name, query);
+    const result = await (
+      await teammates(scope)
+    ).last(name, {
+      ...query,
+      includeTools: query.includeTools ?? false,
+    });
     // The caller asked to observe activity, not to re-read the roster row it
     // already has from `status`/`list`.
     return {

@@ -22,6 +22,8 @@
 
 ## Verification and delivery
 
+- Last-default follow-up on 2026-10-23: The operator requested "给他改成默认 false ，默认不返回 toolcall。" MCP `last` now defaults `include_tools` to false, with explicit true preserving tool reads. Command/provider defaults and live COT display are outside this change. The separate instruction to publish an alpha and update the managed install remains active; no merge was authorized.
+
 - Evidence: [Historical audit and independent review](/.agents/tasks/mcp/simplify-mcp-results/verification.md).
 - Follow-up input: [Dispatcher usability feedback](/.agents/tasks/mcp/simplify-mcp-results/usability-feedback.md), including reported list sizes and the independently checked space-identity discrepancy. The operator subsequently asked to include these gaps in this PR; the implemented boundaries and evidence are recorded below.
 - Prior delivery gates: Rush build, lint, test and typecheck:tests passed after the authored-text refinement (2,914 tests passed; six opt-in real-model cases were not enabled). The whole-diff architecture review found no remaining production blocker. SDK/shim tests prove wire behavior, not live model consumption.

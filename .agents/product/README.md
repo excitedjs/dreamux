@@ -474,8 +474,10 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 - **`last` is the mid-turn progress window.** Its story: a TeamMate has been
   running for forty minutes without returning; the operator asks the
   TeamLeader, who pulls the member's recent activity — while the turn is still
-  open. It returns assistant messages and tool names/statuses, not tool
-  arguments or outputs. It also returns the provider-confirmed canonical
+  open. MCP `last` defaults `include_tools` to false and returns assistant
+  messages; `include_tools:true` also returns tool names/statuses, never tool
+  arguments or outputs. Keep that choice while paging. This MCP default does
+  not change Command/provider defaults or the live COT stream. It also returns the provider-confirmed canonical
   transcript_path, or null when unavailable. Codex may return a compressed tail
   rollout path even when records came from ancestor segments; failed reads do
   not guess a path. Optional turn_id names only an evidenced native turn, not

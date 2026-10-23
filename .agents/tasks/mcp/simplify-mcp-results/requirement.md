@@ -62,7 +62,7 @@ Live settings, deployment and merge are outside this authorization.
 
 9. Team/TeamMate MCP lists accept status/limit/cursor, default to the first 20 non-closed rows, and return total plus next_cursor. Closed resources remain explicitly discoverable; member scans exclude self before paging. Commands keep full lists.
 10. Cron lists default to a 200-code-point prompt preview plus UTF-8 byte count; include_prompt returns the full top-level prompt and optional id selects exactly one job.
-11. Last retains records/cursor/truncation and adds the provider-confirmed current-session path (or null). Native turn IDs are optional and never inferred from user messages or timestamps. Claude has no reliable native turn identity in these logs; no boundary is fabricated.
+11. Last retains records/cursor/truncation and adds the provider-confirmed current-session path (or null). Native turn IDs are optional and never inferred from user messages or timestamps. Claude has no reliable native turn identity in these logs; no boundary is fabricated. The operator's later default-selection request makes MCP include_tools default to false; explicit true still includes tools. Command/provider defaults and live COT display do not change.
 
 ## Decisions and unknowns
 

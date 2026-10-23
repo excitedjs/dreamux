@@ -120,6 +120,12 @@ is not a complete list of source files. Failed reads keep existing errors;
 locate failure does not invent a candidate path. Configuration-home drift remains
 unresolved; there is no cross-home search, new persisted fact, or error contract.
 
+MCP `last` defaults `include_tools` to false at its own handler after shared
+argument validation. Explicit true/false is preserved and passed to the provider
+before its limit/cursor selection; no post-page filtering is added. Keep this
+choice when paging, including explicit true for earlier tool-inclusive cursors.
+Command/provider defaults remain unchanged, as does the live COT stream.
+
 The earlier provider-private-ID rule remains intact for admission and settlement.
 The activity usability requirement adds a narrow observation exception: Core
 passes an opaque ID without interpretation, persistence or submission mapping.

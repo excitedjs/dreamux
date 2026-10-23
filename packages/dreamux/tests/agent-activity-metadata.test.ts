@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AgentActivityPage } from '@excitedjs/dreamux-types';
+import type {
+  AgentActivityPage,
+  AgentRuntimeProvider,
+} from '@excitedjs/dreamux-types';
 import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
 import { dispatcherFixture } from './helpers/real-dispatcher.js';
 
@@ -63,7 +66,7 @@ describe('provider-owned activity metadata', () => {
       expect(
         await delegate.call({
           name: 'last',
-          arguments: { name: spawned.teammate.name },
+          arguments: { name: spawned.teammate.name, include_tools: true },
         }),
       ).toMatchObject({ ok: true, structured: expected });
       await f.host.teammates.close({
@@ -78,6 +81,83 @@ describe('provider-owned activity metadata', () => {
       });
       expect(closed.records).toEqual(records);
       expect(f.provider.runtimes).toHaveLength(count);
+    },
+  );
+});
+
+describe('MCP last tool selection', () => {
+  it.each(['dispatcher', 'team_leader'] as const)(
+    '%s defaults to assistant messages and preserves explicit tool selection',
+    async (scope) => {
+      const f = await dispatcherFixture();
+      await f.host.start();
+      const spawned = await f.host.teammates.spawn({
+        name: 'reader',
+        prompt: 'work',
+        intent: 'Observe activity',
+      });
+      await f.provider.runtimes[0]!.context.state.publish({
+        kind: 'session',
+        sessionId: 'native-session',
+      });
+      const message = { kind: 'assistant_message', text: 'working' } as const;
+      const tool = { kind: 'tool', name: 'Read', status: 'completed' } as const;
+      const provider: AgentRuntimeProvider<unknown> = f.provider;
+      const read = vi
+        .spyOn(provider, 'readRecentActivity')
+        .mockImplementation(async (query) => ({
+          records: query.includeTools ? [message, tool] : [message],
+          truncated: false,
+        }));
+      const delegate = createTeamMateMcpDelegate(
+        scope === 'dispatcher'
+          ? { kind: 'dispatcher', dispatcher: f.host }
+          : {
+              kind: 'team_leader',
+              team: {
+                teammates: f.host.teammates,
+                workflows: f.host.workflows,
+                admitLeaderTools: async <T>(operation: () => Promise<T>) =>
+                  operation(),
+              },
+            },
+      );
+      for (const includeTools of [undefined, false, true]) {
+        const result = await delegate.call({
+          name: 'last',
+          arguments: {
+            name: spawned.teammate.name,
+            ...(includeTools === undefined
+              ? {}
+              : { include_tools: includeTools }),
+          },
+        });
+        expect(read).toHaveBeenLastCalledWith(
+          {
+            sessionId: 'native-session',
+            limit: 20,
+            includeTools: includeTools ?? false,
+          },
+          expect.anything(),
+        );
+        expect(result).toMatchObject({
+          ok: true,
+          structured: {
+            records: (includeTools ? [message, tool] : [message]).map(
+              (record) => ({ ...record, occurred_at: null }),
+            ),
+          },
+        });
+      }
+      const direct = await f.host.teammates.last(spawned.teammate.name);
+      expect(direct.records).toEqual([
+        { ...message, occurred_at: null },
+        { ...tool, occurred_at: null },
+      ]);
+      expect(read).toHaveBeenLastCalledWith(
+        { sessionId: 'native-session', limit: 20, includeTools: true },
+        expect.anything(),
+      );
     },
   );
 });
