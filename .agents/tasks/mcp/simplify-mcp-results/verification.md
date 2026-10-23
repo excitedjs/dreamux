@@ -228,3 +228,23 @@ against its merge base: production +1015/-624, tests +3732/-85.
 No deployment, live configuration write, restart, or merge is part of this
 continuation. Runtime-home drift and activity failures without a verified path
 keep their existing behavior.
+
+
+## Native turn alias coverage
+
+[Devbox's usability review](https://github.com/excitedjs/dreamux/pull/480#pullrequestreview-5626919561)
+approved the implementation and noted missing fixture coverage for the native
+turn_started / turn_complete aliases. One additional synthetic rollout test
+exercises the real provider reader: start establishes the native ID, an unrelated
+completion preserves it, and a matching completion clears it before the next
+message. Exact record equality also checks ordering and ID omission.
+
+The focused Codex activity suite passed 24 cases. Independent source review
+confirmed the assertions distinguish removal of either alias and incorrect
+unconditional completion clearing. Production code and existing assertions are
+unchanged; this is synthetic protocol coverage, not a live runtime observation.
+
+All four full Rush gates passed again: build, lint, test and typecheck:tests.
+The complete suite passed 3,024 cases; six opt-in real-model cases remained
+excluded. The KB check passed (59 task records, 397 reachable files).
+This follow-up adds 25 nonblank test code lines and no production code.

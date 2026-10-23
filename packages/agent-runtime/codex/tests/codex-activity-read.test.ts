@@ -445,6 +445,34 @@ function finalizedMessage(text: string): Record<string, unknown> {
 }
 
 describe('readRecentActivity: authoritative native turn IDs', () => {
+  it('recognizes native turn aliases and clears context only for a matching completion', async () => {
+    const session = await makeSession();
+    await appendNative(
+      session,
+      turnEvent('turn_started', 'alias-one'),
+      finalizedMessage('working'),
+      turnEvent('turn_complete', 'unrelated'),
+      finalizedMessage('still working'),
+      turnEvent('turn_complete', 'alias-one'),
+      finalizedMessage('after completion'),
+    );
+
+    const page = await provider.readRecentActivity(
+      { sessionId: session.sessionId },
+      readContext(session),
+    );
+
+    expect(page.records).toEqual([
+      { kind: 'assistant_message', text: 'working', turnId: 'alias-one' },
+      {
+        kind: 'assistant_message',
+        text: 'still working',
+        turnId: 'alias-one',
+      },
+      { kind: 'assistant_message', text: 'after completion' },
+    ]);
+  });
+
   it('keeps tools and compaction continuations in their evidenced turn, across multiple turns', async () => {
     const session = await makeSession();
     await appendNative(session, turnEvent('task_started', 'native-one'));
