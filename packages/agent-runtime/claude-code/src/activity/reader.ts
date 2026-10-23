@@ -142,6 +142,7 @@ export async function readClaudeRecentActivity(
         : undefined;
     return {
       records: consumed.map((entry) => entry.record),
+      transcriptPath: opened.path,
       ...(nextCursor !== undefined ? { nextCursor } : {}),
       truncated: parsed.boundReached && projected.length < limit,
     };
@@ -246,6 +247,12 @@ function buildSelectedChain(entries: readonly NativeEntry[]): NativeEntry[] {
     const uuid = stringValue(entry.value['uuid']);
     if (uuid === null) continue;
     byId.set(uuid, entry);
+    // Only another conversation participant can keep a participant from
+    // being the leaf. Claude appends non-participant records (attachments,
+    // queue operations, prompt latches) under the newest message; counting
+    // those as children selects no leaf while a turn is still being written,
+    // which projects an empty page for a session that has activity.
+    if (!isConversationParticipant(entry.value)) continue;
     const parent = stringValue(entry.value['parentUuid']);
     if (parent !== null) parents.add(parent);
   }
@@ -281,7 +288,9 @@ function buildSelectedChain(entries: readonly NativeEntry[]): NativeEntry[] {
  * Deliberately flat: no turn grouping and no completion-marker gate, so an
  * in-progress turn yields records immediately. Only assistant text and tool
  * name/status cross the seam — never tool inputs, tool results, or human
- * prompts.
+ * prompts. Claude stores no native turn ID here: user UUIDs identify prompts
+ * that may be folded together, and turn_duration UUIDs identify display
+ * checkpoints. Neither can identify the native turn of these records.
  */
 function projectActivity(
   chain: readonly NativeEntry[],

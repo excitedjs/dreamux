@@ -133,6 +133,7 @@ export async function readCodexRecentActivity(
 
   return {
     records: scan.collected.map((entry) => entry.entry.record).reverse(),
+    transcriptPath: tail.path,
     ...(nextCursor !== undefined ? { nextCursor } : {}),
     truncated: scan.truncated,
   };

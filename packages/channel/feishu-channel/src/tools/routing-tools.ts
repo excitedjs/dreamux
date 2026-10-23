@@ -24,6 +24,8 @@
  * resolution: a topic that matches nothing is a topic with no row, not a topic
  * nobody answers in.
  */
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
+
 import type { FeishuBindingView } from '../routing/index.js';
 import {
   chatTarget,
@@ -47,10 +49,32 @@ import {
 const mutating = { readOnlyHint: false, destructiveHint: false } as const;
 // The card is best effort: it is skipped when a topic's reply root cannot be
 // read from Feishu, and dropped when the send fails after its one retry.
-const BIND_SUCCESS_TEXT =
-  'Binding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
-const UNBIND_SUCCESS_TEXT =
-  'Unbinding succeeded. The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
+const BINDING_NOTIFICATION_TEXT =
+  'The system will automatically send a notification card on a best-effort basis; no additional user notification is needed.';
+
+function targetPhrase(result: FeishuToolResult): string {
+  return result.thread_id !== null
+    ? `topic ${quoteModelValue(String(result.thread_id))} in chat ${quoteModelValue(String(result.chat_id))}`
+    : `whole chat ${quoteModelValue(String(result.chat_id))}`;
+}
+
+function bindSuccessText(result: FeishuToolResult): string {
+  return (
+    `Bound ${targetPhrase(result)} to Team ${quoteModelValue(String(result.team_name))}.` +
+    (result.previous_team_name !== null
+      ? ` Previous binding: ${quoteModelValue(String(result.previous_team_name))}.`
+      : '') +
+    ` ${BINDING_NOTIFICATION_TEXT}`
+  );
+}
+
+function unbindSuccessText(result: FeishuToolResult): string | undefined {
+  if (result.unbound !== true) return undefined;
+  return (
+    `Unbound ${targetPhrase(result)} from Team ${quoteModelValue(String(result.team_name))}. ` +
+    BINDING_NOTIFICATION_TEXT
+  );
+}
 
 interface TargetInput {
   chatId: string;
@@ -79,26 +103,6 @@ const displayProperty = {
   ...nonEmptyString,
   description: 'Optional human label for this target in listings.',
 };
-
-const bindOutputSchema = closedObjectSchema(
-  {
-    chat_id: nonEmptyString,
-    thread_id: { type: ['string', 'null'] },
-    team_name: nonEmptyString,
-    previous_team_name: { type: ['string', 'null'] },
-  },
-  ['chat_id', 'thread_id', 'team_name', 'previous_team_name'],
-);
-
-const unbindOutputSchema = closedObjectSchema(
-  {
-    chat_id: nonEmptyString,
-    thread_id: { type: ['string', 'null'] },
-    unbound: { type: 'boolean' },
-    team_name: { type: ['string', 'null'] },
-  },
-  ['chat_id', 'thread_id', 'unbound', 'team_name'],
-);
 
 function parseTarget(obj: Record<string, unknown>): TargetInput {
   return {
@@ -187,9 +191,8 @@ export const bindChannelDef: FeishuToolDef<BindInput> = {
     },
     ['chat_id', 'team_name'],
   ),
-  outputSchema: bindOutputSchema,
   annotations: mutating,
-  successText: () => BIND_SUCCESS_TEXT,
+  successText: bindSuccessText,
   parse(raw) {
     const obj = asRecord(raw, 'bind_channel arguments');
     return {
@@ -218,9 +221,8 @@ export const leaderBindChannelDef: FeishuToolDef<
     { ...targetProperties, display: displayProperty },
     ['chat_id'],
   ),
-  outputSchema: bindOutputSchema,
   annotations: mutating,
-  successText: () => BIND_SUCCESS_TEXT,
+  successText: bindSuccessText,
   parse(raw) {
     const obj = asRecord(raw, 'bind_channel arguments');
     return {
@@ -242,10 +244,8 @@ export const unbindChannelDef: FeishuToolDef<TargetInput> = {
     'dissolved and keeps working; the conversation simply has no route.',
   callers: ['dispatcher'],
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
-  outputSchema: unbindOutputSchema,
   annotations: mutating,
-  successText: (result) =>
-    result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
+  successText: unbindSuccessText,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },
@@ -263,10 +263,8 @@ export const leaderUnbindChannelDef: FeishuToolDef<TargetInput> = {
     'not routed to you is left untouched.',
   callers: ['team_leader'],
   inputSchema: closedObjectSchema(targetProperties, ['chat_id']),
-  outputSchema: unbindOutputSchema,
   annotations: mutating,
-  successText: (result) =>
-    result.unbound === true ? UNBIND_SUCCESS_TEXT : undefined,
+  successText: unbindSuccessText,
   parse(raw) {
     return parseTarget(asRecord(raw, 'unbind_channel arguments'));
   },

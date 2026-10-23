@@ -74,11 +74,16 @@ export interface FeishuToolDef<TInput = unknown> {
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
   annotations: ChannelMcpToolAnnotations;
   /** Which callers this tool is advertised to. */
   callers: readonly ChannelMcpCaller['kind'][];
   parse(raw: unknown): TInput;
   handle(ctx: FeishuToolContext, input: TInput): Promise<FeishuToolResult>;
+  /**
+   * Complete model-facing result, including all actionable facts and reminders.
+   * Nonempty text is emitted verbatim instead of the structured result; return
+   * undefined or an empty string to expose the structured result instead.
+   */
   successText?(result: FeishuToolResult): string | undefined;
 }

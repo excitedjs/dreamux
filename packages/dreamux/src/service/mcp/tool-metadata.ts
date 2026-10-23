@@ -37,7 +37,12 @@ export interface McpToolDescriptor {
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
+  /**
+   * Optional: a tool whose success can carry model-facing text omits it. The
+   * transport emits such a result as content only, and the MCP SDK requires
+   * structured content whenever an output schema is advertised.
+   */
+  outputSchema?: Record<string, unknown>;
   annotations: McpToolAnnotations;
 }
 
@@ -73,8 +78,9 @@ export const DESTRUCTIVE_ANNOTATIONS: McpToolAnnotations = {
 /**
  * Build one tool descriptor. `inputSchema` is closed
  * (`additionalProperties: false`) around the supplied properties/required set;
- * `outputSchema` is supplied ready-made by the caller so a tool can declare a
- * closed object, an open extension field, or a specific nested shape.
+ * `outputSchema`, when supplied ready-made by the caller, lets a tool declare a
+ * closed object, an open extension field, or a specific nested shape. A
+ * text-carrying tool omits it.
  */
 export function toolMetadata(input: {
   name: string;
@@ -84,7 +90,7 @@ export function toolMetadata(input: {
   required: string[];
   /** Additional object-schema constraints such as `anyOf`. */
   inputConstraints?: Record<string, unknown> | undefined;
-  outputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown> | undefined;
   annotations: McpToolAnnotations;
 }): McpToolDescriptor {
   return {
@@ -95,7 +101,9 @@ export function toolMetadata(input: {
       ...objectSchema(input.properties, input.required),
       ...(input.inputConstraints ?? {}),
     },
-    outputSchema: input.outputSchema,
+    ...(input.outputSchema !== undefined
+      ? { outputSchema: input.outputSchema }
+      : {}),
     annotations: input.annotations,
   };
 }
@@ -113,7 +121,8 @@ export function tool(
   required: string[],
   meta: {
     title: string;
-    output: Record<string, unknown>;
+    /** Omitted by a tool whose success can carry model-facing text. */
+    output?: Record<string, unknown> | undefined;
     annotations: McpToolAnnotations;
     inputConstraints?: Record<string, unknown> | undefined;
   },

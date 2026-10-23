@@ -53,7 +53,13 @@ describe('Leader tools admit owner access before invoking children', () => {
               ? { script: 'return null;' }
               : { run_id: 'nested-run' },
         }),
-      ).toMatchObject({ ok: true, structured: { run_id: 'nested-run' } });
+      ).toMatchObject({
+        ok: true,
+        structured:
+          name === 'workflow_run'
+            ? { run_id: 'nested-run' }
+            : { status: 'stopped' },
+      });
       expect(active).toBe(0);
     },
   );

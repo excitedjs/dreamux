@@ -18,6 +18,7 @@ import {
   isPlainObject,
   readNonEmptyString,
   readOptionalBoolean,
+  readStringArray,
   readProviderConfigObject,
   redactSecretKeyValues,
   RuleViolation,
@@ -43,6 +44,9 @@ export interface DreamuxWorkspaceConfig {
 
 export interface ResolvedAgentConfig {
   provider: string;
+  description?: string;
+  tags?: string[];
+  developerInstructions?: string;
   config: DispatcherProviderConfig;
   rawConfig?: DispatcherProviderConfig | undefined;
 }
@@ -180,6 +184,9 @@ export function stringifyConfig(config: DreamuxConfig): string {
     agents: Object.entries(config.agents).map(([id, agent]) => ({
       id,
       provider: agent.provider,
+      description: agent.description,
+      tags: agent.tags,
+      developerInstructions: agent.developerInstructions,
       config: agent.rawConfig ?? agent.config,
     })),
     dispatchers: config.dispatchers.map((dispatcher) => ({
@@ -352,6 +359,25 @@ async function readAgents(
         `dreamux config error in ${file}: agents[${index}].id duplicates agent '${id}'`,
       );
     }
+    const description = raw['description'];
+    if (description !== undefined && typeof description !== 'string') {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}description must be a string (got ${describeType(description)})`,
+      );
+    }
+    const developerInstructions = raw['developerInstructions'];
+    if (
+      developerInstructions !== undefined &&
+      typeof developerInstructions !== 'string'
+    ) {
+      throw new RuleViolation(
+        `dreamux config error in ${file}: ${prefix}developerInstructions must be a string (got ${describeType(developerInstructions)})`,
+      );
+    }
+    const tags =
+      raw['tags'] === undefined
+        ? undefined
+        : readStringArray(raw, 'tags', [], file, prefix);
     const provider = resolveConfigProvider(
       readNonEmptyString(raw, 'provider', file, prefix),
       'agentRuntime',
@@ -387,6 +413,9 @@ async function readAgents(
       })) as DispatcherProviderConfig | undefined) ?? rawConfig;
     out[id] = {
       provider: provider.ref,
+      ...(description !== undefined ? { description } : {}),
+      ...(tags !== undefined ? { tags } : {}),
+      ...(developerInstructions !== undefined ? { developerInstructions } : {}),
       config: parsedConfig,
       rawConfig,
     };

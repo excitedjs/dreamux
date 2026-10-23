@@ -14,3 +14,4 @@ export * from './runtime-state-fence.js';
 export * from './json-invoke.js';
 export * from './redaction.js';
 export * from './transactional-store.js';
+export * from './model-text.js';

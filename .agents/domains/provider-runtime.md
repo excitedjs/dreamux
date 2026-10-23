@@ -97,12 +97,23 @@ diagnostics, and the bounded `readRecentActivity` tail. Dispatcher orchestration
 verbs such as `spawn`, `send`, `close`, `list`, and Team operations belong to
 Dreamux core services and MCP surfaces, never to the runtime instance.
 
+The provider requires only `createRuntime` and `readRecentActivity`; operational
+extensions are optional `config`, `onboard`, `diagnostic`, and
+`operatorStateRoot` members. Runtime discovery for `get_capabilities` reads the
+current `agents[]` configuration's `id`, optional `description`, and optional
+`tags`. It does not call a provider `getCapabilities` method, merge provider
+selection labels, or keep a capability snapshot. Provider selection and runtime
+creation remain behind `AgentRuntimeProviderCatalog`; discovery metadata is not
+an availability check. Source: `/packages/dreamux-types/src/agent-runtime.ts`,
+`/packages/dreamux/src/agent-runtime/catalog.ts`, and
+`/packages/dreamux/src/service/agent/index.ts`.
+
 Providers also own provider-specific diagnostics and onboarding; Core owns the
 host envelope around them — config location, dispatcher id and cwd, selected
 provider refs, service installation, and the file ledger. Provider diagnostics
 declare binary checks and run non-binary checks through a neutral runner, so
 `dreamux doctor`, `dreamux onboard`, and `dreamux daemon install` derive
-provider binary checks from provider capabilities instead of branching on
+provider binary checks from their diagnostic capability instead of branching on
 built-in refs.
 
 Source:
@@ -144,7 +155,7 @@ Current schema:
 Config loading first loads plugins (the always-loaded codex, claude-code, and
 Feishu plugins, then `plugins[]` in order) and runs their `contribute`, then loads the referenced
 Agent Runtime and Channel providers, validates provider-owned config through
-each provider's `readConfig`, and finally runs each plugin's `config.read`.
+each provider's optional `config.read`, and finally runs each plugin's `config.read`.
 Provider config can be sync or async. Core rejects missing `agentRuntime`,
 duplicate `agents[].id`, duplicate dispatcher ids, duplicate channel ids, and
 duplicate channel provider refs within one dispatcher — every one of these is
@@ -315,6 +326,18 @@ single TeamMate/member entity-construction boundary: it composes
 operation-owned fragments first and the persisted caller-provided identity
 fragment second, then supplies the ordered result. `outputSchema` remains a
 separate neutral turn field, not prompt text.
+
+At the final launch boundary, `AgentRuntimeGeneration.resolveLaunch` reads the
+selected runtime's current `agents[].developerInstructions`. Non-empty text is
+appended after the role, operation, plugin, and identity instructions. When a
+Dispatcher supplies both `replace` and `append`, these are alternatives: the
+text is added once at the end of each existing form and the provider applies
+only one form. An append-only role stays append-only. The launch code creates
+a fresh prompt value, so restart/resume uses updated configuration without
+mutating earlier contexts or accumulating copies. Empty or absent instructions
+leave the prompt unchanged. This is host-owned launch composition, not a
+provider option or a persisted agent-identity field. Source:
+`/packages/dreamux/src/service/agent/runtime-generation.ts`.
 
 Adapters apply the selected append form natively. Claude Code folds append
 fragments into `--append-system-prompt` before the resident session is created,
@@ -533,9 +556,11 @@ native identifiers.
   reject, and does not resolve until every already-started input admission has
   settled and can no longer return a newly accepted Turn.
 
-Codex keeps app-server `turn.id` values inside its package. Claude Code keeps its
+Codex keeps app-server turn correlation inside its package. Claude Code keeps
 command UUIDs inside its stream-json adapter. Neither identifier is Dreamux
-service state.
+service state or a Core settlement key. The cold activity read may expose an
+opaque native turn ID as observation metadata under the usability requirement;
+Core passes it through without interpreting it or relating it to submissions.
 
 Source:
 
@@ -951,11 +976,39 @@ Task: [standalone-token-usage-activity](/.agents/tasks/architecture/standalone-t
 ### Activity Reads And Scheduling
 
 Activity crosses the seam in two forms only, and neither is a liveness signal:
-the provider pushes `RuntimeActivity` values into the activity sink Core leased
+the provider pushes `RuntimeActivity` values through the events sink Core leased
 it, and `readRecentActivity` answers a bounded cold read of a session's recent
 tail. The cold read never materializes an entity or starts a runtime, so a
 closed teammate stays readable, and it is required to produce records for a turn
 that is still in progress.
+
+The Claude reader selects its conversation leaf using only conversation
+participants when building the `parents` set. Attachments, queue operations,
+and other non-participant tail records must not disqualify the newest message:
+counting them as children previously left an active session with no selected
+leaf and an empty activity page. The separate `byId` map still indexes every
+UUID-bearing entry, including non-participants, so a participant whose parent
+passes through an attachment retains its ancestry. UUID-less tail entries do
+not become leaves. This keeps selection and parent tracing distinct without
+exposing native control records as activity. Source:
+`/packages/agent-runtime/claude-code/src/activity/reader.ts`;
+regression coverage: `/packages/agent-runtime/claude-code/tests/activity-reader.test.ts`.
+
+Cold activity pages optionally expose `transcriptPath`, the canonical current
+session file already verified by the provider. Core maps its absence to null in
+`last.transcript_path`. Claude supplies its opened JSONL; Codex supplies the tail
+rollout (possibly `.jsonl.zst`), not all ancestor lineage files that contributed
+records. Only successful reads carry paths. No home fallback, persistence or
+error contract is added.
+
+Cold records optionally carry native `turnId`, projected as `turn_id`. Codex
+uses native task_started/turn_started and turn_context IDs, clears matching
+completion/abort context and isolates each scan window/lineage segment. Tool
+completion retains the original call's ID. Unknown context yields no ID. Claude
+user UUIDs can be folded into one native result; conditional turn_duration
+checkpoints may aggregate multiple deferred turns. Neither proves native turn
+identity or a single end boundary, so Claude emits no turnId. No synthetic role,
+turn grouping or settlement is inferred from timestamps or prompt records.
 
 `RuntimeActivity` (this section) and `AgentActivityRecord` (the cold-read
 member of `readRecentActivity`'s page, projected into Core's own `last`-read

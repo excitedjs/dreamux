@@ -7,6 +7,9 @@
  * record projected into a stable wire shape.
  */
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   makeToolSession,
   type ToolOverrides,
@@ -21,6 +24,7 @@ import {
   unbindSpaceDef,
 } from '../src/tools/space-tools.js';
 import type { FeishuSpaceRecord } from '../src/routing/document.js';
+import { FeishuRouting } from '../src/routing/index.js';
 import type {
   FeishuToolContext,
   FeishuToolSession,
@@ -104,10 +108,9 @@ describe('bind_collaboration_space', () => {
       identity: null,
       repo: { path: '/repo', base_ref: 'main' },
     });
-    expect(result['space']).toMatchObject({
+    expect(result).toEqual({
       space_name: 'space-a',
-      leader_agent_runtime: 'claude-code',
-      display: 'Nice label',
+      chat_id: 'oc_container',
     });
   });
 });
@@ -124,7 +127,7 @@ describe('unbind_collaboration_space', () => {
       ctx(dispatcher, session),
       unbindSpaceDef.parse({ space_name: 'space-a' }),
     );
-    expect(result).toEqual({ space_name: 'space-a', unbound: true });
+    expect(result).toEqual({ unbound: true });
   });
 
   it('reports unbound: false when there was nothing to remove', async () => {
@@ -137,7 +140,7 @@ describe('unbind_collaboration_space', () => {
       ctx(dispatcher, session),
       unbindSpaceDef.parse({ space_name: 'never-bound' }),
     );
-    expect(result).toEqual({ space_name: 'never-bound', unbound: false });
+    expect(result).toEqual({ unbound: false });
   });
 });
 
@@ -173,6 +176,17 @@ describe('get_collaboration_space', () => {
       ctx(dispatcher, session),
       getSpaceDef.parse({ space_name: 'space-a' }),
     );
+    expect(result['space']).toEqual({
+      space_name: 'space-a',
+      chat_id: 'oc_container',
+      display: null,
+      leader_agent_runtime: 'codex',
+      identity: null,
+      repo_path: null,
+      repo_base_ref: null,
+      created_at: 1,
+      updated_at: 1,
+    });
     expect(result['targets']).toEqual([
       {
         chat_id: 'oc_container',
@@ -194,19 +208,104 @@ describe('get_collaboration_space', () => {
     );
     expect(result).toEqual({ space: null, targets: [] });
   });
+
+  it.each([
+    null,
+    'Review architecture.\n\nPreserve **all** identity guidance.',
+  ])(
+    'reads the saved identity verbatim after reopening the routing store: %s',
+    async (identity) => {
+      const dir = await mkdtemp(join(tmpdir(), 'feishu-space-identity-'));
+      const options = {
+        dispatcherId: 'fixture',
+        channelId: 'channel',
+        stateDir: dir,
+      };
+      const routing = new FeishuRouting(options);
+      const reopened = new FeishuRouting(options);
+      try {
+        await routing.initialize();
+        const session = fakeSession({
+          bindSpace: (input) =>
+            routing.bindSpace({
+              spaceName: input.spaceName,
+              containerChatId: input.chatId,
+              display: input.display,
+              leaderAgentRuntime: input.leaderAgentRuntime,
+              identity: input.identity,
+              repo: input.repo,
+            }),
+          getSpace: (name) => reopened.spaceByName(name),
+        });
+        expect(
+          await bindSpaceDef.handle(
+            ctx(dispatcher, session),
+            bindSpaceDef.parse({
+              space_name: 'space-a',
+              chat_id: 'oc_container',
+              leader_agent_runtime: 'codex',
+              ...(identity === null ? {} : { identity }),
+              repo: { path: '/repo', base_ref: 'main' },
+            }),
+          ),
+        ).toEqual({ space_name: 'space-a', chat_id: 'oc_container' });
+        await routing.close();
+        await reopened.initialize();
+        const result = await getSpaceDef.handle(
+          ctx(dispatcher, session),
+          getSpaceDef.parse({ space_name: 'space-a' }),
+        );
+        expect(result['space']).toEqual({
+          space_name: 'space-a',
+          chat_id: 'oc_container',
+          display: null,
+          leader_agent_runtime: 'codex',
+          identity,
+          repo_path: '/repo',
+          repo_base_ref: 'main',
+          created_at: expect.any(Number),
+          updated_at: expect.any(Number),
+        });
+      } finally {
+        await routing.close();
+        await reopened.close();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe('list_collaboration_spaces', () => {
   it('lists every registered space, projected to the wire shape', async () => {
     const session = fakeSession({
-      listSpaces: () => [space(), space({ space_name: 'space-b' })],
+      listSpaces: () => [
+        space(),
+        space({
+          space_name: 'space-b',
+          identity: 'Long guidance belongs in get, not in the list.',
+          repo: { path: '/repo', base_ref: 'main' },
+        }),
+      ],
     });
     const result = await listSpacesDef.handle(ctx(dispatcher, session), {});
-    expect(
-      (result['spaces'] as unknown[]).map(
-        (s) => (s as { space_name: string }).space_name,
-      ),
-    ).toEqual(['space-a', 'space-b']);
+    expect(result).toEqual({
+      spaces: [
+        {
+          space_name: 'space-a',
+          chat_id: 'oc_container',
+          display: null,
+          leader_agent_runtime: 'codex',
+          repo_path: null,
+        },
+        {
+          space_name: 'space-b',
+          chat_id: 'oc_container',
+          display: null,
+          leader_agent_runtime: 'codex',
+          repo_path: '/repo',
+        },
+      ],
+    });
   });
 });
 

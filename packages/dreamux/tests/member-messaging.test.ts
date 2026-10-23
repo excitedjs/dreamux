@@ -82,11 +82,13 @@ for (const scope of ['team', 'dispatcher'] as const)
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(f.provider.runtimes).toHaveLength(2);
       const address = f.owner.memberOwner().name;
-      expect(await a.call('list')).toMatchObject({
+      expect(await a.call('list', { status: 'closed' })).toMatchObject({
         ok: true,
         structured: {
           owner: { name: address },
           teammates: [{ name: b.name, status: 'closed' }],
+          total: 1,
+          next_cursor: null,
         },
       });
       const receipt = await a.call('send', {
@@ -96,7 +98,10 @@ for (const scope of ['team', 'dispatcher'] as const)
       });
       expect(receipt).toMatchObject({
         ok: true,
-        structured: { name: address, status: 'submitted' },
+        structured: { status: 'submitted' },
+        text: expect.stringMatching(
+          /^Message submitted\.\n\nThis is an admission receipt.*A reply arrives only if the recipient explicitly sends one/,
+        ),
       });
       const ownerRuntime = f.provider.runtimes.at(-1)!;
       expect(ownerRuntime.inputs).toEqual([
@@ -139,7 +144,10 @@ for (const scope of ['team', 'dispatcher'] as const)
         await a.call('send', { name: b.name, prompt: 'question' }),
       ).toMatchObject({
         ok: true,
-        structured: { name: b.name, status: 'submitted' },
+        structured: { status: 'submitted' },
+        text: expect.stringMatching(
+          /^Message submitted\.\n\nThis is an admission receipt.*A reply arrives only if the recipient explicitly sends one/,
+        ),
       });
       expect(b.runtime.inputs[1]).toBe(
         `<task from="${a.name}">question</task>`,

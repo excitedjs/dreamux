@@ -56,6 +56,7 @@ export interface ReadAgentActivityInput {
 
 export interface ReadAgentActivityResult {
   requestedRecords: number;
+  transcriptPath: string | null;
   records: AgentEntityActivityRecord[];
   nextCursor: string | null;
   truncated: boolean;
@@ -101,6 +102,7 @@ export async function readAgentActivity(
   }
   return {
     requestedRecords,
+    transcriptPath: page.transcriptPath ?? null,
     records: page.records.map(toEntityRecord),
     nextCursor: page.nextCursor ?? null,
     truncated: page.truncated,
@@ -127,11 +129,13 @@ function toEntityRecord(
     ? {
         kind: 'assistant_message',
         text: record.text,
+        ...(record.turnId !== undefined ? { turn_id: record.turnId } : {}),
         occurred_at: record.occurredAt ?? null,
       }
     : {
         kind: 'tool',
         name: record.name,
+        ...(record.turnId !== undefined ? { turn_id: record.turnId } : {}),
         status: record.status,
         occurred_at: record.occurredAt ?? null,
       };

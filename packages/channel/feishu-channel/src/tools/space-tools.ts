@@ -32,7 +32,7 @@ const spaceSchema = closedObjectSchema(
     chat_id: nonEmptyString,
     display: { type: ['string', 'null'] },
     leader_agent_runtime: nonEmptyString,
-    has_identity: { type: 'boolean' },
+    identity: { type: ['string', 'null'] },
     repo_path: { type: ['string', 'null'] },
     repo_base_ref: { type: ['string', 'null'] },
     created_at: { type: 'number' },
@@ -43,7 +43,7 @@ const spaceSchema = closedObjectSchema(
     'chat_id',
     'display',
     'leader_agent_runtime',
-    'has_identity',
+    'identity',
     'repo_path',
     'repo_base_ref',
     'created_at',
@@ -57,7 +57,7 @@ function spaceView(space: FeishuSpaceRecord): FeishuToolResult {
     chat_id: space.container_chat_id,
     display: space.display,
     leader_agent_runtime: space.leader_agent_runtime,
-    has_identity: space.identity !== null,
+    identity: space.identity,
     repo_path: space.repo?.path ?? null,
     repo_base_ref: space.repo?.base_ref ?? null,
     created_at: space.created_at,
@@ -118,7 +118,10 @@ export const bindSpaceDef: FeishuToolDef<BindSpaceInput> = {
     },
     ['space_name', 'chat_id', 'leader_agent_runtime'],
   ),
-  outputSchema: closedObjectSchema({ space: spaceSchema }, ['space']),
+  outputSchema: closedObjectSchema(
+    { space_name: nonEmptyString, chat_id: nonEmptyString },
+    ['space_name', 'chat_id'],
+  ),
   annotations: mutating,
   parse(raw) {
     const obj = asRecord(raw, 'bind_collaboration_space arguments');
@@ -140,7 +143,10 @@ export const bindSpaceDef: FeishuToolDef<BindSpaceInput> = {
   },
   async handle(ctx, input) {
     const space = await ctx.session.bindings.bindSpace(input);
-    return { space: spaceView(space) };
+    return {
+      space_name: space.space_name,
+      chat_id: space.container_chat_id,
+    };
   },
 };
 
@@ -154,10 +160,9 @@ export const unbindSpaceDef: FeishuToolDef<{ spaceName: string }> = {
   inputSchema: closedObjectSchema({ space_name: nonEmptyString }, [
     'space_name',
   ]),
-  outputSchema: closedObjectSchema(
-    { space_name: nonEmptyString, unbound: { type: 'boolean' } },
-    ['space_name', 'unbound'],
-  ),
+  outputSchema: closedObjectSchema({ unbound: { type: 'boolean' } }, [
+    'unbound',
+  ]),
   annotations: mutating,
   parse(raw) {
     const obj = asRecord(raw, 'unbind_collaboration_space arguments');
@@ -165,7 +170,7 @@ export const unbindSpaceDef: FeishuToolDef<{ spaceName: string }> = {
   },
   async handle(ctx, input) {
     const removed = await ctx.session.bindings.unbindSpace(input.spaceName);
-    return { space_name: input.spaceName, unbound: removed !== null };
+    return { unbound: removed !== null };
   },
 };
 
@@ -225,11 +230,33 @@ export const getSpaceDef: FeishuToolDef<{ spaceName: string }> = {
 export const listSpacesDef: FeishuToolDef<Record<string, never>> = {
   name: 'list_collaboration_spaces',
   title: 'List Feishu collaboration spaces',
-  description: 'List every registered automatic-provisioning space policy.',
+  description:
+    'List registered spaces with their chat, label, runtime, and repository. ' +
+    'Use get_collaboration_space for the full policy, identity, and targets.',
   callers: ['dispatcher'],
   inputSchema: closedObjectSchema({}),
   outputSchema: closedObjectSchema(
-    { spaces: { type: 'array', items: spaceSchema } },
+    {
+      spaces: {
+        type: 'array',
+        items: closedObjectSchema(
+          {
+            space_name: nonEmptyString,
+            chat_id: nonEmptyString,
+            display: { type: ['string', 'null'] },
+            leader_agent_runtime: nonEmptyString,
+            repo_path: { type: ['string', 'null'] },
+          },
+          [
+            'space_name',
+            'chat_id',
+            'display',
+            'leader_agent_runtime',
+            'repo_path',
+          ],
+        ),
+      },
+    },
     ['spaces'],
   ),
   annotations: readOnly,
@@ -238,6 +265,14 @@ export const listSpacesDef: FeishuToolDef<Record<string, never>> = {
     return {};
   },
   async handle(ctx) {
-    return { spaces: ctx.session.routing.listSpaces().map(spaceView) };
+    return {
+      spaces: ctx.session.routing.listSpaces().map((space) => ({
+        space_name: space.space_name,
+        chat_id: space.container_chat_id,
+        display: space.display,
+        leader_agent_runtime: space.leader_agent_runtime,
+        repo_path: space.repo?.path ?? null,
+      })),
+    };
   },
 };

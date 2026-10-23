@@ -104,8 +104,11 @@ check for leftover runtime processes after such an exit.
   for what a TeamMate is doing or has just done: it reads the provider's recent
   Activity Records without starting or resuming the Runtime, so it also shows a
   turn that is still running. `last` accepts `limit` (default 20, range 1
-  through 200), an opaque `cursor`, and `include_tools`; it returns assistant
-  messages and tool records oldest first, with `next_cursor` and `truncated`.
+  through 200), an opaque `cursor`, and `include_tools`. MCP `last` defaults
+  `include_tools` to false and returns assistant messages oldest first; set it
+  to true to include tool records. Keep the same choice while paging with
+  `next_cursor`; `truncated` remains distinct. This default belongs to MCP;
+  Command/provider defaults and live COT tool display are unchanged.
 - Activity Records carry assistant message text and tool name plus lifecycle
   status. Tool arguments and tool output are never exposed, and a provider's
   raw native lines are never surfaced.

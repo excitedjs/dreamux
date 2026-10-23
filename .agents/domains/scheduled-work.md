@@ -181,14 +181,34 @@ Commands declared by the scheduler's own `commands.ts`. The scheduler's MCP
 delegate (`mcp.ts`) publishes `cron_create`, `cron_list`, `cron_update`, and
 `cron_delete` with descriptor-bound dispatcher or Team scope, and the
 role→delegate decision gives it to the dispatcher agent and every TeamLeader
-but not to ordinary TeamMates or Team members. Both adapters read the payload
-through the same `requests.ts` (`cronCreateRequest`, `cronUpdateRequest`,
-`cronJobIdParam`) and project the same result shape back through it
-(`cronJobResult`, `cronListResult`) — the scheduler's `types.ts` holds only the
-domain and option types, not the codecs. Neither surface accepts `deliver`,
-and neither reports it. Runtime launches can disable a runtime's native cron
-feature with the neutral `cron` feature name so Dreamux-owned cron remains the
-source of truth.
+but not to ordinary TeamMates or Team members. Mutation payloads use the same
+`requests.ts` readers (`cronCreateRequest`, `cronUpdateRequest`,
+`cronJobIdParam`), and create/update results share `cronJobResult`. The
+`scheduler.cron.list` Command retains complete job records through
+`cronListResult`. The scheduler's `types.ts` holds only domain and option types,
+not codecs. Neither surface accepts `deliver`, and neither reports it.
+
+`cron_list` owns its MCP-only list projection in `mcp.ts`. Its optional inputs
+are `id` and `include_prompt`; omitted `id` lists all jobs, while a supplied id
+returns only an exact match in the same `jobs` array. An unknown id returns
+`{ jobs: [] }`. The scheduler still reads its roster through the existing
+`SchedulerCommands.list()`; the filter narrows the MCP response, not the store
+read or owner admission.
+
+Each row contains `id`, optional `title`, `cron`, `tz`, `recurring`, `enabled`,
+`next_run_at`, `last_fired_at`, `prompt_preview`, and `prompt_bytes`.
+`prompt_preview` is the first 200 Unicode code points of `job.action.prompt`,
+without an appended ellipsis; `prompt_bytes` counts the complete prompt's UTF-8
+bytes. Omitted or false `include_prompt` omits full text. With
+`include_prompt:true`, each row also contains the complete top-level `prompt`.
+Read that full value before editing; a preview is not a replacement prompt.
+Neither mode exposes `action`, its kind, `created_at`, or `updated_at`. Input,
+output envelope, and row schemas are closed. The Command DTO, stored action,
+and cron state format remain unchanged; this MCP API change requires no
+persistence migration.
+
+Runtime launches can disable a runtime's native cron feature with the neutral
+`cron` feature name so Dreamux-owned cron remains the source of truth.
 
 Source:
 

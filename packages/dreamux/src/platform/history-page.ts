@@ -20,7 +20,7 @@ const HISTORY_LIMIT_MAX = 100;
 export function clampHistoryLimit(input: number | undefined): number {
   if (input === undefined) return HISTORY_LIMIT_DEFAULT;
   if (!Number.isInteger(input) || input < 1) {
-    throw new RuleViolation('history limit must be a positive integer');
+    throw new RuleViolation('page limit must be a positive integer');
   }
   // Capped, not rejected: an MCP-driven caller asking for "all" history
   // often just names a large round number, and a page is a bounded read —
@@ -48,7 +48,7 @@ export function decodeCursor(cursor: string): number {
   } catch {
     // Every unreadable cursor is the same broken rule, stated once below.
   }
-  throw new RuleViolation('invalid history cursor');
+  throw new RuleViolation('invalid pagination cursor');
 }
 
 export function previewText(text: string): string {

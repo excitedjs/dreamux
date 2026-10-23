@@ -244,11 +244,15 @@ describe('Team dissolve through actual owners and Git worktrees', () => {
                 if (!result.ok) throw new Error(result.message);
                 return result.structured;
               });
-      expect(receipt).toEqual({
-        accepted: true,
-        team_name: created.team_name,
-        status: 'submitted',
-      });
+      expect(receipt).toEqual(
+        caller === 'dispatcher'
+          ? {
+              accepted: true,
+              team_name: created.team_name,
+              status: 'submitted',
+            }
+          : { status: 'submitted' },
+      );
       await fixture.provider.runtimes[0]!.stopStarted.promise;
       expect(await access(created.runtime_cwd)).toBeUndefined();
       expect((await diskRecord(fixture, created.team_name)).status).toBe(

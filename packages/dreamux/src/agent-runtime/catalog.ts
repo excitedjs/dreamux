@@ -8,23 +8,10 @@ import type {
   AgentRuntimeProvider,
   RegisteredProvider,
 } from '@excitedjs/dreamux-types';
-import {
-  agentRuntimeCapabilitySnapshot,
-  type AgentRuntimePublicCapabilities,
-} from './capabilities.js';
-
-/**
- * One registered Agent Runtime provider: Core's authoritative descriptor paired
- * with the implementation the loader produced and the capability snapshot Core
- * validated. A provider implementation never carries its own registration
- * identity, so every caller that needs the id, ref, or kind reads it from this
- * wrapper.
- */
-export interface RegisteredAgentRuntimeProvider extends RegisteredProvider<
+/** Core's registration descriptor paired with the provider implementation. */
+export type RegisteredAgentRuntimeProvider = RegisteredProvider<
   AgentRuntimeProvider<unknown>
-> {
-  readonly capabilities: AgentRuntimePublicCapabilities;
-}
+>;
 
 export class UnsupportedAgentRuntimeProviderError extends Error {
   constructor(
@@ -103,25 +90,7 @@ export class AgentRuntimeProviderCatalog {
     return {
       descriptor,
       implementation,
-      capabilities: this.capabilitiesFor(descriptor, implementation),
     };
-  }
-
-  /**
-   * The one snapshot for this implementation. The loader already took it while
-   * asserting the contract, so this normally returns that exact object; a
-   * directly registered implementation (no loader involved) takes it here on
-   * first read. Either way `getCapabilities()` is called once per
-   * implementation, and the catalog never trusts a second call.
-   */
-  private capabilitiesFor(
-    descriptor: ProviderDescriptor,
-    implementation: AgentRuntimeProvider<unknown>,
-  ): AgentRuntimePublicCapabilities {
-    return agentRuntimeCapabilitySnapshot(
-      implementation,
-      formatProviderRef(descriptor.ref),
-    );
   }
 }
 
@@ -136,7 +105,6 @@ export function asAgentRuntimeProvider(
   if (typeof value !== 'object' || value === null) return null;
   const candidate = value as Partial<AgentRuntimeProvider<unknown>>;
   if (
-    typeof candidate.getCapabilities !== 'function' ||
     typeof candidate.readRecentActivity !== 'function' ||
     typeof candidate.createRuntime !== 'function'
   ) {

@@ -8,7 +8,8 @@
  * schema and the owner selection. The request readers and the result
  * projection live in `requests.ts`, the failures with the rules that raise
  * them — each stating its own reason and next step. The cron MCP delegate
- * reads the same `requests.ts` helpers; neither adapter reads the other.
+ * shares mutation codecs from `requests.ts` but owns its compact list projection;
+ * neither adapter reads the other.
  */
 import type { DispatcherCommandHost } from '../../command/host.js';
 import type { JsonSchema } from '@excitedjs/dreamux-types';

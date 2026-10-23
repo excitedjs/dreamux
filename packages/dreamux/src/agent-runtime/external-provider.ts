@@ -11,10 +11,7 @@
  * The assertions below check only the neutral Agent Runtime contract. They
  * deliberately assert no registration identity: a provider has no `ref` or
  * `descriptor` member to echo, because Core keeps the sole authoritative
- * descriptor beside the implementation it registered. Declared capabilities are
- * validated by taking Core's one snapshot of them (`./capabilities.ts`), the
- * same object the catalog later serves, rather than by inspecting a read that
- * would be thrown away.
+ * descriptor beside the implementation it registered.
  *
  * The `channel` kind reuses the same skeleton through a sibling loader; only the
  * contract assertions below are runtime-specific.
@@ -33,11 +30,6 @@ import {
   type ProviderModule,
   type ProviderPackageLoaderSpec,
 } from '../registry/provider-loader.js';
-import {
-  agentRuntimeCapabilitySnapshot,
-  InvalidAgentRuntimeCapabilitiesError,
-} from './capabilities.js';
-
 export type ExternalAgentRuntimeProviderFactory =
   AgentRuntimeProviderFactory<unknown>;
 
@@ -99,9 +91,6 @@ function assertExternalAgentRuntimeProvider(
     context.fail('factory must return a provider object');
   }
   const candidate = value as Partial<AgentRuntimeProvider<unknown>>;
-  if (typeof candidate.getCapabilities !== 'function') {
-    context.fail('provider.getCapabilities must be a function');
-  }
   if (typeof candidate.readRecentActivity !== 'function') {
     context.fail('provider.readRecentActivity must be a function');
   }
@@ -109,22 +98,6 @@ function assertExternalAgentRuntimeProvider(
     context.fail('provider.createRuntime must be a function');
   }
   assertOptionalProviderCapabilities(candidate, context);
-  // Take Core's one capability snapshot here rather than validating a throwaway
-  // read: the catalog later reuses this exact snapshot, so a provider cannot
-  // pass the contract with one object and serve the public projection another.
-  try {
-    // `candidate` is the object the registry will hold, so the snapshot is
-    // keyed by the same identity the catalog resolves later.
-    agentRuntimeCapabilitySnapshot(
-      candidate as AgentRuntimeProvider<unknown>,
-      context.ref,
-    );
-  } catch (err) {
-    if (err instanceof InvalidAgentRuntimeCapabilitiesError) {
-      context.fail(`provider.getCapabilities: ${err.detail}`);
-    }
-    throw err;
-  }
   const createRuntime = candidate.createRuntime.bind(candidate);
   candidate.createRuntime = async (
     runtimeContext: AgentRuntimeCreateContext<unknown>,

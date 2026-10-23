@@ -16,10 +16,14 @@
  * they are the same caller's work, reaching the same handle's `workflows`,
  * but their descriptors and handlers belong to the domain that owns them.
  *
- * The input codecs and the submission-receipt projection belong to the owning
- * domain and live with the types and records they read; what stays here is
- * this surface's: the caller scopes, the advertised catalog, and the
- * model-facing text a tool chooses to say.
+ * The ordinary-member surface is a separate authority object and lives in
+ * `member-mcp.ts`: its scope, owner interface, `send`/`list` tools, and its
+ * distinct receipt wording. This file keeps the Dispatcher and TeamLeader
+ * roster tools and forwards a member scope to that delegate.
+ *
+ * The domain owns each record and its full read model. What stays here is this
+ * surface's: the caller scopes, the advertised catalog, the model-facing
+ * projection each tool publishes, and the text a tool chooses to say.
  *
  * Failures are thrown, not classified: each domain's failures state their own
  * reason and next step, and the admission boundary every delegate is reached
@@ -27,33 +31,30 @@
  */
 import type { JsonSchema } from '@excitedjs/dreamux-types';
 
+import type { CommandPayload } from '../../command/payload.js';
 import {
-  mustNonEmptyString,
-  type CommandPayload,
-} from '../../command/payload.js';
-import { ValidationError } from '../../platform/errors.js';
-import {
+  BOOLEAN,
+  INTEGER,
+  NULLABLE_STRING,
   OBJECT,
   STRING,
   arrayOf,
-  enumOf,
   objectSchema,
 } from '../../command/schema.js';
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
-import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
+import {
+  createToolRecordDelegate,
+  type McpToolRecord,
+  type McpToolSuccess,
+} from '../mcp/projection.js';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
   READ_ONLY_ANNOTATIONS,
   tool,
-  type McpToolDescriptor,
 } from '../mcp/tool-metadata.js';
-import type {
-  McpDelegateCall,
-  McpDelegateDescription,
-  McpDelegateResult,
-  McpServerDelegate,
-} from '../mcp/types.js';
+import type { McpServerDelegate } from '../mcp/types.js';
 import type { WorkflowOps } from '../workflow-service/index.js';
 import { WORKFLOW_TOOL_RECORDS } from '../workflow-service/mcp.js';
 import {
@@ -63,8 +64,18 @@ import {
 } from '../worktree/repo-request.js';
 import type { TeamMateWorktreeRequest } from '../worktree/types.js';
 import { mapAgentActivityCommandError } from './activity.js';
-import { toSubmissionResult } from './admission.js';
 import type { AgentEntitySpawnResult } from './identity.js';
+import { createMemberMcpDelegate, type MemberMcpScope } from './member-mcp.js';
+import {
+  TEAMMATE_LIST_STATUSES,
+  TEAMMATE_ROSTER_ROW_SCHEMA,
+  teammateRosterRow,
+} from './mcp-roster.js';
+import {
+  LIST_PAGE_PROPERTIES,
+  listInputProperties,
+  listPage,
+} from '../mcp/list-page.js';
 import {
   agentCloseRequest,
   agentEntityLastQuery,
@@ -72,12 +83,7 @@ import {
   agentSendRequest,
   agentSpawnRequest,
   historyQuery,
-  teammateReceiptSchema,
-  SUBMISSION_STATUS_VALUES,
 } from './requests.js';
-import type { TeammateSubmitInput } from './submission.js';
-import type { TurnAdmission } from './turn.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import type { TeammateOps } from './types.js';
 
 export const TEAMMATE_MCP_SERVER_NAME = 'teammate';
@@ -104,20 +110,7 @@ interface TeamMateMcpTeamLeaderScope {
   admitLeaderTools<T>(operation: () => Promise<T>): Promise<T>;
 }
 
-/** The actual conversational owner; no concrete Team/Dispatcher import. */
-export interface TeamMateMessagingOwner {
-  readonly teammates: Pick<TeammateOps, 'send' | 'list'>;
-  memberOwner(): {
-    name: string;
-    role: string;
-    status: string;
-  };
-  submitInput(
-    input: Omit<TeammateSubmitInput, 'completionRecipient'>,
-  ): Promise<TurnAdmission>;
-}
-
-/** The dispatcher or Team collections this caller operates on. */
+/** The dispatcher, Team, or member scope this caller operates on. */
 export type TeamMateMcpScope =
   | {
       readonly kind: 'dispatcher';
@@ -127,47 +120,20 @@ export type TeamMateMcpScope =
       readonly kind: 'team_leader';
       readonly team: TeamMateMcpTeamLeaderScope;
     }
-  | {
-      readonly kind: 'member';
-      readonly name: string;
-      readonly owner: TeamMateMessagingOwner;
-    };
+  | MemberMcpScope;
 
 type OwnerMcpScope = Exclude<TeamMateMcpScope, { kind: 'member' }>;
-
-/** One tool this delegate advertises, paired with the handler that serves it. */
-interface TeammateMcpToolRecord {
-  readonly descriptor: McpToolDescriptor;
-  readonly execute: (args: CommandPayload) => Promise<McpToolSuccess>;
-}
 
 export function createTeamMateMcpDelegate(
   scope: TeamMateMcpScope,
 ): McpServerDelegate {
-  const records =
-    scope.kind === 'member'
-      ? memberToolRecords(scope)
-      : teammateToolRecords(scope);
-  const tools = records.map((record) => record.descriptor);
-  return {
-    name: TEAMMATE_MCP_SERVER_NAME,
-    describe(): McpDelegateDescription {
-      return { tools };
-    },
-    call(call: McpDelegateCall): Promise<McpDelegateResult> {
-      return runDelegateTool(() => callTool(records, call));
-    },
-  };
-}
-
-async function callTool(
-  records: readonly TeammateMcpToolRecord[],
-  call: McpDelegateCall,
-): Promise<McpToolSuccess> {
-  const record = records.find(
-    (candidate) => candidate.descriptor.name === call.name,
+  if (scope.kind === 'member') {
+    return createMemberMcpDelegate(scope, TEAMMATE_MCP_SERVER_NAME);
+  }
+  return createToolRecordDelegate(
+    TEAMMATE_MCP_SERVER_NAME,
+    teammateToolRecords(scope),
   );
-  return record!.execute(call.arguments as CommandPayload);
 }
 
 /**
@@ -190,35 +156,78 @@ async function workflows(scope: OwnerMcpScope) {
 /**
  * One spawnable agent runtime row of `get_capabilities`.
  *
- * The shape is Core-owned and closed: `tags` and `public_config` are the
- * provider's own declared facts, but Core normalized, bounded, and froze them
- * at registration, so what a caller sees here is a validated snapshot rather
- * than whatever object the provider happened to return. `public_config` stays
- * an open object because its keys are the provider's vocabulary — Core carries
- * them without interpreting them.
+ * `id` is the value `spawn` and `team.create` take; `description` says when to
+ * choose this runtime and `tags` are its short selection labels. Both are
+ * optional because an operator may configure neither. Provider-declared
+ * machinery (availability, public config, the old `spawn` wrapper) is not part
+ * of the model-facing row.
  */
 const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
   {
     id: { type: 'string' },
-    spawn: objectSchema({ agent_runtime: { type: 'string' } }, [
-      'agent_runtime',
-    ]),
-    runtime_available: { type: 'boolean' },
-    unsupported_reason: { type: ['string', 'null'] },
+    description: { type: 'string' },
     tags: arrayOf({ type: 'string' }),
-    public_config: { type: ['object', 'null'] },
+  },
+  ['id'],
+);
+
+/** One recovery-search row; all fields are the record's own facts. */
+const TEAMMATE_HISTORY_ROW_SCHEMA: JsonSchema = objectSchema(
+  {
+    name: STRING,
+    status: STRING,
+    agent_runtime: STRING,
+    intent: NULLABLE_STRING,
+    source_repo: NULLABLE_STRING,
+    updated_at: INTEGER,
+    close_note_preview: NULLABLE_STRING,
   },
   [
-    'id',
-    'spawn',
-    'runtime_available',
-    'unsupported_reason',
-    'tags',
-    'public_config',
+    'name',
+    'status',
+    'agent_runtime',
+    'intent',
+    'source_repo',
+    'updated_at',
+    'close_note_preview',
   ],
 );
 
-function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
+/** One activity observation, without the roster detail the call did not ask for. */
+const TEAMMATE_LAST_SCHEMA: JsonSchema = objectSchema(
+  {
+    status: STRING,
+    runtime_status: NULLABLE_STRING,
+    last_error: NULLABLE_STRING,
+    records: arrayOf(OBJECT),
+    next_cursor: NULLABLE_STRING,
+    truncated: BOOLEAN,
+    transcript_path: NULLABLE_STRING,
+  },
+  [
+    'status',
+    'runtime_status',
+    'last_error',
+    'records',
+    'next_cursor',
+    'truncated',
+    'transcript_path',
+  ],
+);
+
+/** What a close leaves to inspect: the lifecycle status and cleanup outcome. */
+const TEAMMATE_CLOSE_SCHEMA: JsonSchema = objectSchema(
+  {
+    status: STRING,
+    repo: objectSchema({ path: STRING, cleanup_state: STRING }, [
+      'path',
+      'cleanup_state',
+    ]),
+  },
+  ['status', 'repo'],
+);
+
+function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
   const callerKind = scope.kind;
   // Dispatcher handoffs discover their guide at the tool. The TeamLeader's
   // launch prompt already routes missing collaboration guidance to teamwork.
@@ -287,7 +296,6 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
         ['name_prefix', 'prompt', 'intent'],
         {
           title: 'Spawn a TeamMate',
-          output: teammateReceiptSchema,
           annotations: MUTATING_ANNOTATIONS,
         },
       ),
@@ -320,7 +328,6 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
         ['name', 'prompt'],
         {
           title: 'Send a TeamMate turn',
-          output: teammateReceiptSchema,
           annotations: MUTATING_ANNOTATIONS,
         },
       ),
@@ -347,7 +354,7 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
         ['name', 'note'],
         {
           title: 'Close a TeamMate',
-          output: objectSchema({ teammate: OBJECT }, ['teammate']),
+          output: TEAMMATE_CLOSE_SCHEMA,
           annotations: DESTRUCTIVE_ANNOTATIONS,
         },
       ),
@@ -418,8 +425,8 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
           title: 'Search TeamMates',
           output: objectSchema(
             {
-              items: arrayOf(OBJECT),
-              next_cursor: { type: ['string', 'null'] },
+              items: arrayOf(TEAMMATE_HISTORY_ROW_SCHEMA),
+              next_cursor: NULLABLE_STRING,
             },
             ['items', 'next_cursor'],
           ),
@@ -431,16 +438,22 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
     {
       descriptor: tool(
         'list',
-        'List this TeamMate set (compact rows: concrete name, status, agent runtime, intent essentials).',
-        {},
+        'List a page of this TeamMate set. Defaults to non-closed members; use status all or closed to find members for recovery. Rows contain concrete name, status, runtime, and intent.',
+        listInputProperties(TEAMMATE_LIST_STATUSES),
         [],
         {
           title: 'List TeamMates',
-          output: objectSchema({ teammates: arrayOf(OBJECT) }, ['teammates']),
+          output: objectSchema(
+            {
+              teammates: arrayOf(TEAMMATE_ROSTER_ROW_SCHEMA),
+              ...LIST_PAGE_PROPERTIES,
+            },
+            ['teammates', 'total', 'next_cursor'],
+          ),
           annotations: READ_ONLY_ANNOTATIONS,
         },
       ),
-      execute: () => list(scope),
+      execute: (args) => list(scope, args),
     },
     {
       descriptor: tool(
@@ -466,7 +479,7 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
     {
       descriptor: tool(
         'last',
-        "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages and tool records oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages and set include_tools=false to omit tool records.",
+        "Read a TeamMate's recent activity without starting or resuming it. Returns assistant messages oldest first, including an in-progress turn. limit defaults to 20 (range 1..200); use cursor for older pages. include_tools defaults to false; set it to true to include tool records and keep that choice when paging. Native turn_id is included only when known (not a Core submission ID). transcript_path is the provider-confirmed current-session file, or null; it may be compressed and does not list ancestor files.",
         {
           name: {
             type: 'string',
@@ -489,31 +502,15 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
           },
           include_tools: {
             type: 'boolean',
+            default: false,
             description:
-              'false omits tool records and returns assistant messages only.',
+              'Include tool records; default false returns assistant messages only.',
           },
         },
         ['name'],
         {
           title: 'Read recent TeamMate activity',
-          output: objectSchema(
-            {
-              teammate: OBJECT,
-              requested_records: { type: 'integer' },
-              returned_records: { type: 'integer' },
-              records: arrayOf(OBJECT),
-              next_cursor: { type: ['string', 'null'] },
-              truncated: { type: 'boolean' },
-            },
-            [
-              'teammate',
-              'requested_records',
-              'returned_records',
-              'records',
-              'next_cursor',
-              'truncated',
-            ],
-          ),
+          output: TEAMMATE_LAST_SCHEMA,
           annotations: READ_ONLY_ANNOTATIONS,
         },
       ),
@@ -522,17 +519,14 @@ function teammateToolRecords(scope: OwnerMcpScope): TeammateMcpToolRecord[] {
     {
       descriptor: tool(
         'get_capabilities',
-        'List TeamMate verbs and spawnable agent runtimes. Each runtime row carries the tags and public_config the agent runtime declares about itself, so two configured runtimes can be told apart without naming a provider.',
+        'List the agent runtimes this caller can spawn. Each row carries the runtime id, an optional description of when to use it, and optional tags, so two configured runtimes can be told apart without naming a provider.',
         {},
         [],
         {
           title: 'List TeamMate capabilities',
           output: objectSchema(
-            {
-              verbs: arrayOf({ type: 'string' }),
-              agent_runtimes: arrayOf(AGENT_RUNTIME_CAPABILITY_SCHEMA),
-            },
-            ['verbs', 'agent_runtimes'],
+            { agent_runtimes: arrayOf(AGENT_RUNTIME_CAPABILITY_SCHEMA) },
+            ['agent_runtimes'],
           ),
           annotations: READ_ONLY_ANNOTATIONS,
         },
@@ -583,7 +577,37 @@ async function spawn(
       ...(worktree !== null ? { worktree } : {}),
     });
   }
-  return submissionReceipt(result);
+  // A Dispatcher-spawned TeamMate owns a workspace the caller may have to
+  // inspect; a Team member inherits the Team's shared directory, already
+  // stated in its prompt, so repeating it here adds nothing.
+  const repo =
+    scope.kind === 'dispatcher'
+      ? {
+          path: result.teammate.repo.path,
+          branch: result.teammate.repo.branch,
+        }
+      : null;
+  const structured = {
+    name: result.teammate.name,
+    status: result.status,
+    ...(result.error !== undefined ? { error: result.error } : {}),
+    ...(repo !== null ? { repo } : {}),
+  };
+  if (result.status !== 'submitted') return { structured };
+
+  let location = '';
+  if (repo !== null) {
+    location = ` in ${quoteModelValue(repo.path)}`;
+    if (repo.branch !== null) {
+      location += ` on branch ${quoteModelValue(repo.branch)}`;
+    }
+  }
+  return {
+    structured,
+    text:
+      `Started TeamMate ${quoteModelValue(result.teammate.name)}${location}.` +
+      `\n\n${TEAMMATE_DISPATCH_SUCCESS_REMINDER}`,
+  };
 }
 
 async function send(
@@ -598,12 +622,11 @@ async function send(
     prompt: request.prompt,
     ...(request.intent !== null ? { intent: request.intent } : {}),
   });
-  return submissionReceipt(result);
-}
-
-function submissionReceipt(result: AgentEntitySpawnResult): McpToolSuccess {
   return {
-    structured: result,
+    structured: {
+      status: result.status,
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    },
     ...(result.status === 'submitted'
       ? { text: TEAMMATE_DISPATCH_SUCCESS_REMINDER }
       : {}),
@@ -614,21 +637,66 @@ async function close(
   scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
-  const result = await (await teammates(scope)).close(agentCloseRequest(args));
-  return { structured: result };
+  const { teammate } = await (
+    await teammates(scope)
+  ).close(agentCloseRequest(args));
+  // The cleanup outcome is the fact a caller may still have to act on:
+  // retained-dirty/unmerged/error means work survived the close.
+  return {
+    structured: {
+      status: teammate.status,
+      repo: {
+        path: teammate.repo.path,
+        cleanup_state: teammate.repo.cleanup_state,
+      },
+    },
+  };
 }
 
 async function history(
   scope: OwnerMcpScope,
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
+  const page = await (await teammates(scope)).history(historyQuery(args));
   return {
-    structured: await (await teammates(scope)).history(historyQuery(args)),
+    structured: {
+      items: page.items.map(
+        ({
+          name,
+          status,
+          agent_runtime,
+          intent,
+          source_repo,
+          updated_at,
+          close_note_preview,
+        }) => ({
+          name,
+          status,
+          agent_runtime,
+          intent,
+          source_repo,
+          updated_at,
+          close_note_preview,
+        }),
+      ),
+      next_cursor: page.next_cursor,
+    },
   };
 }
 
-async function list(scope: OwnerMcpScope): Promise<McpToolSuccess> {
-  return { structured: { teammates: await (await teammates(scope)).list() } };
+async function list(
+  scope: OwnerMcpScope,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  const rows = await (await teammates(scope)).list();
+  const page = listPage(rows, args, TEAMMATE_LIST_STATUSES);
+  return {
+    structured: {
+      teammates: page.items.map(teammateRosterRow),
+      total: page.total,
+      next_cursor: page.next_cursor,
+    },
+  };
 }
 
 async function status(
@@ -651,7 +719,25 @@ async function last(
   const name = agentEntityNameParam(args, 'name');
   const query = agentEntityLastQuery(args);
   try {
-    return { structured: await (await teammates(scope)).last(name, query) };
+    const result = await (
+      await teammates(scope)
+    ).last(name, {
+      ...query,
+      includeTools: query.includeTools ?? false,
+    });
+    // The caller asked to observe activity, not to re-read the roster row it
+    // already has from `status`/`list`.
+    return {
+      structured: {
+        status: result.teammate.status,
+        runtime_status: result.teammate.runtime_status,
+        last_error: result.teammate.last_error,
+        records: result.records,
+        next_cursor: result.next_cursor,
+        truncated: result.truncated,
+        transcript_path: result.transcript_path,
+      },
+    };
   } catch (error) {
     // The reader's internal reason vocabulary never leaves this call: a
     // recognized reason becomes the Activity failure that states its own next
@@ -663,113 +749,4 @@ async function last(
 
 async function capabilities(scope: OwnerMcpScope): Promise<McpToolSuccess> {
   return { structured: await (await teammates(scope)).getCapabilities() };
-}
-
-const MEMBER_RECEIPT_REMINDER =
-  "This is an admission receipt, not a response or completion. A reply arrives only if the recipient explicitly sends one. The recipient's applicable turn results are reported to its owner.";
-
-function memberToolRecords(
-  scope: Extract<TeamMateMcpScope, { kind: 'member' }>,
-): TeammateMcpToolRecord[] {
-  return [
-    {
-      descriptor: tool(
-        'send',
-        'Send a message to your owner or a same-collection peer by concrete name. A closed peer reopens its recorded session; idle input wakes the recipient and busy input follows its runtime admission. ' +
-          MEMBER_RECEIPT_REMINDER,
-        {
-          name: { type: 'string', minLength: 1, maxLength: 64 },
-          prompt: { type: 'string', minLength: 1, maxLength: 20000 },
-        },
-        ['name', 'prompt'],
-        {
-          title: 'Message your owner or a peer',
-          output: objectSchema(
-            {
-              name: STRING,
-              status: enumOf(SUBMISSION_STATUS_VALUES),
-              error: STRING,
-            },
-            ['name', 'status'],
-          ),
-          annotations: MUTATING_ANNOTATIONS,
-        },
-      ),
-      execute: async (args) => {
-        const name = mustNonEmptyString(args, 'name');
-        const prompt = mustNonEmptyString(args, 'prompt');
-        if (name === scope.name)
-          throw new ValidationError('A member cannot send to itself');
-        const attrs = { from: scope.name };
-        const owner = scope.owner.memberOwner();
-        const result =
-          name === owner.name
-            ? toSubmissionResult(
-                await scope.owner.submitInput({
-                  source: AGENT_TASK_SOURCE,
-                  text: prompt,
-                  attrs,
-                  notice: {
-                    kind: 'teammate_message',
-                    producer: scope.name,
-                  },
-                }),
-              )
-            : await scope.owner.teammates.send({
-                name: agentEntityNameParam(args, 'name'),
-                prompt,
-                attrs,
-              });
-        return {
-          structured: {
-            name,
-            status: result.status,
-            ...(result.error !== undefined ? { error: result.error } : {}),
-          },
-          ...(result.status === 'submitted'
-            ? { text: MEMBER_RECEIPT_REMINDER }
-            : {}),
-        };
-      },
-    },
-    {
-      descriptor: tool(
-        'list',
-        'Discover your owner address and same-collection peers, including closed peers. You are excluded from the peer rows.',
-        {},
-        [],
-        {
-          title: 'List your owner and peers',
-          output: objectSchema(
-            {
-              owner: objectSchema({ name: STRING, status: STRING }, [
-                'name',
-                'status',
-              ]),
-              teammates: arrayOf(OBJECT),
-            },
-            ['owner', 'teammates'],
-          ),
-          annotations: READ_ONLY_ANNOTATIONS,
-        },
-      ),
-      execute: async () => {
-        const peers = await scope.owner.teammates.list();
-        const { name, status } = scope.owner.memberOwner();
-        return {
-          structured: {
-            owner: { name, status },
-            teammates: peers
-              .filter((peer) => peer.name !== scope.name)
-              .map(({ name, status, agent_runtime, intent }) => ({
-                name,
-                status,
-                agent_runtime,
-                intent,
-              })),
-          },
-        };
-      },
-    },
-  ];
 }

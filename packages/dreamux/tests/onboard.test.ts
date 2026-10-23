@@ -26,6 +26,7 @@ import type {
 } from '../src/onboard/types.js';
 import type { ServiceNodeProbe } from '../src/daemon/environment.js';
 import { loadConfig } from '../src/config/load.js';
+import { stringifyConfig } from '../src/config/config.js';
 import { logsRoot } from '../src/platform/paths.js';
 
 import {
@@ -790,6 +791,70 @@ describe('dreamux onboard', () => {
       workspace: { enabled: true },
     });
   });
+
+  it.each(['flow', 'new-runtime'])(
+    'preserves runtime metadata through onboard and reload when selecting %s',
+    async (selectedId) => {
+      const configDir = join(root, 'dreamux');
+      mkdirSync(configDir, { recursive: true });
+      const flow = {
+        id: 'flow',
+        provider: 'builtin:codex',
+        description: 'Main runtime',
+        tags: ['primary', 'review'],
+        developerInstructions: 'Use the primary review policy.',
+        config: { extra_args: ['--model', 'existing-model'] },
+      };
+      const helper = {
+        id: 'helper',
+        provider: 'builtin:claude-code',
+        description: 'Helper runtime',
+        tags: ['helper'],
+        developerInstructions: 'Use the helper review policy.',
+        config: { permission_mode: 'default', custom_option: 'keep' },
+      };
+      const initial = {
+        ...testSingleDispatcherFileObject({
+          id: 'flow',
+          cwd: join(root, 'flow-cwd'),
+        }),
+        agents: [flow, helper],
+      };
+      const configPath = join(configDir, 'config.json');
+      writeFileSync(configPath, JSON.stringify(initial), { mode: 0o600 });
+      const answers = testAnswers({ registerService: false });
+      answers.agentRuntime.id = selectedId;
+      writeGlobalCodexAuth(answers);
+      await runOnboard({
+        answers,
+        runner: new FakeRunner(),
+        platform: 'linux',
+        homeDir: join(root, 'home'),
+        env: {},
+      });
+
+      const saved = JSON.parse(await filesystem.readFile(configPath, 'utf8'));
+      const selected = {
+        id: selectedId,
+        provider: answers.agentRuntime.provider,
+        config: answers.agentRuntime.config,
+      };
+      expect(saved.agents).toEqual(
+        selectedId === 'flow'
+          ? [{ ...flow, ...selected }, helper]
+          : [flow, helper, selected],
+      );
+      const { config } = await loadConfig();
+      for (const entry of [flow, helper]) {
+        expect(config.agents[entry.id]).toMatchObject({
+          description: entry.description,
+          tags: entry.tags,
+          developerInstructions: entry.developerInstructions,
+        });
+      }
+      expect(JSON.parse(stringifyConfig(config))).toEqual(saved);
+    },
+  );
 
   it('preserves a teammate-only agent (unreferenced by any dispatcher) on rerun', async () => {
     // Regression for #148 P1: agents[] is the global runtime-config map and a
