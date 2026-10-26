@@ -44,6 +44,7 @@ import {
 import { TEAMMATE_DISPATCH_SUCCESS_REMINDER } from '../mcp/dispatch-reminders.js';
 import {
   createToolRecordDelegate,
+  submissionReceipt,
   type McpToolRecord,
   type McpToolSuccess,
 } from '../mcp/projection.js';
@@ -69,14 +70,15 @@ import { createMemberMcpDelegate, type MemberMcpScope } from './member-mcp.js';
 import {
   TEAMMATE_LIST_STATUSES,
   TEAMMATE_ROSTER_ROW_SCHEMA,
-  teammateRosterRow,
+  teammateRosterPage,
 } from './mcp-roster.js';
 import {
   LIST_PAGE_PROPERTIES,
+  PAGE_LIMIT_PROPERTY,
   listInputProperties,
-  listPage,
 } from '../mcp/list-page.js';
 import {
+  AGENT_RUNTIME_CAPABILITY_SCHEMA,
   agentCloseRequest,
   agentEntityLastQuery,
   agentEntityNameParam,
@@ -152,24 +154,6 @@ async function workflows(scope: OwnerMcpScope) {
   if (scope.kind === 'dispatcher') return scope.dispatcher.workflows;
   return scope.team.admitLeaderTools(async () => scope.team.workflows);
 }
-
-/**
- * One spawnable agent runtime row of `get_capabilities`.
- *
- * `id` is the value `spawn` and `team.create` take; `description` says when to
- * choose this runtime and `tags` are its short selection labels. Both are
- * optional because an operator may configure neither. Provider-declared
- * machinery (availability, public config, the old `spawn` wrapper) is not part
- * of the model-facing row.
- */
-const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
-  {
-    id: { type: 'string' },
-    description: { type: 'string' },
-    tags: arrayOf({ type: 'string' }),
-  },
-  ['id'],
-);
 
 /** One recovery-search row; all fields are the record's own facts. */
 const TEAMMATE_HISTORY_ROW_SCHEMA: JsonSchema = objectSchema(
@@ -407,12 +391,7 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
             description:
               "Epoch milliseconds; upper bound on a record's last update.",
           },
-          limit: {
-            type: 'integer',
-            minimum: 1,
-            maximum: 100,
-            description: 'Rows per page; default 20, max 100.',
-          },
+          limit: PAGE_LIMIT_PROPERTY,
           cursor: {
             type: 'string',
             minLength: 1,
@@ -622,15 +601,7 @@ async function send(
     prompt: request.prompt,
     ...(request.intent !== null ? { intent: request.intent } : {}),
   });
-  return {
-    structured: {
-      status: result.status,
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    },
-    ...(result.status === 'submitted'
-      ? { text: TEAMMATE_DISPATCH_SUCCESS_REMINDER }
-      : {}),
-  };
+  return submissionReceipt(result, TEAMMATE_DISPATCH_SUCCESS_REMINDER);
 }
 
 async function close(
@@ -689,14 +660,7 @@ async function list(
   args: CommandPayload,
 ): Promise<McpToolSuccess> {
   const rows = await (await teammates(scope)).list();
-  const page = listPage(rows, args, TEAMMATE_LIST_STATUSES);
-  return {
-    structured: {
-      teammates: page.items.map(teammateRosterRow),
-      total: page.total,
-      next_cursor: page.next_cursor,
-    },
-  };
+  return { structured: teammateRosterPage(rows, args) };
 }
 
 async function status(

@@ -44,6 +44,7 @@ import {
 } from '../mcp/list-page.js';
 import {
   createToolRecordDelegate,
+  submissionReceipt,
   type McpToolRecord,
   type McpToolSuccess,
 } from '../mcp/projection.js';
@@ -207,16 +208,10 @@ async function send(
     // the leader's completion back to it.
     deliverCompletionToDispatcher: true,
   });
-  const result = teamSubmitResult(admission);
-  return {
-    structured: {
-      status: result.status,
-      ...(result.error !== undefined ? { error: result.error } : {}),
-    },
-    ...(result.status === 'submitted'
-      ? { text: TEAM_DISPATCH_SUCCESS_REMINDER }
-      : {}),
-  };
+  return submissionReceipt(
+    teamSubmitResult(admission),
+    TEAM_DISPATCH_SUCCESS_REMINDER,
+  );
 }
 
 async function list(

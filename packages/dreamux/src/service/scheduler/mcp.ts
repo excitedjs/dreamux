@@ -25,6 +25,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
+import { previewCodePoints } from '../../platform/history-page.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -300,7 +301,7 @@ async function cronList(
           enabled: job.enabled,
           next_run_at: job.next_run_at,
           last_fired_at: job.last_fired_at,
-          prompt_preview: [...job.action.prompt].slice(0, 200).join(''),
+          prompt_preview: previewCodePoints(job.action.prompt, 200),
           prompt_bytes: Buffer.byteLength(job.action.prompt, 'utf8'),
           ...(includePrompt ? { prompt: job.action.prompt } : {}),
         })),

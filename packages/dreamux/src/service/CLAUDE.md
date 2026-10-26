@@ -300,8 +300,9 @@ the Team.
   never retracts a delivery already queued.
 
   Ordinary-member communication is shared by both owner compositions:
-  `agent/mcp.ts` holds the member send/list catalog over a structural view of the
-  actual Team/Dispatcher service. Each owner lazily describes its contained
+  `agent/member-mcp.ts` holds the member send/list catalog and its owner
+  interface over a structural view of the actual Team/Dispatcher service, and
+  `agent/mcp.ts` forwards a member scope to that delegate. Each owner lazily describes its contained
   conversational agent and exposes its existing fenced `submitInput`; the
   collection resolves peers and binds sender attributes. Ordinary construction
   installs tools and a stable native-report recipient; locked Workflow

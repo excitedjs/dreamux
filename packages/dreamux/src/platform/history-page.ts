@@ -57,6 +57,22 @@ export function previewText(text: string): string {
 }
 
 /**
+ * The first `max` Unicode code points of a free-text field, preserving its
+ * whitespace. Counting code points rather than UTF-16 units keeps a preview
+ * from splitting a surrogate pair.
+ */
+export function previewCodePoints(text: string, max: number): string {
+  let preview = '';
+  let count = 0;
+  for (const character of text) {
+    if (count === max) break;
+    preview += character;
+    count += 1;
+  }
+  return preview;
+}
+
+/**
  * Whether any of a row's free-text fields contains `grep`, case-insensitively.
  *
  * The needle is trimmed before matching, so leading/trailing whitespace in

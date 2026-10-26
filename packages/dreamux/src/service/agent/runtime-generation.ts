@@ -316,28 +316,27 @@ export class RuntimeGeneration {
       identity.agent_runtime,
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
-    let systemPrompt = this.options.systemPrompt;
+    const basePrompt = this.options.systemPrompt;
+    let systemPrompt = basePrompt;
     if (agent.developerInstructions) {
-      // replace and append are alternative representations, not cumulative
-      // instructions: Codex prefers replace; Claude Code uses append. Extend
-      // both when supplied so either provider sees the same final addition.
-      systemPrompt = {
-        ...systemPrompt,
-        ...(systemPrompt?.replace !== undefined
-          ? {
-              replace: `${systemPrompt.replace}\n\n${agent.developerInstructions}`,
-            }
-          : {}),
-        ...(systemPrompt?.append !== undefined ||
-        systemPrompt?.replace === undefined
-          ? {
-              append: [
-                ...(systemPrompt?.append ?? []),
-                agent.developerInstructions,
-              ],
-            }
-          : {}),
-      };
+      // `replace` and `append` are alternative representations a provider may
+      // read; extend each one the caller supplied so the addition reaches
+      // whichever representation that provider uses.
+      const instructions = agent.developerInstructions;
+      if (basePrompt?.replace === undefined) {
+        systemPrompt = {
+          ...basePrompt,
+          append: [...(basePrompt?.append ?? []), instructions],
+        };
+      } else {
+        systemPrompt = {
+          ...basePrompt,
+          replace: `${basePrompt.replace}\n\n${instructions}`,
+          ...(basePrompt.append !== undefined
+            ? { append: [...basePrompt.append, instructions] }
+            : {}),
+        };
+      }
     }
     return {
       provider: provider.implementation,

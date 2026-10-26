@@ -42,6 +42,11 @@ export function projectCodexActivity(
   let live = new LiveAssistantMessages();
   // Window/lineage boundaries without native evidence remain unassigned.
   let turnId: string | null = null;
+  // One native turn boundary: both facts always move together.
+  const enterTurn = (id: string | null) => {
+    turnId = id;
+    live = new LiveAssistantMessages();
+  };
 
   for (const line of lines) {
     const occurredAt = timestampIso(line.value['timestamp']);
@@ -49,23 +54,21 @@ export function projectCodexActivity(
     const payload = recordValue(line.value['payload']);
     if (type === 'turn_context') {
       const contextTurnId = nativeTurnId(payload);
-      if (contextTurnId !== turnId) live = new LiveAssistantMessages();
-      turnId = contextTurnId;
+      if (contextTurnId !== turnId) enterTurn(contextTurnId);
       continue;
     }
     if (type === 'event_msg') {
       const eventType = stringValue(payload?.['type']);
+      const eventTurnId = nativeTurnId(payload);
       if (eventType === 'task_started' || eventType === 'turn_started') {
-        turnId = nativeTurnId(payload);
-        live = new LiveAssistantMessages();
+        enterTurn(eventTurnId);
       } else if (
         ((eventType === 'task_complete' || eventType === 'turn_complete') &&
-          nativeTurnId(payload) === turnId) ||
+          eventTurnId === turnId) ||
         (eventType === 'turn_aborted' &&
-          (nativeTurnId(payload) === null || nativeTurnId(payload) === turnId))
+          (eventTurnId === null || eventTurnId === turnId))
       ) {
-        turnId = null;
-        live = new LiveAssistantMessages();
+        enterTurn(null);
       }
       if (eventType === 'agent_message') {
         const text =

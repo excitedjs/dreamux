@@ -51,6 +51,7 @@ import type {
   AgentEntitySpawnResult,
 } from './identity.js';
 import {
+  AGENT_RUNTIME_CAPABILITY_SCHEMA,
   agentCloseRequest,
   agentEntityLastQuery,
   agentEntityNameParam,
@@ -328,14 +329,7 @@ export function teammateCommands(
     version: 1,
     input: objectSchema({}),
     output: objectSchema(
-      {
-        agent_runtimes: arrayOf(
-          objectSchema(
-            { id: STRING, description: STRING, tags: arrayOf(STRING) },
-            ['id'],
-          ),
-        ),
-      },
+      { agent_runtimes: arrayOf(AGENT_RUNTIME_CAPABILITY_SCHEMA) },
       ['agent_runtimes'],
     ),
     parse: () => ({}),

@@ -17,6 +17,7 @@ import { STRING, arrayOf, objectSchema } from '../../command/schema.js';
 import { AGENT_TASK_SOURCE } from '../submission-sources.js';
 import {
   createToolRecordDelegate,
+  submissionReceipt,
   type McpToolRecord,
 } from '../mcp/projection.js';
 import {
@@ -30,13 +31,9 @@ import { agentEntityNameParam } from './requests.js';
 import {
   TEAMMATE_LIST_STATUSES,
   TEAMMATE_ROSTER_ROW_SCHEMA,
-  teammateRosterRow,
+  teammateRosterPage,
 } from './mcp-roster.js';
-import {
-  LIST_PAGE_PROPERTIES,
-  listInputProperties,
-  listPage,
-} from '../mcp/list-page.js';
+import { LIST_PAGE_PROPERTIES, listInputProperties } from '../mcp/list-page.js';
 import type { TeammateSubmitInput } from './submission.js';
 import type { TurnAdmission } from './turn.js';
 import type { TeammateOps } from './types.js';
@@ -113,15 +110,10 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
                 prompt,
                 attrs,
               });
-        return {
-          structured: {
-            status: result.status,
-            ...(result.error !== undefined ? { error: result.error } : {}),
-          },
-          ...(result.status === 'submitted'
-            ? { text: 'Message submitted.\n\n' + MEMBER_RECEIPT_REMINDER }
-            : {}),
-        };
+        return submissionReceipt(
+          result,
+          'Message submitted.\n\n' + MEMBER_RECEIPT_REMINDER,
+        );
       },
     },
     {
@@ -149,17 +141,14 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
       execute: async (args) => {
         const peers = await scope.owner.teammates.list();
         const { name, status } = scope.owner.memberOwner();
-        const page = listPage(
-          peers.filter((peer) => peer.name !== scope.name),
-          args,
-          TEAMMATE_LIST_STATUSES,
-        );
         return {
           structured: {
             owner: { name, status },
-            teammates: page.items.map(teammateRosterRow),
-            total: page.total,
-            next_cursor: page.next_cursor,
+            ...teammateRosterPage(
+              peers,
+              args,
+              (peer) => peer.name === scope.name,
+            ),
           },
         };
       },

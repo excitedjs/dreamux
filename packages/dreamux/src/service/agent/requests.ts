@@ -22,7 +22,13 @@ import {
   optionalString,
   type CommandPayload,
 } from '../../command/payload.js';
-import { OBJECT, STRING, enumOf, objectSchema } from '../../command/schema.js';
+import {
+  OBJECT,
+  STRING,
+  arrayOf,
+  enumOf,
+  objectSchema,
+} from '../../command/schema.js';
 import {
   clampHistoryLimit,
   decodeCursor,
@@ -248,4 +254,21 @@ export const teammateReceiptSchema: JsonSchema = objectSchema(
     error: STRING,
   },
   ['teammate', 'status'],
+);
+
+/**
+ * One spawnable agent runtime row of `get_capabilities`, shared by the Command
+ * and MCP surfaces.
+ *
+ * `id` is the value `spawn` and `team.create` take; `description` says when to
+ * choose this runtime and `tags` are its short selection labels. Both are
+ * optional because an operator may configure neither.
+ */
+export const AGENT_RUNTIME_CAPABILITY_SCHEMA: JsonSchema = objectSchema(
+  {
+    id: STRING,
+    description: STRING,
+    tags: arrayOf(STRING),
+  },
+  ['id'],
 );

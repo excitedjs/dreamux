@@ -68,6 +68,26 @@ export async function runDelegateTool(
 }
 
 /**
+ * One hand-off admission receipt.
+ *
+ * A submitted turn returns the reminder and nothing else the model needs; a
+ * refusal or a duplicate keeps the structured status and the error, because
+ * there is no later completion to report it.
+ */
+export function submissionReceipt(
+  result: { readonly status: string; readonly error?: unknown },
+  submittedText: string,
+): McpToolSuccess {
+  return {
+    structured: {
+      status: result.status,
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    },
+    ...(result.status === 'submitted' ? { text: submittedText } : {}),
+  };
+}
+
+/**
  * A tool this delegate does not serve.
  *
  * It is settled here on purpose: a client that asks for a tool outside the
