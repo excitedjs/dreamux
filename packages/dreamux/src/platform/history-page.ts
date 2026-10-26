@@ -20,7 +20,7 @@ const HISTORY_LIMIT_MAX = 100;
 export function clampHistoryLimit(input: number | undefined): number {
   if (input === undefined) return HISTORY_LIMIT_DEFAULT;
   if (!Number.isInteger(input) || input < 1) {
-    throw new RuleViolation('history limit must be a positive integer');
+    throw new RuleViolation('page limit must be a positive integer');
   }
   // Capped, not rejected: an MCP-driven caller asking for "all" history
   // often just names a large round number, and a page is a bounded read —
@@ -48,12 +48,28 @@ export function decodeCursor(cursor: string): number {
   } catch {
     // Every unreadable cursor is the same broken rule, stated once below.
   }
-  throw new RuleViolation('invalid history cursor');
+  throw new RuleViolation('invalid pagination cursor');
 }
 
 export function previewText(text: string): string {
   const collapsed = text.replace(/\s+/g, ' ').trim();
   return collapsed.length <= 500 ? collapsed : `${collapsed.slice(0, 497)}...`;
+}
+
+/**
+ * The first `max` Unicode code points of a free-text field, preserving its
+ * whitespace. Counting code points rather than UTF-16 units keeps a preview
+ * from splitting a surrogate pair.
+ */
+export function previewCodePoints(text: string, max: number): string {
+  let preview = '';
+  let count = 0;
+  for (const character of text) {
+    if (count === max) break;
+    preview += character;
+    count += 1;
+  }
+  return preview;
 }
 
 /**

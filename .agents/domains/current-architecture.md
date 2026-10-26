@@ -111,9 +111,12 @@ admin socket and an opaque lease token, asks `mcp.describe`, forwards to
 (`/packages/dreamux/src/mcp/server.ts`) owns transport, negotiation (exactly
 `2026-07-28`, `2025-11-25`, `2025-06-18`), schema validation, and framing.
 Every tool surface is an in-server delegate owned by its domain under
-`src/service/`; successful objects appear unchanged as `structuredContent`
-with exact `content: []`, and submitted create/send/workflow receipts may carry
-one operation-local reminder text
+`src/service/`. Record-based Team, owner and member delegates share catalog
+publication and dispatch through `service/mcp/projection.ts`; their handlers
+still own admission and argument parsing. The final adapter emits nonempty
+tool-authored text as one content block without `structuredContent`; absent or
+empty text exposes the structured object with `content: []`. Create/send/workflow
+text includes actionable facts and operation-local reminders
 (`/packages/dreamux/src/service/mcp/dispatch-reminders.ts`). The failure
 contract — `StatedFailure` three-part rendering, native messages passed
 through, no sanitized catch-all — is owned by

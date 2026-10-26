@@ -155,9 +155,11 @@ async function callTool(
   }
   const structured = asRecord(envelope['structured'], `tool '${name}' value`);
   const text = envelope['text'];
+  // Preserve the delegate's text unchanged; the final adapter alone chooses
+  // between authored content and the structured value, including empty text.
   return {
     structured,
-    ...(typeof text === 'string' && text !== '' ? { text } : {}),
+    ...(typeof text === 'string' ? { text } : {}),
   };
 }
 

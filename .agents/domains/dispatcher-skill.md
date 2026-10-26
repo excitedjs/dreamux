@@ -78,13 +78,19 @@ carries a description.
 
 Dispatcher `teammate` MCP tools are `spawn`, `send`, `close`, `list`, `status`,
 `history`, `last`, and `get_capabilities`. `spawn.name_prefix` is only a
-requested label; the returned concrete `teammate.name` is the address for every
+requested label; the returned concrete `name` is the address for every
 later call. `send` is also the reattach path for a closed TeamMate when the
 runtime can resume it from the recorded session.
 
+`get_capabilities` lists configured runtime `id` with optional `description`
+and `tags`, not provider internals or a diagnostic availability verdict.
+Detailed `status` retains identity, session, workspace, and lifecycle facts;
+its `created_at` and `updated_at` are identity timestamps, not recent activity.
+Use `last` for recent activity.
+
 Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `history`,
 and `dissolve`. `create.name_prefix` is only a requested label; use the returned
-concrete `team.team_name` for every later Team call. A valid Team record occupies
+concrete `team_name` for every later Team call. A valid Team record occupies
 that name. Fully retired history is read from disk, so deleting or invalidating
 its record can release that occupation; active and pending owners retain their
 record authority. See [Team Records](state-config-and-files.md#team-records) for
@@ -93,7 +99,7 @@ here: it is a channel operation, and the connected channel's own MCP server owns
 those tools and their schemas.
 
 `dissolve({ team_name, note, force? })` is submitted, not awaited. It answers
-`{ accepted, team_name, status: "submitted" }` as soon as the Team owns the
+`{ status: "submitted" }` as soon as the Team owns the
 background work and never reports how the dissolve went; read the Team's status
 afterwards. Uncommitted, untracked, or unmerged work in a managed
 `delete-on-close` worktree leaves the Team open and running instead of closing
@@ -128,11 +134,14 @@ already selected when the Team is created. Team-scoped TeamMates share that
 workspace, so concurrent editing needs an explicit non-conflict boundary;
 the `teamwork` skill owns that coordination guidance.
 
-TeamLeader `team` MCP exposes exactly one tool, `dissolve({ note, force? })`.
-It always targets the descriptor-bound Team, accepts no Team selector, and
-returns the same submitted receipt — its own runtime is one of the things being
-stopped, so it should expect to lose that response. TeamLeaders cannot create,
-send to, list, inspect, or select Teams through this projection.
+TeamLeader `team` MCP exposes `status({})` and `dissolve({ note, force? })`.
+Both target the descriptor-bound Team and accept no Team selector. `status`
+returns the same full summary as Dispatcher Team status, including
+`leader_session_id`, intent, workspace, and lifecycle/cleanup facts. Use
+`teammate.list` for the member roster. `dissolve` returns the same compact
+submitted receipt; its own runtime is being stopped, so the leader should
+expect to lose that response. This catalog grants no cross-Team create, send,
+list, history, or selection capability.
 
 The TeamLeader `dissolve` description tells a TeamLeader to check uncommitted,
 untracked, and unmerged work before dissolving, and to ask the user through the

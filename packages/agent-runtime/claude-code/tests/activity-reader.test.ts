@@ -27,7 +27,14 @@ const silentLog: DreamuxLogger = {
  * native filesystem path ever crosses into a returned `AgentActivityRecord`.
  */
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -121,6 +128,38 @@ function userToolResult(
       ],
     },
   };
+}
+
+/** A non-participant record Claude appends under the newest message. */
+function attachmentRecord(input: NativeRecordInput): Record<string, unknown> {
+  return {
+    type: 'attachment',
+    sessionId: input.sessionId,
+    uuid: input.uuid,
+    parentUuid: input.parentUuid,
+    timestamp: input.timestamp,
+    attachment: { type: 'file', name: 'synthetic.txt' },
+  };
+}
+
+/** A non-participant record with no uuid at all, as Claude writes at a tail. */
+function queueOperationRecord(input: {
+  sessionId: string;
+  timestamp: string;
+}): Record<string, unknown> {
+  return {
+    type: 'queue-operation',
+    sessionId: input.sessionId,
+    timestamp: input.timestamp,
+    operation: 'enqueue',
+  };
+}
+
+function assistantSidechainText(
+  input: NativeRecordInput,
+  text: string,
+): Record<string, unknown> {
+  return { ...assistantText(input, text), isSidechain: true };
 }
 
 // ─── Fixture harness ─────────────────────────────────────────────────────────
@@ -340,6 +379,152 @@ describe('readClaudeRecentActivity: closed session', () => {
   });
 });
 
+describe('readClaudeRecentActivity: in-progress native tail', () => {
+  const at = (offsetSeconds: number) =>
+    new Date(Date.UTC(2026, 0, 1, 0, 0, offsetSeconds)).toISOString();
+
+  it('keeps an active page when the newest participant has a non-participant child and a uuid-less tail record', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    await fixture.write([
+      userText(
+        { sessionId, uuid: 'u1', parentUuid: null, timestamp: at(0) },
+        'start',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: at(1) },
+        'working',
+      ),
+      assistantToolUse(
+        { sessionId, uuid: 'a2', parentUuid: 'a1', timestamp: at(2) },
+        'call-1',
+        'Read',
+        { file_path: '/synthetic/secret-path.txt' },
+      ),
+      userToolResult(
+        { sessionId, uuid: 'u2', parentUuid: 'a2', timestamp: at(3) },
+        'call-1',
+        'synthetic tool result',
+        false,
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-1',
+        parentUuid: 'u2',
+        timestamp: at(4),
+      }),
+      queueOperationRecord({ sessionId, timestamp: at(5) }),
+    ]);
+
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+
+    expect(page.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'working',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'tool',
+        name: 'Read',
+        status: 'completed',
+        occurredAt: expect.any(String),
+      },
+    ]);
+  });
+
+  it('ignores a sidechain branch while selecting the main leaf', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    await fixture.write([
+      userText(
+        { sessionId, uuid: 'u1', parentUuid: null, timestamp: at(0) },
+        'start',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: at(1) },
+        'main line 1',
+      ),
+      assistantSidechainText(
+        { sessionId, uuid: 's1', parentUuid: 'u1', timestamp: at(2) },
+        'side branch',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a2', parentUuid: 'a1', timestamp: at(3) },
+        'main line 2',
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-1',
+        parentUuid: 'a2',
+        timestamp: at(4),
+      }),
+      queueOperationRecord({ sessionId, timestamp: at(5) }),
+    ]);
+
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+
+    expect(page.records.map((record) => record.kind)).toEqual([
+      'assistant_message',
+      'assistant_message',
+    ]);
+    expect(
+      page.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['main line 1', 'main line 2']);
+  });
+
+  it('keeps parent tracing when a participant is parented to a non-participant', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    await fixture.write([
+      userText(
+        { sessionId, uuid: 'u1', parentUuid: null, timestamp: at(0) },
+        'start',
+      ),
+      assistantText(
+        { sessionId, uuid: 'a1', parentUuid: 'u1', timestamp: at(1) },
+        'before attachment',
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-1',
+        parentUuid: 'a1',
+        timestamp: at(2),
+      }),
+      assistantText(
+        { sessionId, uuid: 'a2', parentUuid: 'att-1', timestamp: at(3) },
+        'after attachment',
+      ),
+      attachmentRecord({
+        sessionId,
+        uuid: 'att-2',
+        parentUuid: 'a2',
+        timestamp: at(4),
+      }),
+      queueOperationRecord({ sessionId, timestamp: at(5) }),
+    ]);
+
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+
+    expect(
+      page.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['before attachment', 'after attachment']);
+  });
+});
+
 describe('readClaudeRecentActivity: tool filtering as a group', () => {
   it('includeTools=false hides every tool record, keeping only assistant text, with no partial tool leakage', async () => {
     const fixture = await makeFixture();
@@ -475,10 +660,217 @@ describe('readClaudeRecentActivity: no native leakage into records', () => {
       'occurredAt',
     ]);
 
-    const serialized = JSON.stringify(page);
+    expect(page.transcriptPath).toBe(await realpath(fixture.path));
+    const serialized = JSON.stringify(page.records);
     expect(serialized).not.toContain('/etc/native/secret-path.txt');
     expect(serialized).not.toContain('super secret file contents');
     expect(serialized).not.toContain(fixture.cwd);
     expect(serialized).not.toContain(fixture.configDir);
+  });
+});
+
+describe('readClaudeRecentActivity: native identity limits and canonical path', () => {
+  it('leaves prompt and tool continuations unassigned across cursor pages', async () => {
+    const fixture = await makeFixture();
+    const lines = conversation(fixture.sessionId);
+    const toolResult = lines[4]!;
+    const message = toolResult['message'] as { content: unknown[] };
+    message.content.push({
+      type: 'text',
+      text: 'a tool continuation with sibling text',
+    });
+    await fixture.write(lines);
+    const newest = await readClaudeRecentActivity(
+      query(fixture, { limit: 1 }),
+      fixture.context,
+    );
+    await fixture.append([
+      userText(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'steered-prompt',
+          parentUuid: 'a3',
+          timestamp: '2026-01-01T00:00:06.000Z',
+        },
+        'a new input is not a native turn ID',
+      ),
+      assistantText(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'steered-answer',
+          parentUuid: 'steered-prompt',
+          timestamp: '2026-01-01T00:00:07.000Z',
+        },
+        'later answer',
+      ),
+    ]);
+    const older = await readClaudeRecentActivity(
+      query(fixture, { limit: 2, cursor: newest.nextCursor! }),
+      fixture.context,
+    );
+    expect(newest.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'done reading',
+        occurredAt: expect.any(String),
+      },
+    ]);
+    expect(older.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'hi there',
+        occurredAt: expect.any(String),
+      },
+      {
+        kind: 'tool',
+        name: 'Read',
+        status: 'completed',
+        occurredAt: expect.any(String),
+      },
+    ]);
+    const current = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+    for (const record of [
+      ...newest.records,
+      ...older.records,
+      ...current.records,
+    ]) {
+      expect(record).not.toHaveProperty('turnId');
+    }
+    expect([
+      newest.transcriptPath,
+      older.transcriptPath,
+      current.transcriptPath,
+    ]).toEqual(Array(3).fill(await realpath(fixture.path)));
+    expect(older.nextCursor).toBeUndefined();
+  });
+
+  it('never promotes a compaction summary or duration checkpoint UUID to a turn ID', async () => {
+    const fixture = await makeFixture();
+    const { sessionId } = fixture;
+    const input = (uuid: string, parentUuid: string | null) => ({
+      sessionId,
+      uuid,
+      parentUuid,
+      timestamp: '2026-01-01T00:00:00.000Z',
+    });
+    await fixture.write([
+      ...conversation(sessionId),
+      {
+        type: 'system',
+        subtype: 'compact_boundary',
+        ...input('compact-marker', null),
+        logicalParentUuid: 'a3',
+      },
+      {
+        ...userText(
+          input('compact-summary', 'compact-marker'),
+          'synthetic compact summary',
+        ),
+        isCompactSummary: true,
+      },
+      assistantText(
+        input('after-summary', 'compact-summary'),
+        'after compaction',
+      ),
+      {
+        type: 'system',
+        subtype: 'turn_duration',
+        ...input('duration-checkpoint', 'after-summary'),
+        durationMs: 45000,
+        messageCount: 9,
+      },
+      assistantText(
+        input('after-duration', 'duration-checkpoint'),
+        'after duration checkpoint',
+      ),
+    ]);
+    const newest = await readClaudeRecentActivity(
+      query(fixture, { limit: 2 }),
+      fixture.context,
+    );
+    const older = await readClaudeRecentActivity(
+      query(fixture, { limit: 3, cursor: newest.nextCursor! }),
+      fixture.context,
+    );
+    expect(
+      newest.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['after compaction', 'after duration checkpoint']);
+    expect(
+      older.records.map((record) =>
+        record.kind === 'assistant_message' ? record.text : record.name,
+      ),
+    ).toEqual(['hi there', 'Read', 'done reading']);
+    for (const record of [...newest.records, ...older.records])
+      expect(record).not.toHaveProperty('turnId');
+  });
+
+  it('keeps an orphaned tool-result continuation readable without inventing a turn ID', async () => {
+    const fixture = await makeFixture();
+    await fixture.write([
+      userToolResult(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'tool-return',
+          parentUuid: 'outside-window',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        },
+        'unknown-call',
+        'synthetic result',
+        false,
+      ),
+      assistantText(
+        {
+          sessionId: fixture.sessionId,
+          uuid: 'continuation',
+          parentUuid: 'tool-return',
+          timestamp: '2026-01-01T00:00:01.000Z',
+        },
+        'continuing without known boundary',
+      ),
+    ]);
+    const page = await readClaudeRecentActivity(
+      query(fixture),
+      fixture.context,
+    );
+    expect(page.records).toEqual([
+      {
+        kind: 'assistant_message',
+        text: 'continuing without known boundary',
+        occurredAt: expect.any(String),
+      },
+    ]);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  it('reports the canonical file through a config-home directory symlink', async () => {
+    const fixture = await makeFixture();
+    await fixture.write(conversation(fixture.sessionId));
+    const configAlias = `${fixture.configDir}-alias`;
+    await symlink(fixture.configDir, configAlias);
+    const context = {
+      ...fixture.context,
+      config: {
+        ...fixture.context.config,
+        extra_env: {
+          ...fixture.context.config.extra_env,
+          CLAUDE_CONFIG_DIR: configAlias,
+        },
+      },
+    };
+    const page = await readClaudeRecentActivity(query(fixture), context);
+    expect(page.records).toHaveLength(3);
+    expect(page.transcriptPath).toBe(await realpath(fixture.path));
+    expect(page.transcriptPath).not.toContain(configAlias);
+
+    // The real transcript remains; discovery must depend on the configured alias.
+    await rm(configAlias);
+    await expect(
+      readClaudeRecentActivity(query(fixture), context),
+    ).rejects.toMatchObject({ detail: 'not_found' });
   });
 });

@@ -300,8 +300,9 @@ the Team.
   never retracts a delivery already queued.
 
   Ordinary-member communication is shared by both owner compositions:
-  `agent/mcp.ts` holds the member send/list catalog over a structural view of the
-  actual Team/Dispatcher service. Each owner lazily describes its contained
+  `agent/member-mcp.ts` holds the member send/list catalog and its owner
+  interface over a structural view of the actual Team/Dispatcher service, and
+  `agent/mcp.ts` forwards a member scope to that delegate. Each owner lazily describes its contained
   conversational agent and exposes its existing fenced `submitInput`; the
   collection resolves peers and binds sender attributes. Ordinary construction
   installs tools and a stable native-report recipient; locked Workflow
@@ -339,7 +340,9 @@ the Team.
   a `CronJobStore` it was handed.
   `requests.ts` holds the request readers (`cronCreateRequest`,
   `cronUpdateRequest`, `cronJobIdParam`) and the result projections
-  (`cronJobResult`, `cronListResult`) shared by `commands.ts` and `mcp.ts`.
+  (`cronJobResult`) shared by mutation Commands and MCP tools. `cronListResult`
+  remains the full Command view; compact MCP inventory belongs to `mcp.ts`
+  (see the scheduled-work KB).
   `commands.ts` declares the `scheduler.cron.*` Commands; `mcp.ts` is the cron
   MCP delegate; `errors.ts` holds `CronJobNotFoundError`. `types.ts` holds the
   domain types (`CronJob`/`CronJobAction`/`CronPromptAgentAction`/

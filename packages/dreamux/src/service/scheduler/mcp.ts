@@ -9,16 +9,23 @@
  * because the target was a Command parameter. Here the target is not a
  * parameter at all, so there is nothing to strip and nothing to override.
  *
- * The request readers and the result projection live in `requests.ts`, shared
- * unchanged with `commands.ts`; what stays here is this surface's advertised
- * catalog and its tool names.
+ * Mutation request readers and results are shared with `commands.ts` through
+ * `requests.ts`. This surface owns its compact list projection and catalog;
+ * the Commands retain complete job records.
  *
  * Failures are thrown, not classified: a cron failure states its own reason and
  * next step, and the admission boundary every delegate is reached through
  * renders it.
  */
-import type { CommandPayload } from '../../command/payload.js';
+import type { JsonSchema } from '@excitedjs/dreamux-types';
+
+import {
+  optionalBooleanField,
+  optionalString,
+  type CommandPayload,
+} from '../../command/payload.js';
 import { OBJECT, arrayOf, objectSchema } from '../../command/schema.js';
+import { previewCodePoints } from '../../platform/history-page.js';
 import { runDelegateTool, type McpToolSuccess } from '../mcp/projection.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
@@ -37,7 +44,6 @@ import {
   cronCreateRequest,
   cronJobIdParam,
   cronJobResult,
-  cronListResult,
   cronUpdateRequest,
 } from './requests.js';
 import type { SchedulerCommands } from './types.js';
@@ -148,12 +154,25 @@ const CRON_TOOL_RECORDS: CronMcpToolRecord[] = [
   {
     descriptor: tool(
       'cron_list',
-      'List durable cron jobs for this agent.',
-      {},
+      'List durable cron jobs for this agent with schedule metadata, the first 200 Unicode code points of each prompt, and the full prompt UTF-8 byte count. Use id to read only one job; an unknown id returns an empty jobs array. Set include_prompt:true to retrieve the complete prompt before editing.',
+      {
+        id: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 128,
+          description:
+            'Return only the job with this id; omitted lists all jobs.',
+        },
+        include_prompt: {
+          type: 'boolean',
+          description:
+            'Include the complete prompt in each returned row for safe editing. Defaults to false.',
+        },
+      },
       [],
       {
         title: 'List cron jobs',
-        output: objectSchema({ jobs: arrayOf(OBJECT) }, ['jobs']),
+        output: objectSchema({ jobs: arrayOf(cronListRowSchema()) }, ['jobs']),
         annotations: READ_ONLY_ANNOTATIONS,
       },
     ),
@@ -261,8 +280,33 @@ async function cronUpdate(
   };
 }
 
-async function cronList(scheduler: SchedulerCommands): Promise<McpToolSuccess> {
-  return { structured: cronListResult(await scheduler.list()) };
+async function cronList(
+  scheduler: SchedulerCommands,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  const id = optionalString(args, 'id');
+  const includePrompt =
+    optionalBooleanField(args, 'include_prompt')['include_prompt'] === true;
+  const { jobs } = await scheduler.list();
+  return {
+    structured: {
+      jobs: jobs
+        .filter((job) => id === null || job.id === id)
+        .map((job) => ({
+          id: job.id,
+          ...(job.title !== undefined ? { title: job.title } : {}),
+          cron: job.cron,
+          tz: job.tz,
+          recurring: job.recurring,
+          enabled: job.enabled,
+          next_run_at: job.next_run_at,
+          last_fired_at: job.last_fired_at,
+          prompt_preview: previewCodePoints(job.action.prompt, 200),
+          prompt_bytes: Buffer.byteLength(job.action.prompt, 'utf8'),
+          ...(includePrompt ? { prompt: job.action.prompt } : {}),
+        })),
+    },
+  };
 }
 
 async function cronDelete(
@@ -298,6 +342,44 @@ function cronJobSchema(): Record<string, unknown> {
       'updated_at',
       'next_run_at',
       'last_fired_at',
+    ],
+  );
+}
+
+function cronListRowSchema(): JsonSchema {
+  return objectSchema(
+    {
+      id: { type: 'string' },
+      title: { type: 'string' },
+      cron: { type: 'string' },
+      tz: { type: 'string' },
+      recurring: { type: 'boolean' },
+      enabled: { type: 'boolean' },
+      next_run_at: { type: ['integer', 'null'] },
+      last_fired_at: { type: ['integer', 'null'] },
+      prompt_preview: {
+        type: 'string',
+        description: 'The first 200 Unicode code points of the prompt.',
+      },
+      prompt_bytes: {
+        type: 'integer',
+        description: 'UTF-8 byte count of the complete prompt.',
+      },
+      prompt: {
+        type: 'string',
+        description: 'The complete prompt, only when include_prompt is true.',
+      },
+    },
+    [
+      'id',
+      'cron',
+      'tz',
+      'recurring',
+      'enabled',
+      'next_run_at',
+      'last_fired_at',
+      'prompt_preview',
+      'prompt_bytes',
     ],
   );
 }

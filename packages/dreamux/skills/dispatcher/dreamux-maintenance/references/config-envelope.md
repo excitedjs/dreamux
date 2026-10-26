@@ -59,7 +59,20 @@ phase, and its rejection is observed.
 
 - unique non-empty string `id`;
 - non-empty provider ref `provider`;
+- optional string `description` and string array `tags`: operator-authored
+  metadata for runtime selection;
+- optional string `developerInstructions`: instructions appended after the
+  composed system instructions, plugin additions, and identity on every Core
+  runtime launch or resume, for Dispatchers, TeamLeaders, TeamMates, and Workflow
+  agents. A running runtime keeps the instructions it launched with;
 - optional provider-owned object `config`.
+
+These host-owned metadata fields are separate from provider-owned `config`.
+Their text and tag order round-trip unchanged, including empty values. The
+TeamMate `get_capabilities` result is `{ agent_runtimes: [{ id, description?,
+tags? }] }`: it omits absent descriptions and absent or empty tag arrays.
+`developerInstructions` and provider config are not included. Providers do not
+declare selection tags or public config snapshots; `agents[]` owns this metadata.
 
 `dispatchers[]` entries contain:
 
@@ -94,7 +107,10 @@ authority; do not infer fields from a built-in provider.
 `dreamux onboard` reconstructs the known host wrapper fields when it writes
 configuration. Unknown wrapper fields may be discarded even on untouched
 entries; untouched provider-owned `config` contents retain their raw-config
-round trip. Loading an unknown envelope key remains supported. Use the
+round trip. Runtime descriptions, tags, and developer instructions are retained
+for existing agent ids, including the selected runtime when its provider config
+is updated. A new runtime id does not inherit another runtime's metadata.
+Loading an unknown envelope key remains supported. Use the
 structural-editing procedure below when unrelated fields must be preserved.
 
 ## Safe Current Config Editing

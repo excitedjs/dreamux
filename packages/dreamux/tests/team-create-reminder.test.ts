@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { quoteModelValue } from '@excitedjs/dreamux-utils';
 import {
   TEAM_DISPATCH_SUCCESS_REMINDER,
   TEAMMATE_DISPATCH_SUCCESS_REMINDER,
@@ -25,7 +26,7 @@ describe('Team dispatch reminders', () => {
     });
     expect(result).toMatchObject({
       ok: true,
-      text: TEAM_DISPATCH_SUCCESS_REMINDER,
+      text: expect.stringContaining(TEAM_DISPATCH_SUCCESS_REMINDER),
     });
     expect(result).toMatchObject({
       text: expect.stringMatching(/do not poll.*completion/i),
@@ -61,7 +62,7 @@ describe('Team dispatch reminders', () => {
     });
     expect(result).toEqual({
       ok: true,
-      structured: { status: 'submitted', turn_id: 'accepted-turn' },
+      structured: { status: 'submitted' },
       text: TEAM_DISPATCH_SUCCESS_REMINDER,
     });
     expect(result).toMatchObject({
@@ -83,6 +84,22 @@ describe('Team dispatch reminders', () => {
       });
       expect(result.ok).toBe(true);
       expect(result).not.toHaveProperty('text');
+      expect(result).toMatchObject({
+        structured: {
+          status: status === 'skipped' ? 'stopped' : status,
+          ...(status === 'failed' || status === 'ambiguous'
+            ? {
+                error: {
+                  code:
+                    status === 'failed' ? 'SUBMIT_FAILED' : 'SUBMIT_AMBIGUOUS',
+                  message: 'not admitted',
+                },
+              }
+            : status === 'skipped'
+              ? { error: { code: 'TURN_SKIPPED', message: 'turn skipped' } }
+              : {}),
+        },
+      });
     },
   );
 });
@@ -137,14 +154,44 @@ describe.each(['dispatcher', 'team_leader'] as const)(
                   }
                 : { name: actual.teammate.name, prompt: 'Continue' },
           });
-          expect(result).toMatchObject({ ok: true, structured: receipt });
+          expect(result).toMatchObject({
+            ok: true,
+            structured: {
+              ...(name === 'spawn' ? { name: actual.teammate.name } : {}),
+              status,
+              ...(name === 'spawn' && kind === 'dispatcher'
+                ? {
+                    repo: {
+                      path: actual.teammate.repo.path,
+                      branch: actual.teammate.repo.branch,
+                    },
+                  }
+                : {}),
+            },
+          });
+          if (result.ok)
+            expect(result.structured).not.toHaveProperty('teammate');
           if (status === 'submitted') {
             expect(result).toMatchObject({
-              text: TEAMMATE_DISPATCH_SUCCESS_REMINDER,
+              text: expect.stringContaining(TEAMMATE_DISPATCH_SUCCESS_REMINDER),
             });
             expect(result).toMatchObject({
               text: expect.stringMatching(/automatically push.*Do not poll/),
             });
+            if (result.ok && name === 'spawn') {
+              expect(result.text).toContain(
+                quoteModelValue(actual.teammate.name),
+              );
+              if (kind === 'dispatcher') {
+                expect(result.text).toContain(
+                  quoteModelValue(actual.teammate.repo.path),
+                );
+                if (actual.teammate.repo.branch !== null)
+                  expect(result.text).toContain(
+                    quoteModelValue(actual.teammate.repo.branch),
+                  );
+              }
+            }
           } else expect(result).not.toHaveProperty('text');
         },
       );
@@ -161,7 +208,9 @@ describe.each(['dispatcher', 'team_leader'] as const)(
       expect(result).toEqual({
         ok: true,
         structured: { run_id: 'accepted-run' },
-        text: WORKFLOW_RUN_SUCCESS_REMINDER,
+        text:
+          'Started workflow run "accepted-run".\n\n' +
+          WORKFLOW_RUN_SUCCESS_REMINDER,
       });
       expect(result).toMatchObject({
         text: expect.stringMatching(
@@ -173,7 +222,7 @@ describe.each(['dispatcher', 'team_leader'] as const)(
       const f = await scoped(kind);
       expect(await f.delegate.call({ name: 'list', arguments: {} })).toEqual({
         ok: true,
-        structured: { teammates: [] },
+        structured: { teammates: [], total: 0, next_cursor: null },
       });
     });
   },

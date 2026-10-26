@@ -46,9 +46,9 @@ Current source owners:
   relevant tool description. The TeamLeader prompt routes missing collaboration
   guidance to `teamwork`; its frontmatter repeats that condition. Another turn
   or handoff does not require rereading guidance already in context.
-- Per-engine visibility facts the writer must know: Claude Code drops MCP
-  `content` text on a tool result once `structuredContent` is also present, so
-  a reminder attached only as `content` text is invisible there; Codex renders
+- Per-engine visibility facts the writer must know: both engines prefer MCP
+  `structuredContent` over accompanying `content` text, so a result carrying a
+  reminder must use the content-only form described below. Codex renders
   a `channel-<provider>` MCP server's tools as `channel_<provider>__…`
   (underscore-joined), never the hyphenated server name. Before a tool
   definition is fetched the engines also differ: Codex lists no Dreamux MCP
@@ -66,9 +66,9 @@ The same applies to TeamLeader skills and caller-specific MCP descriptions.
 Before adding a rule, verify the real tool projection in source:
 
 - Dispatcher-visible tools are not automatically visible to TeamLeaders.
-- TeamLeader-visible `team` MCP exposes exactly one tool, a scoped `dissolve`
-  with no model-supplied Team name. Binding a conversation to a Team is a
-  Channel tool, and the TeamLeader's copy of it carries no team field at all.
+- TeamLeader-visible `team` MCP exposes `status` and `dissolve`, both bound to
+  its own Team with no model-supplied Team name. Binding a conversation to a
+  Team is a Channel tool, and the TeamLeader's copy carries no team field.
 - Ordinary TeamMates and team members receive no bundled Dreamux skill by
   default.
 - Dispatchers and TeamLeaders both receive the shared `dynamic-workflow`
@@ -228,17 +228,48 @@ or an old concept, fix the projection rather than documenting around it.
 Every externally supplied value rendered into user- or model-visible rich text
 (Team and space names, runtime ids, paths, target display names) is escaped;
 none of them may construct a Markdown link, mention, tag, or card action.
+Core and Feishu MCP prose quote dynamic values through
+`dreamux-utils/src/model-text.ts`; JSON scalar quoting alone does not escape
+Markdown punctuation in paths, refs or runtime ids.
 
-Every Dreamux-owned tool keeps its canonical successful-result projector beside
-its output schema. Successful objects appear unchanged in `structuredContent`
-with exact `content: []` for ordinary calls. Keep top-level output objects closed
-unless a named JSON-valued extension field is intentionally open. Do not return
-duplicate JSON text, generic forwarding acknowledgements, nested JSON strings,
-or prompt guidance in structured fields. A Channel tool may provide separate
-success `text` through `ChannelMcpToolOutcome`; Core forwards it unchanged to MCP
-`content`. Feishu `bind_channel` and actual `unbind_channel` results use that
-carrier to explain automatic notification cards and avoid duplicate user
-notifications; no-op unbinds and refusals carry no success reminder.
+Each MCP delegate owns its model-facing result projection; Command and domain
+DTOs retain the facts their callers use. Compact creation, submission, roster,
+and history results do not narrow the detailed `status` read. Keep result
+schemas beside their projections when a schema is published. Owner and member
+TeamMate scans share the row schema and mapper in `agent/mcp-roster.ts`.
+`service/mcp/list-page.ts` applies status selection and bounded paging to Team
+and both TeamMate scopes, reusing history limit/cursor primitives. Default
+non_closed does not mean currently running; exact status/all preserves closed
+resource discovery. Total counts matching rows before paging and member self
+exclusion precedes that count. Domain/Command lists stay whole. Team
+list/history rows are closed, including their cleanup result. Team dissolve
+receipts share their MCP-only declaration in `team/requests.ts`. Ordinary
+top-level result objects stay closed unless a named JSON-valued extension field
+is intentionally open. Team entity DTO schemas remain open under the
+[Team projection ruling](/.agents/tasks/architecture/unify-team-command-projections/requirement.md);
+that exception does not extend to other entity schemas. Do not add generic
+forwarding acknowledgements or prompt guidance to business fields.
+
+The shared MCP server emits nonempty success `text` verbatim as one `content`
+text block, without `structuredContent` or a serialized JSON copy. The tool
+owner writes every actionable fact and reminder into this complete result:
+actual created names and workspace facts, workflow run ids, or binding changes.
+Absent or empty text exposes the business value as `structuredContent` with
+`content: []`. The shim preserves text unchanged; only the final adapter selects
+this representation, without trimming nonempty strings.
+Any tool that can return success text omits its published `outputSchema`, even
+when a particular invocation returns no text: the SDK requires structured
+content when a schema is advertised. This applies to dispatch reminders and
+Channel success text through `ChannelMcpToolOutcome`. Feishu registration uses
+the presence of `successText` for built-ins and extensions. Internal Feishu tool
+definitions allow omitted output schemas, so text-only routing tools declare
+none. Existing extensions that supply both still have the schema omitted at
+registration. External providers and extensions
+must supply complete text, rather than assuming their structured value is also
+visible. See
+`/packages/dreamux/src/mcp/server.ts`,
+`/packages/dreamux/src/service/mcp/tool-metadata.ts`, and
+`/packages/channel/feishu-channel/src/tools/registry.ts`.
 
 Known-tool input-schema failures are normal MCP tool results with `isError`.
 Unknown tools and malformed protocol requests are SDK-owned protocol errors.
@@ -273,9 +304,9 @@ reminder; a `create` called without a `prompt` attaches nothing; a
 reminder; idle, failed, read, unrelated, and ordinary mutation results carry no
 dispatch reminder — and the trailing sentence of the hand-off tool descriptions (`spawn`,
 `send`, `team.create`, `team.send`, `workflow_run`), which states the same
-fact as a short contract sentence so the model reads it even where the
-reminder itself is not visible (Claude Code drops the reminder's `content`
-text once `structuredContent` is present). Receipt attachment belongs to the
+fact as a short contract sentence when the model reads the tool definition.
+The content-only result above preserves the operation-local reminder in both
+engines. Receipt attachment belongs to the
 MCP delegates, not public tool metadata, Command data, or a Channel provider
 contract.
 

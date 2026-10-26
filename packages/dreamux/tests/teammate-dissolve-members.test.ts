@@ -5,6 +5,8 @@ import { TeammateCollection } from '../src/service/agent/index.js';
 import { AgentIdentityStore } from '../src/service/agent/store.js';
 import type { TeammateOps } from '../src/service/agent/types.js';
 import { reuseCwdWorktree } from '../src/service/worktree/manager.js';
+import { createTeamMateMcpDelegate } from '../src/service/agent/mcp.js';
+import { validateMcpToolCatalog } from '../src/service/mcp/catalog.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 afterEach(() => vi.restoreAllMocks());
 
@@ -136,8 +138,14 @@ describe('Team member destruction through the current collection owner', () => {
       >
     >().toEqualTypeOf<never>();
     const f = await dispatcherFixture();
-    const capabilities = await f.host.teammates.getCapabilities();
-    expect(capabilities.verbs).toEqual([
+    const catalog = validateMcpToolCatalog(
+      createTeamMateMcpDelegate({
+        kind: 'dispatcher',
+        dispatcher: f.host,
+      }).describe().tools,
+      'teammate',
+    );
+    expect(catalog.map((tool) => tool.name)).toEqual([
       'spawn',
       'send',
       'close',
@@ -146,6 +154,10 @@ describe('Team member destruction through the current collection owner', () => {
       'status',
       'last',
       'get_capabilities',
+      'workflow_run',
+      'workflow_status',
+      'workflow_stop',
+      'workflow_list',
     ]);
   });
 });

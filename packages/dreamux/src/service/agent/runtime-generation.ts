@@ -316,6 +316,28 @@ export class RuntimeGeneration {
       identity.agent_runtime,
     );
     const provider = this.deps.agentRuntimeProviders.resolve(agent.provider);
+    const basePrompt = this.options.systemPrompt;
+    let systemPrompt = basePrompt;
+    if (agent.developerInstructions) {
+      // `replace` and `append` are alternative representations a provider may
+      // read; extend each one the caller supplied so the addition reaches
+      // whichever representation that provider uses.
+      const instructions = agent.developerInstructions;
+      if (basePrompt?.replace === undefined) {
+        systemPrompt = {
+          ...basePrompt,
+          append: [...(basePrompt?.append ?? []), instructions],
+        };
+      } else {
+        systemPrompt = {
+          ...basePrompt,
+          replace: `${basePrompt.replace}\n\n${instructions}`,
+          ...(basePrompt.append !== undefined
+            ? { append: [...basePrompt.append, instructions] }
+            : {}),
+        };
+      }
+    }
     return {
       provider: provider.implementation,
       context: {
@@ -331,9 +353,7 @@ export class RuntimeGeneration {
           ? { outputSchema: this.options.outputSchema }
           : {}),
         events: this.generationEventSink(lease),
-        ...(this.options.systemPrompt !== undefined
-          ? { systemPrompt: this.options.systemPrompt }
-          : {}),
+        ...(systemPrompt !== undefined ? { systemPrompt } : {}),
         // A distinct lease per runtime generation: opening it revoked the
         // previous, so a stale writer cannot overwrite its successor.
         state: lease.state,

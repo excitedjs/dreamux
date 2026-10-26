@@ -80,7 +80,7 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
   it("maps the role's MCP servers", async () => {
     const prompt = await launchedLeaderPrompt();
     expect(prompt).toContain('`teammate`');
-    expect(prompt).toContain('`team`');
+    expect(prompt).toContain("`team` (read this Team's status or dissolve it)");
     expect(prompt).toContain('`cron`');
     expect(prompt).toContain('channel-');
   });
@@ -112,9 +112,9 @@ describe('the prompt a TeamLeader runtime is launched with', () => {
       managedWorktree('keep'),
     ]) {
       const prompt = await launchedLeaderPrompt(null, workspace);
-      expect(prompt.replace(/`team` \(dissolve this Team\)/, '')).not.toMatch(
-        /dissolv/i,
-      );
+      expect(
+        prompt.replace(/`team` \(read this Team's status or dissolve it\)/, ''),
+      ).not.toMatch(/dissolv/i);
     }
   });
 

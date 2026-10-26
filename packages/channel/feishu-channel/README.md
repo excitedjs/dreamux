@@ -64,6 +64,13 @@ the Feishu channel ships out of the box.
   authors and cross-package callers. Session, gate, stores, tool parsers, and
   bot adapter implementations remain package-internal.
 
+For extension tools, `successText(result)` supplies the complete model-visible
+result: include every actionable fact and reminder in that text. Nonempty text
+is forwarded verbatim in MCP `content`, without `structuredContent` or a JSON
+copy of the result. Returning `undefined` or `''` exposes the structured result
+instead. Tools declaring `successText` publish no `outputSchema`, because MCP
+requires structured content when an output schema is advertised.
+
 Successful submission receipts can carry a Dreamux Turn identifier. The
 channel distinguishes admitted, duplicate, stopped, failed, ambiguous, and
 proven Team-rejection outcomes. A proven pre-admission Team rejection permits

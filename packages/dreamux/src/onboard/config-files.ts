@@ -43,15 +43,17 @@ export function dreamuxConfigFromAnswers(
   const agents: DreamuxConfig['agents'] = {};
   for (const [id, agent] of Object.entries(base.agents)) {
     agents[id] = {
-      provider: agent.provider,
+      ...agent,
       config: cloneProviderConfig(agent.config),
       rawConfig: cloneOptionalProviderConfig(agent.rawConfig),
     };
   }
   // The answers-driven dispatcher's agent is the only entry this onboard run
   // can add or change; every other dispatcher's agent is already seeded above
-  // from `base.agents`, unchanged.
+  // from `base.agents`, unchanged. Onboard has no metadata inputs, so retain
+  // the selected id's existing metadata when replacing its provider config.
   agents[answers.agentRuntime.id] = {
+    ...agents[answers.agentRuntime.id],
     provider: answers.agentRuntime.provider,
     config: cloneProviderConfig(answers.agentRuntime.config),
     rawConfig: cloneProviderConfig(answers.agentRuntime.config),

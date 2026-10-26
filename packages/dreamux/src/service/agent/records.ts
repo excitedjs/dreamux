@@ -18,6 +18,8 @@ export function toStatus(
     name: identity.name,
     session_id: identity.session_id,
     agent_runtime: identity.agent_runtime,
+    created_at: identity.created_at,
+    updated_at: identity.updated_at,
     repo: {
       mode: identity.worktree.mode,
       path: identity.runtime_cwd,

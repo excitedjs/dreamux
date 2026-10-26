@@ -29,7 +29,7 @@ import type {
   RuntimeActivity,
 } from './activity.js';
 import type { DreamuxLogger } from './logger.js';
-import type { JsonSchema, JsonValue } from './json.js';
+import type { JsonSchema } from './json.js';
 import type {
   DreamuxEnvironment,
   ProviderBinCheck,
@@ -68,20 +68,6 @@ export interface AgentRuntimeSkillSource {
    */
   path: string;
   source: 'dreamux-core' | string;
-}
-
-/**
- * Provider-static selection metadata. Zero-argument and config-free: Core has
- * no config-resolved consumer, so parsed config would widen the seam without a
- * use case.
- *
- * `publicConfig` is optional, bounded, explicitly projected metadata. Raw
- * provider config, environment variables, paths, credentials, and secrets are
- * forbidden in it.
- */
-export interface AgentRuntimeProviderCapabilities {
-  readonly tags: readonly string[];
-  readonly publicConfig?: Readonly<Record<string, JsonValue>>;
 }
 
 /**
@@ -442,7 +428,6 @@ export interface AgentRuntimeDiagnosticCapability<TConfig> {
  * {@link AgentRuntimeIdentity}.
  */
 export interface AgentRuntimeProvider<TConfig> {
-  getCapabilities(): AgentRuntimeProviderCapabilities;
   /**
    * Read the recent tail of one session's activity. Mandatory: it must work
    * against an actively growing session — producing useful records before any

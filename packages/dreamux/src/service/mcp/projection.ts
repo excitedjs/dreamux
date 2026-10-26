@@ -13,13 +13,41 @@
  * published shape is a defect in the delegate, and it must fail the Command
  * rather than reach a caller as a successful one.
  */
-import type { McpDelegateResult } from './types.js';
+import type { CommandPayload } from '../../command/payload.js';
+import type { McpToolDescriptor } from './tool-metadata.js';
+import type { McpDelegateResult, McpServerDelegate } from './types.js';
 
 /** What a tool body produces when it succeeds. */
 export interface McpToolSuccess {
   structured: unknown;
-  /** Optional model-facing text this operation chose to say. */
+  /** Complete model-facing result; absent or empty text uses structured. */
   text?: string;
+}
+
+/** One advertised tool and the handler that serves it. */
+export interface McpToolRecord {
+  readonly descriptor: McpToolDescriptor;
+  readonly execute: (args: CommandPayload) => Promise<McpToolSuccess>;
+}
+
+/** Publish a catalog and dispatch its admitted calls to the same records. */
+export function createToolRecordDelegate(
+  name: string,
+  records: readonly McpToolRecord[],
+): McpServerDelegate {
+  const tools = records.map((record) => record.descriptor);
+  return {
+    name,
+    describe: () => ({ tools }),
+    call: (call) =>
+      runDelegateTool(() => {
+        // The lease validates the tool name against this catalog before dispatch.
+        const record = records.find(
+          (candidate) => candidate.descriptor.name === call.name,
+        );
+        return record!.execute(call.arguments as CommandPayload);
+      }),
+  };
 }
 
 /**
@@ -36,6 +64,26 @@ export async function runDelegateTool(
     ok: true,
     structured: success.structured,
     ...(success.text !== undefined ? { text: success.text } : {}),
+  };
+}
+
+/**
+ * One hand-off admission receipt.
+ *
+ * A submitted turn returns the reminder and nothing else the model needs; a
+ * refusal or a duplicate keeps the structured status and the error, because
+ * there is no later completion to report it.
+ */
+export function submissionReceipt(
+  result: { readonly status: string; readonly error?: unknown },
+  submittedText: string,
+): McpToolSuccess {
+  return {
+    structured: {
+      status: result.status,
+      ...(result.error !== undefined ? { error: result.error } : {}),
+    },
+    ...(result.status === 'submitted' ? { text: submittedText } : {}),
   };
 }
 

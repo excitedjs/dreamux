@@ -70,7 +70,11 @@ export type McpDelegateResult =
        * is representable before any of it leaves the process.
        */
       readonly structured: unknown;
-      /** Model-facing text this operation chose to say alongside its result. */
+      /**
+       * Complete model-facing result, including actionable facts and reminders.
+       * Nonempty text replaces structured content on the MCP wire; absent or
+       * empty text exposes the structured value instead.
+       */
       readonly text?: string;
     }
   | { readonly ok: false; readonly message: string };

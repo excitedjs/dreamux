@@ -79,10 +79,12 @@ export type McpToolResult = Record<string, unknown>;
  * The text travels with the result rather than being derived from it here. Only
  * the owner of an operation knows whether a particular outcome deserves a
  * sentence — and that owner runs in the server, on the far side of a transport
- * this module deliberately knows nothing about.
+ * this module deliberately knows nothing about. A result that carries text is
+ * projected as content only; see {@link executeTool}.
  */
 export interface McpToolOutcome {
   structured: McpToolResult;
+  /** Complete model-facing result; omitted or empty text uses structured. */
   text?: string;
 }
 
@@ -94,9 +96,9 @@ export type McpToolHandler = (
 /**
  * Tool advertisement metadata, the neutral JSON-Schema-backed descriptor a
  * domain module produces for both `tools/list` inspection tests and runner
- * registration. `inputSchema` and `outputSchema` are JSON Schema objects; the
- * runner wraps them through the SDK's `fromJsonSchema` adapter so the same
- * schema advertises and validates.
+ * registration. `inputSchema` is a JSON Schema object and `outputSchema`, when
+ * present, is too; the runner wraps them through the SDK's `fromJsonSchema`
+ * adapter so the same schema advertises and validates.
  */
 export interface McpToolMetadata {
   name: string;
@@ -104,10 +106,13 @@ export interface McpToolMetadata {
   description: string;
   inputSchema: Record<string, unknown>;
   /**
-   * The canonical successful public result schema. Optional only at the
-   * neutral Channel provider seam (MCP permits its omission and existing
-   * external providers must remain loadable); every Dreamux-owned tool and
-   * every built-in Channel provider tool supplies one.
+   * The canonical successful public result schema.
+   *
+   * Optional because a tool whose success can carry model-facing text omits
+   * it: this adapter emits such a result as content only (see
+   * {@link executeTool}), and the MCP SDK requires structured content whenever
+   * an output schema is advertised. A tool that never carries text keeps its
+   * schema, so its structured value stays advertised and validated.
    */
   outputSchema?: Record<string, unknown>;
   annotations?: ToolAnnotations | undefined;
@@ -266,11 +271,21 @@ function buildMcpServer(
 }
 
 /**
- * The single MCP-adapter-owned execution projector. It emits the handler's
- * canonical value as structured content, adds the text that handler chose to
- * carry, reports a tool failure whose text was already authored for the model
- * as an `isError` result, and reports every other failure under its own code
- * and message after logging the whole value out of band.
+ * The single MCP-adapter-owned execution projector.
+ *
+ * A result that carries nonempty model-facing text is emitted verbatim as
+ * content only. The tool owns all actionable facts and reminders in that text;
+ * this adapter adds no JSON copy and emits no `structuredContent`.
+ * An engine reads structured content in preference to
+ * content text, so keeping both would hide the text. The tool therefore
+ * advertises no output schema — a schema would make the SDK require the very
+ * structured content this shape omits.
+ *
+ * A result with absent or empty text keeps its value as structured content and an
+ * empty content list. The projector also reports a tool failure whose text was
+ * already authored for the model as an `isError` result, and reports every
+ * other failure under its own code and message after logging the whole value
+ * out of band.
  */
 async function executeTool(
   tool: McpToolDefinition,
@@ -279,11 +294,13 @@ async function executeTool(
 ): Promise<CallToolResult> {
   try {
     const outcome = await tool.handler(args);
+    if (outcome.text !== undefined && outcome.text !== '') {
+      return {
+        content: [{ type: 'text', text: outcome.text }],
+      };
+    }
     return {
-      content:
-        outcome.text === undefined
-          ? []
-          : [{ type: 'text', text: outcome.text }],
+      content: [],
       structuredContent: outcome.structured,
     };
   } catch (err) {

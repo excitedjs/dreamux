@@ -165,6 +165,10 @@ export interface ChannelMcpToolDescriptor {
    * JSON Schema object describing the tool's canonical successful public
    * result. Optional because MCP itself permits its omission; when present the
    * SDK advertises it and validates the returned value.
+   *
+   * A tool that can return model-facing `text` must omit this. Such a result
+   * is delivered as content only, and the SDK requires structured content
+   * whenever an output schema is advertised.
    */
   outputSchema?: unknown;
   /** Standard, conservative read-only/destructive behavior hints. */
@@ -232,6 +236,12 @@ export interface ChannelSessionMcpCapability {
  * What a Channel tool answers: the result object with optional model-facing
  * text, or a refusal the Channel decided the model may read.
  *
+ * Nonempty `text` is the complete model-facing result, delivered verbatim as
+ * content with no `structuredContent` or serialized copy of `value`. Its owner
+ * must include all actionable facts and reminders. Omitted or empty text uses
+ * the structured value instead. A tool that can return nonempty text must
+ * declare no `outputSchema`.
+ *
  * A refusal is a value, not an exception, because the two sides are different
  * packages and often different processes. A Channel that says "that chat is not
  * bound to your Team" is stating a product fact the model can act on; making it
@@ -247,6 +257,7 @@ export type ChannelMcpToolOutcome =
   | {
       readonly ok: true;
       readonly value: Readonly<Record<string, JsonValue>>;
+      /** Complete model-facing result; omitted or empty text exposes value. */
       readonly text?: string;
     }
   | { readonly ok: false; readonly message: string };

@@ -66,7 +66,6 @@ const fakeChannelProvider = {
 } as unknown as ChannelProvider<unknown>;
 
 const fakeRuntimeProvider = {
-  getCapabilities: () => ({ verbs: [], agent_runtimes: [] }),
   readRecentActivity: async () => [],
   createRuntime: () => {
     throw new Error(

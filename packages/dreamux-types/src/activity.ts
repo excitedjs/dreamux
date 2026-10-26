@@ -185,24 +185,31 @@ export interface AgentActivityReadContext<TConfig> {
 
 /**
  * One neutral activity fact. Tool arguments, tool results, provider-native
- * lines, Core status, admission, and settlement never appear here.
+ * lines, Core status, admission, and settlement never appear here. A turn ID
+ * names a native turn only, never a prompt, Core submission, or derived group.
  */
 export type AgentActivityRecord =
   | {
       readonly kind: 'assistant_message';
       readonly text: string;
       readonly occurredAt?: string;
+      /** Native turn ID from authoritative provider evidence; omitted when unknown. */
+      readonly turnId?: string;
     }
   | {
       readonly kind: 'tool';
       readonly name: string;
       readonly status: 'started' | 'completed' | 'failed';
       readonly occurredAt?: string;
+      /** Native turn ID from authoritative provider evidence; omitted when unknown. */
+      readonly turnId?: string;
     };
 
 /** One chronological page of recent Activity Records. */
 export interface AgentActivityPage {
   readonly records: readonly AgentActivityRecord[];
+  /** Canonical native transcript read path, when available; lineage may span other files. */
+  readonly transcriptPath?: string;
   readonly nextCursor?: string;
   /** Set by the provider when its own native read bounds truncated the page. */
   readonly truncated: boolean;
