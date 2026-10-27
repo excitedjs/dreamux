@@ -18,4 +18,5 @@
 
 ## Delivery
 
+- Pull request: [#481](https://github.com/excitedjs/dreamux/pull/481).
 - Knowledge closeout: [Model-facing writing](/.agents/domains/model-facing-writing.md).
