@@ -231,7 +231,8 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
       type: 'string',
       minLength: 1,
       maxLength: 20000,
-      description: "The TeamMate's first turn.",
+      description:
+        "The TeamMate's first turn. Always write the prompt in English.",
     },
     agent_runtime: {
       type: 'string',
@@ -300,7 +301,7 @@ function teammateToolRecords(scope: OwnerMcpScope): McpToolRecord[] {
             type: 'string',
             minLength: 1,
             maxLength: 20000,
-            description: 'The next turn.',
+            description: 'The next turn. Always write the prompt in English.',
           },
           intent: {
             type: 'string',

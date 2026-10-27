@@ -329,7 +329,8 @@ function teamToolRecords(teams: TeamsPort): McpToolRecord[] {
             maxLength: 20000,
             description:
               "The TeamLeader's first turn; omit it and no TeamLeader process " +
-              'starts until a routed inbound or a later send arrives.',
+              'starts until a routed inbound or a later send arrives. ' +
+              'Always write the prompt in English.',
           },
         },
         ['name_prefix', 'leader_agent_runtime', 'intent'],
@@ -355,7 +356,8 @@ function teamToolRecords(teams: TeamsPort): McpToolRecord[] {
             type: 'string',
             minLength: 1,
             maxLength: 20000,
-            description: 'The next turn for the TeamLeader.',
+            description:
+              'The next turn for the TeamLeader. Always write the prompt in English.',
           },
           intent: {
             type: 'string',
