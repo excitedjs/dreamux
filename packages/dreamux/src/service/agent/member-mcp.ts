@@ -77,7 +77,12 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
           MEMBER_RECEIPT_REMINDER,
         {
           name: { type: 'string', minLength: 1, maxLength: 64 },
-          prompt: { type: 'string', minLength: 1, maxLength: 20000 },
+          prompt: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 20000,
+            description: 'Always write the prompt in English.',
+          },
         },
         ['name', 'prompt'],
         {

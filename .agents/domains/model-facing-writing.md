@@ -204,6 +204,10 @@ MCP descriptions are model-facing. Keep them short and operational:
 - important non-obvious cautions, such as shared-workspace write coordination;
 - every input property carries a one-sentence description.
 
+Team and TeamMate `prompt` parameter descriptions tell callers to write prompts
+in English. This guidance covers Team creation and follow-ups, TeamMate spawning,
+and both owner and ordinary-member TeamMate messaging projections.
+
 The creation tools' closed `repo` schema rejects undeclared properties before
 execution. It is the one repository schema, shared with the canonical Commands:
 its property descriptions and length bounds live in `repo-request.ts` beside
