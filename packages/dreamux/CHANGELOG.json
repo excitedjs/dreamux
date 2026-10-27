@@ -2,6 +2,54 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.28.0",
+      "tag": "@excitedjs/dreamux_v0.28.0",
+      "date": "Tue, 27 Oct 2026 13:36:02 GMT",
+      "comments": {
+        "none": [
+          {
+            "comment": "Replace the package quick start with a concise entry point to the new installation, usage, configuration, operations, and development guides."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Forward reasoning append fragments unchanged to channels while preserving other activity redaction, and attach authenticated sender provenance to member-to-leader messages."
+          },
+          {
+            "comment": "Slim Team, TeamMate and workflow MCP receipts and lists while retaining diagnostic details. Tool owners write actionable facts and reminders directly into complete success text; the adapter forwards it without a JSON copy or structuredContent. Absent or empty text retains structured results. Add optional agents description, tags and developerInstructions with onboarding preservation and launch/resume application. Replace provider capability snapshots with configured runtime metadata. Add TeamMate record timestamps and bound TeamLeader status. Text-capable Channel tools must omit outputSchema; otherwise SDK validation can fail after execution. Existing configuration and state remain readable."
+          },
+          {
+            "comment": "Keep receipt values literal in Markdown, preserve empty capability descriptions, and consolidate compact MCP schemas and dispatch. Bound Team/TeamMate MCP lists with status, limit and cursor (default 20 non-closed rows); retain explicit closed lookup and complete Command lists. cron_list now returns prompt_preview and prompt_bytes; use include_prompt:true for the full top-level prompt and optional id for exact lookup. last adds nullable transcript_path and optional provider-native turn_id; Claude has no reliable native turn identity. MCP last defaults include_tools to false; use true to include tool records and keep that choice while paging. Command/provider defaults and live COT display are unchanged."
+          },
+          {
+            "comment": "Route runtime observations through their Agent owner and update Team intent from its leader session-title events. Reuse the Team record queue, drain accepted writes on host shutdown, and log title-write failures without stopping the runtime."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Guide callers to write Team and TeamMate MCP prompts in English."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.10.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.9.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.13.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.8.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `6.5.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.27.0",
       "tag": "@excitedjs/dreamux_v0.27.0",
       "date": "Thu, 15 Oct 2026 10:58:00 GMT",

@@ -2,6 +2,32 @@
   "name": "@excitedjs/agent-runtime-claude-code",
   "entries": [
     {
+      "version": "0.10.0",
+      "tag": "@excitedjs/agent-runtime-claude-code_v0.10.0",
+      "date": "Tue, 27 Oct 2026 13:36:02 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Emit native reasoning increments from partial messages, correlate completed snapshots with native blocks, and close interrupted streams without changing ordinary text completion."
+          },
+          {
+            "comment": "Keep recent Claude activity visible when attachments or control records follow the latest message, and remove provider capability declarations now owned by configured runtime metadata. Expose the canonical session transcript path on successful activity reads. Do not derive turn identity from prompt UUIDs or duration checkpoints."
+          },
+          {
+            "comment": "Migrate native activity and result observations to the required runtime events sink. Hosts must supply events instead of activity/results; Claude session-title support is unchanged."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.13.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.8.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.0",
       "tag": "@excitedjs/agent-runtime-claude-code_v0.9.0",
       "date": "Thu, 15 Oct 2026 10:58:00 GMT",

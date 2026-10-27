@@ -1,6 +1,15 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+
+## 6.5.0
+Tue, 27 Oct 2026 13:36:02 GMT
+
+### Minor changes
+
+- Add optional cot.reasoning (default false) for native reasoning display with a Thinking prefix; pace COT updates at 500ms and label member-to-leader sends without exposing the message body in COT.
+- Return stored collaboration-space identity in details and compact bind, unbind and list results. Binding receipts state the actual chat or topic, Team and previous exact binding directly in text with notification guidance. Extension successText now supplies the complete model-visible result without a JSON copy; undefined or empty text retains structured results. Text-capable tools omit published outputSchema.
+- Keep binding target and Team names literal in text receipts, and omit unused output schemas.
 
 ## 6.4.0
 Thu, 15 Oct 2026 10:58:00 GMT

@@ -2,6 +2,37 @@
   "name": "@excitedjs/feishu-channel",
   "entries": [
     {
+      "version": "6.5.0",
+      "tag": "@excitedjs/feishu-channel_v6.5.0",
+      "date": "Tue, 27 Oct 2026 13:36:02 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Add optional cot.reasoning (default false) for native reasoning display with a Thinking prefix; pace COT updates at 500ms and label member-to-leader sends without exposing the message body in COT."
+          },
+          {
+            "comment": "Return stored collaboration-space identity in details and compact bind, unbind and list results. Binding receipts state the actual chat or topic, Team and previous exact binding directly in text with notification guidance. Extension successText now supplies the complete model-visible result without a JSON copy; undefined or empty text retains structured results. Text-capable tools omit published outputSchema."
+          },
+          {
+            "comment": "Keep binding target and Team names literal in text receipts, and omit unused output schemas."
+          }
+        ],
+        "none": [
+          {
+            "comment": "Verify that each teams card reads the current Team intent while previously sent cards remain snapshots."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.13.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.8.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "6.4.0",
       "tag": "@excitedjs/feishu-channel_v6.4.0",
       "date": "Thu, 15 Oct 2026 10:58:00 GMT",

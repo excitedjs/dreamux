@@ -1,6 +1,13 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+
+## 0.8.0
+Tue, 27 Oct 2026 13:36:02 GMT
+
+### Minor changes
+
+- Add shared Markdown-safe quoting for literal values in model-facing text. Preserve literal backslashes in Markdown-rendered quoted values without double-escaping the JSON quoting.
 
 ## 0.7.0
 Thu, 15 Oct 2026 10:58:00 GMT

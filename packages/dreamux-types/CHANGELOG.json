@@ -2,6 +2,24 @@
   "name": "@excitedjs/dreamux-types",
   "entries": [
     {
+      "version": "0.13.0",
+      "tag": "@excitedjs/dreamux-types_v0.13.0",
+      "date": "Tue, 27 Oct 2026 13:36:02 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Add append-only reasoning activity with native part indices and explicit teammate-message provenance."
+          },
+          {
+            "comment": "Remove AgentRuntimeProviderCapabilities and provider getCapabilities; configured runtimes own selection metadata. Nonempty Channel tool text is now the complete model-visible result: providers must include actionable facts and reminders. Omitted or empty text exposes the structured value. Text-capable tools must omit outputSchema; schema-plus-text results fail SDK validation after execution. Add optional AgentActivityPage.transcriptPath and per-record native turnId. These facts are provider-owned; absent evidence must stay absent."
+          },
+          {
+            "comment": "Replace the activity and optional results create-context callbacks with a required events sink for native activities, turn.result, and session.title.changed. External hosts and providers must migrate together; completion identity and synchronous result ordering are preserved."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.12.0",
       "tag": "@excitedjs/dreamux-types_v0.12.0",
       "date": "Thu, 15 Oct 2026 10:58:00 GMT",

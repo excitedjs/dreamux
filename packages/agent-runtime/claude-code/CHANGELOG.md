@@ -1,6 +1,15 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+
+## 0.10.0
+Tue, 27 Oct 2026 13:36:02 GMT
+
+### Minor changes
+
+- Emit native reasoning increments from partial messages, correlate completed snapshots with native blocks, and close interrupted streams without changing ordinary text completion.
+- Keep recent Claude activity visible when attachments or control records follow the latest message, and remove provider capability declarations now owned by configured runtime metadata. Expose the canonical session transcript path on successful activity reads. Do not derive turn identity from prompt UUIDs or duration checkpoints.
+- Migrate native activity and result observations to the required runtime events sink. Hosts must supply events instead of activity/results; Claude session-title support is unchanged.
 
 ## 0.9.0
 Thu, 15 Oct 2026 10:58:00 GMT

@@ -2,6 +2,32 @@
   "name": "@excitedjs/agent-runtime-codex",
   "entries": [
     {
+      "version": "0.9.0",
+      "tag": "@excitedjs/agent-runtime-codex_v0.9.0",
+      "date": "Tue, 27 Oct 2026 13:36:02 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Forward native reasoning increments with native part indices, completed-content fallback, and turn cleanup."
+          },
+          {
+            "comment": "Remove the static getCapabilities declaration; runtime selection descriptions and tags are now owned by Dreamux agents configuration. Expose the canonical current rollout path on successful activity pages and native turn IDs when present in the scanned segment; compressed tail paths and ancestor pagination remain supported."
+          },
+          {
+            "comment": "Publish observations through the required runtime events sink and translate native thread/name/updated notifications into neutral session.title.changed events. This consumes title changes without adding automatic title generation."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.13.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.8.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.8.0",
       "tag": "@excitedjs/agent-runtime-codex_v0.8.0",
       "date": "Thu, 15 Oct 2026 10:58:00 GMT",

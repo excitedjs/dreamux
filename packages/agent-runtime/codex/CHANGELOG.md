@@ -1,6 +1,15 @@
 # Change Log - @excitedjs/agent-runtime-codex
 
-This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+
+## 0.9.0
+Tue, 27 Oct 2026 13:36:02 GMT
+
+### Minor changes
+
+- Forward native reasoning increments with native part indices, completed-content fallback, and turn cleanup.
+- Remove the static getCapabilities declaration; runtime selection descriptions and tags are now owned by Dreamux agents configuration. Expose the canonical current rollout path on successful activity pages and native turn IDs when present in the scanned segment; compressed tail paths and ancestor pagination remain supported.
+- Publish observations through the required runtime events sink and translate native thread/name/updated notifications into neutral session.title.changed events. This consumes title changes without adding automatic title generation.
 
 ## 0.8.0
 Thu, 15 Oct 2026 10:58:00 GMT
