@@ -65,7 +65,7 @@ export const WORKFLOW_TOOL_RECORDS: WorkflowMcpToolRecord[] = [
   {
     descriptor: tool(
       'workflow_run',
-      'The bundled `dynamic-workflow` skill covers the script API. Start a deterministic multi-agent workflow from an inline module script (`script`) or a local file path (`scriptPath`) and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes.',
+      'The bundled `dynamic-workflow` skill covers the script API. Start a deterministic multi-agent workflow and return { run_id } immediately; Dreamux pushes one terminal completion when the run finishes. Provide either `script` (inline module source) or `scriptPath` (a path to a module file readable by the Dreamux server): one of the two is required, and a call with neither is rejected.',
       {
         script: {
           type: 'string',
@@ -98,9 +98,6 @@ export const WORKFLOW_TOOL_RECORDS: WorkflowMcpToolRecord[] = [
       {
         title: 'Run a workflow',
         annotations: MUTATING_ANNOTATIONS,
-        inputConstraints: {
-          anyOf: [{ required: ['script'] }, { required: ['scriptPath'] }],
-        },
       },
     ),
     execute: workflowRun,
