@@ -204,6 +204,17 @@ MCP descriptions are model-facing. Keep them short and operational:
 - important non-obvious cautions, such as shared-workspace write coordination;
 - every input property carries a one-sentence description.
 
+An advertised tool `inputSchema` is a plain closed object schema: no top-level
+`anyOf`/`oneOf`/`allOf`. The Anthropic API rejects a tool whose input schema
+carries a top-level combinator, and clients disagree about what to do with one
+— older Claude Code silently flattened it, newer builds skip the whole tool at
+startup — so a cross-field rule must live in the tool description as guidance,
+with the owning service still enforcing it at call time and answering with a
+normal tool error. The catalog description test walks every Core-owned
+delegate catalog and fails on any such combinator; this input-side rule is the
+counterpart to the output-schema portability constraints the runtime adapters
+already enforce.
+
 Team and TeamMate `prompt` parameter descriptions tell callers to write prompts
 in English. This guidance covers Team creation and follow-ups, TeamMate spawning,
 and both owner and ordinary-member TeamMate messaging projections.

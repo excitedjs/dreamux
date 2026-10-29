@@ -15,7 +15,8 @@
     every startup and drops the tool from its catalog, so every Claude
     runtime acting as Dispatcher Agent or TeamLeader loses `workflow_run`
     entirely. Other runtimes (for example Codex) are unaffected.
-  - The constraint was introduced by #453 (`75fc1ca0`).
+  - The constraint was introduced by
+    [#453](https://github.com/excitedjs/dreamux/pull/453).
   - Server-side authority already exists: `resolveWorkflowScript` in
     `workflow-service/index.ts` raises `RuleViolation` when neither `script`
     nor `scriptPath` is provided, and `workflowRunInput` in `requests.ts`
@@ -67,9 +68,9 @@
 
 1. The `workflow_run` descriptor advertised over MCP has a top-level
    `inputSchema` without `anyOf`/`oneOf`/`allOf`, and is otherwise unchanged
-   (properties, required set, output schema, annotations).
-2. Its description tells the model that exactly one of `script` and
-   `scriptPath` is required.
+   (properties, required set, annotations, handler).
+2. Its description tells the model that one of `script` and `scriptPath`
+   is required (supplying both is accepted and `script` wins).
 3. A new test fails on the pre-fix descriptor and passes after it.
 4. Existing tests for generic `inputConstraints` merging remain intact.
 5. `rush build`, `rush lint`, `rush test`, and `rush typecheck:tests` pass.

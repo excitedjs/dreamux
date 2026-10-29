@@ -50,7 +50,7 @@ would have failed CI on #453.
 - `node common/scripts/install-run-rush.js typecheck:tests`
 - Confirm by inspection that the advertised descriptor's `inputSchema` is
   the plain closed object schema and its description carries the
-  exactly-one-of rule.
+  at-least-one-of rule.
 
 ## Out of boundary
 
