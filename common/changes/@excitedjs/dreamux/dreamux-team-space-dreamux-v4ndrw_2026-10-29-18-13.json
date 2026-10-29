@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Fix the workflow_run tool being dropped by Anthropic-compatible clients: its advertised input schema carried a top-level anyOf, which the Anthropic API rejects, so Claude Code skipped the tool at startup. The at-least-one-of script/scriptPath rule is now stated in the tool description and remains enforced server-side.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

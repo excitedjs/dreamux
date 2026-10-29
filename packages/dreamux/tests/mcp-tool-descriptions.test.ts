@@ -285,3 +285,36 @@ describe('a hand-off says the completion comes back later', () => {
     });
   }
 });
+
+describe('advertised input schemas stay Anthropic-compatible', () => {
+  // The Anthropic API rejects a tool input schema with a top-level
+  // anyOf/oneOf/allOf; Claude Code then skips the whole tool at startup,
+  // which silently removed workflow_run from every Claude-based caller.
+  for (const catalog of CATALOG_NAMES) {
+    it(`puts no top-level combinator on any ${catalog} tool schema`, () => {
+      const tools = CATALOGS[catalog]! as readonly AdvertisedTool[];
+      for (const { name, inputSchema } of tools) {
+        for (const combinator of ['anyOf', 'oneOf', 'allOf']) {
+          expect(
+            isPlainObject(inputSchema) && combinator in inputSchema,
+            `${catalog} tool "${name}" input schema has a top-level ` +
+              `${combinator}; Anthropic-compatible clients skip such tools`,
+          ).toBe(false);
+        }
+      }
+    });
+  }
+
+  it('states the script/scriptPath one-of in the workflow_run description', () => {
+    for (const catalog of ['teammate (dispatcher)', 'teammate (team_leader)']) {
+      const tool = (CATALOGS[catalog] as readonly AdvertisedTool[]).find(
+        (advertised) => advertised.name === 'workflow_run',
+      );
+      expect(tool, `${catalog} advertises no "workflow_run"`).toBeDefined();
+      const description = tool!.description;
+      expect(description).toMatch(/one of the two is required/);
+      expect(description).toContain('`script`');
+      expect(description).toContain('`scriptPath`');
+    }
+  });
+});
