@@ -259,13 +259,23 @@ bundled skill.
 
 ## Same-Version Restart Cautions
 
-- A managed service may use
-  `dreamux daemon restart --notify-resumed --dispatcher <current-id>`.
-  Foreground `dreamux serve` needs an operator-coordinated stop/start and an
-  external recovery path.
-- Warn before renaming or disabling the current Dispatcher, removing its
-  Channel, changing its Agent Runtime provider, or changing Channel
-  credentials. Each can break the active recovery path.
-- The caller may be reaped during a restart. Do not depend on the pre-restart
-  turn to observe success; continue only from the injected restart notice or an
-  independent operator's verification.
+1. Confirm the operator's intent, restart scope, and current Dispatcher id.
+   Tell the operator before restarting that a managed-service restart stops
+   every Dispatcher and Team on the host. Foreground `dreamux serve` needs an
+   operator-coordinated stop/start and an external recovery path.
+2. Warn before renaming or disabling the current Dispatcher, removing its
+   Channel, changing its Agent Runtime provider, or changing Channel
+   credentials. Each can break the active recovery path.
+3. For the managed service, run:
+
+   ```text
+   dreamux daemon restart --notify-resumed --dispatcher <id>
+   ```
+
+   Use the current Dispatcher id for `<id>`.
+4. The caller may be reaped during a restart. Do not depend on the pre-restart
+   turn to observe success; continue only from the injected restart notice
+   (default `Restart completed.`, overridable with `--announce`) or an
+   independent operator's verification.
+5. After recovery, run `dreamux status` and `dreamux doctor`, then report the
+   restart and verification results.
