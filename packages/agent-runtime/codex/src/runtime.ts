@@ -86,6 +86,20 @@ export class CodexRuntime implements AgentRuntime {
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
   private threadResumed = false;
+  /**
+   * Whether this thread currently has a turn in flight, kept current from
+   * codex's own `thread/status/changed`.
+   *
+   * A submission that is only news — a completion report, say — is delivered
+   * as context while this is true so it cannot cut the running response short,
+   * and as a new turn while it is false so the work actually resumes. That
+   * distinction is the whole reason a submission carries a trigger.
+   *
+   * Starts false: a runtime that has not heard from codex yet has no turn of
+   * its own running, and treating the unknown as busy would silently strand
+   * news in a thread nobody is reading.
+   */
+  private threadBusy = false;
   private startOutcome: AgentRuntimeStartOutcome | null = null;
   /**
    * The provider-local fatal path for authoritative state writes. Any failure
@@ -273,11 +287,17 @@ export class CodexRuntime implements AgentRuntime {
     this.assertGeneration(generation);
 
     client.onNotification((notification) => {
-      if (
-        this.client !== client ||
-        notification.method !== 'thread/name/updated'
-      )
+      if (this.client !== client) return;
+      if (notification.method === 'thread/status/changed') {
+        const { threadId, status } = notification.params as {
+          threadId: string;
+          status: { type?: string };
+        };
+        if (threadId !== thread.thread.id) return;
+        this.threadBusy = status?.type === 'active';
         return;
+      }
+      if (notification.method !== 'thread/name/updated') return;
       const { threadId, threadName } =
         notification.params as ThreadNameUpdatedNotification;
       if (
@@ -415,7 +435,56 @@ export class CodexRuntime implements AgentRuntime {
     }
     // The text is already the complete model-facing message: this runtime
     // renders no envelope and never branches on where the turn came from.
+    //
+    // A trigger does not change what the model reads, only how the input
+    // arrives. A person speaking outranks the running work and steers it;
+    // everything else is news, so it joins the current turn as context
+    // instead of cancelling the response being written, and starts a turn of
+    // its own once the thread is idle.
+    if (input.trigger !== undefined && input.trigger !== 'user') {
+      if (this.threadBusy) return this.appendToThread(input.text);
+    }
     return turnManager.submitInput(input);
+  }
+
+  /**
+   * Deliver text into the live thread as context, without starting a turn and
+   * without interrupting one.
+   *
+   * This is codex's own "append items to the history" path: an idle thread
+   * records the item and reads it at its next turn, and a busy one folds it
+   * into the next sampling step. Either way the running response is never
+   * cancelled — which is exactly the property a steer does not have.
+   */
+  private async appendToThread(text: string): Promise<RuntimeAdmission> {
+    const client = this.client;
+    const threadId = this.threadId;
+    if (client === null || threadId === null) {
+      return {
+        status: 'failed',
+        error: new Error('codex thread is not available'),
+      };
+    }
+    try {
+      await client.request<Record<string, never>>('thread/inject_items', {
+        threadId,
+        items: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text }],
+          },
+        ],
+      });
+    } catch (error) {
+      return {
+        status: 'failed',
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+    // An appended item is not a turn, so there is no submission to settle: the
+    // caller learns only that the text reached the thread.
+    return { status: 'appended' };
   }
 
   interrupt(): Promise<AgentRuntimeInterruptOutcome> {

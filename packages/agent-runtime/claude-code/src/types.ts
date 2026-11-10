@@ -212,8 +212,16 @@ export type ClaudeProtocolEvent =
 export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
-  /** Resolve native admission; the returned submission carries eventual settlement. */
-  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission>;
+  /**
+   * Resolve native admission; the returned submission carries eventual
+   * settlement. `origin` states why the message exists and is written into the
+   * envelope; this CLI reads it on some inbound paths and not on this one.
+   */
+  submit(
+    prompt: string,
+    commandUuid?: string,
+    origin?: Record<string, unknown>,
+  ): Promise<RuntimeAdmission>;
   /** Interrupt whatever claude is doing; false when it is doing nothing. */
   interrupt(reason: string): Promise<boolean>;
   /** Whether the child is currently alive. */

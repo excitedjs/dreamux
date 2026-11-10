@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A submission's trigger is written into the stream-json envelope as `origin`, this CLI's own word for why a message exists. Delivery is unchanged: this build consumes `origin` on its MCP-channel and mailbox paths, not on this one, so a stream-json turn keeps its ordinary mid-turn delivery and never interrupts work in flight.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "dyzhu@bytedance.com"
+}

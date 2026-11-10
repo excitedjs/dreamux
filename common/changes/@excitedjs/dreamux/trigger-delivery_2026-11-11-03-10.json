@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A submission states why its turn exists, so a completion report reaches a busy TeamMate or TeamLeader as context instead of cancelling the response it was writing. Only a person's message may interrupt work in progress.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "dyzhu@bytedance.com"
+}

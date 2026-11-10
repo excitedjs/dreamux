@@ -12,6 +12,7 @@ import type {
   AgentRuntimeSubmissionInput,
   DreamuxLogger,
   RuntimeAdmission,
+  TurnTrigger,
 } from '@excitedjs/dreamux-types';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import { claudeCodeResidentArgs } from './args.js';
@@ -240,7 +241,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    * ahead of this call.
    */
   submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
-    return this.trackAdmission(this.acceptInput(input.text));
+    return this.trackAdmission(this.acceptInput(input));
   }
 
   /**
@@ -260,7 +261,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       : { status: 'idle' };
   }
 
-  private async acceptInput(text: string): Promise<RuntimeAdmission> {
+  private async acceptInput(
+    input: AgentRuntimeSubmissionInput,
+  ): Promise<RuntimeAdmission> {
+    const text = input.text;
     if (this.stopped) return { status: 'stopped' };
     let session: ClaudeCodeSession;
     try {
@@ -274,7 +278,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       };
     }
     if (this.stopped) return { status: 'stopped' };
-    const admission = await session.submit(text);
+    // The trigger rides along as `origin`, this CLI's own word for the same
+    // fact. It is stated rather than acted on: this build consumes `origin`
+    // only on the MCP-channel and mailbox paths, so a stream-json turn keeps
+    // its ordinary `next` delivery and never interrupts work in flight. That
+    // is the intended behaviour here — only `user` may interrupt, and on this
+    // runtime nothing needs to, because no submission aborts a running turn.
+    const admission = await session.submit(text, undefined, originFor(input));
     if (
       !this.stopped &&
       this.session === session &&
@@ -543,5 +553,43 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     err?: unknown,
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
+  }
+}
+
+/**
+ * The trigger as this CLI's own `origin`, or `undefined` for an ordinary turn.
+ *
+ * Only a trigger that says something beyond "a person is speaking" is worth
+ * stating: `human` is what this CLI already assumes for stdin input, so an
+ * explicit origin for it would be noise. Everything else is mapped to the
+ * origin kind this CLI uses for the same distinction.
+ */
+function originFor(
+  input: AgentRuntimeSubmissionInput,
+): Record<string, unknown> | undefined {
+  const trigger = input.trigger;
+  if (trigger === undefined || trigger === 'user') return undefined;
+  return { kind: originKindFor(trigger) };
+}
+
+/**
+ * This CLI's origin vocabulary for a Core trigger.
+ *
+ * The two lists are not the same length, so this is a stated mapping rather
+ * than a rename: a scheduled fire and a host notice both arrive as
+ * `task-notification` to this CLI, and only a peer's words carry an author.
+ */
+function originKindFor(trigger: TurnTrigger): string {
+  switch (trigger) {
+    case 'completion':
+      return 'task-notification';
+    case 'scheduled':
+      return 'task-notification';
+    case 'agent-task':
+      return 'peer';
+    case 'system':
+      return 'task-notification';
+    case 'user':
+      return 'human';
   }
 }

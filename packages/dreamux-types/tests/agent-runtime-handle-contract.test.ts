@@ -26,6 +26,7 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
+  TurnTrigger,
 } from '../src/agent-runtime.js';
 
 /**
@@ -111,23 +112,37 @@ describe('AgentRuntime live handle exposes exactly start, submit, interrupt, sto
   });
 });
 
-describe('AgentRuntimeSubmissionInput carries exactly { text: string }', () => {
-  it('no kind, source, sourceId, attrs, or rendering instruction crosses the seam', () => {
-    assertType<Equal<keyof AgentRuntimeSubmissionInput, 'text'>>();
+describe('AgentRuntimeSubmissionInput carries exactly { text, trigger? }', () => {
+  it('no source, sourceId, attrs, or rendering instruction crosses the seam', () => {
+    assertType<Equal<keyof AgentRuntimeSubmissionInput, 'text' | 'trigger'>>();
   });
 
-  it('a bare { text } literal is the only accepted submission shape', () => {
+  it('a bare { text } literal remains a complete submission', () => {
     const input: AgentRuntimeSubmissionInput = { text: 'plain text only' };
     expect(Object.keys(input)).toEqual(['text']);
   });
+
+  it('the trigger states why the turn exists, in Core words rather than a provider protocol', () => {
+    assertType<
+      Equal<
+        TurnTrigger,
+        'user' | 'scheduled' | 'completion' | 'agent-task' | 'system'
+      >
+    >();
+  });
 });
 
-describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | ambiguous', () => {
+describe('RuntimeAdmission is exactly submitted | appended | stopped | skipped | failed | ambiguous', () => {
   it('the status union carries no duplicate branch', () => {
     assertType<
       Equal<
         RuntimeAdmission['status'],
-        'submitted' | 'stopped' | 'skipped' | 'failed' | 'ambiguous'
+        | 'submitted'
+        | 'appended'
+        | 'stopped'
+        | 'skipped'
+        | 'failed'
+        | 'ambiguous'
       >
     >();
   });
@@ -161,7 +176,7 @@ describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | a
 
   it('every admission is reachable through an exhaustive switch with no leftover branch', () => {
     // A real behavioral proof: this function is only well-typed if the union
-    // has exactly these five members. Adding a sixth (e.g. reviving
+    // has exactly these six members. Adding a seventh (e.g. reviving
     // `duplicate` on this provider seam) makes the `default` branch's
     // `assertNever(admission)` call fail to compile, because `admission`
     // would no longer narrow to `never` there.
@@ -169,6 +184,8 @@ describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | a
       switch (admission.status) {
         case 'submitted':
           return 'submitted';
+        case 'appended':
+          return 'appended';
         case 'stopped':
           return 'stopped';
         case 'skipped':
@@ -188,6 +205,7 @@ describe('RuntimeAdmission is exactly submitted | stopped | skipped | failed | a
       }),
     };
     expect(classify({ status: 'submitted', submission })).toBe('submitted');
+    expect(classify({ status: 'appended' })).toBe('appended');
     expect(classify({ status: 'stopped' })).toBe('stopped');
     expect(classify({ status: 'skipped' })).toBe('skipped');
     expect(classify({ status: 'failed', error: new Error('boom') })).toBe(

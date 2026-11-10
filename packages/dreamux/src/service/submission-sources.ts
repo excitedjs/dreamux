@@ -13,6 +13,7 @@
  * stay spelled identically, which is what a model reading provenance and a
  * Channel filtering on `turn_source` both depend on.
  */
+import type { TurnTrigger } from '@excitedjs/dreamux-types';
 
 /**
  * Every turn Core accepted from a Channel: a routed inbound message, an
@@ -45,6 +46,36 @@ export const COMPLETION_SOURCE = 'task-notification';
  * runtime check would guard a path that does not exist.
  */
 export const SYSTEM_SOURCE = 'system';
+
+// ---------------------------------------------------------------------------
+// Why each source exists, as the runtime contract states it
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate one submission's provenance into the neutral reason a runtime is
+ * told.
+ *
+ * This lives beside the source names because it is the same fact said twice:
+ * whoever picks a `source` already knows why the input exists, so deriving the
+ * trigger here keeps the two from drifting apart. A source this file does not
+ * name — a Channel's own invention, an operator's own `team.submit` — is
+ * `user`: an input Core cannot classify is one a person is behind, and that is
+ * the only value permitted to interrupt work already in progress.
+ */
+export function triggerForSource(source: string): TurnTrigger {
+  switch (source) {
+    case SCHEDULED_SOURCE:
+      return 'scheduled';
+    case COMPLETION_SOURCE:
+      return 'completion';
+    case AGENT_TASK_SOURCE:
+      return 'agent-task';
+    case SYSTEM_SOURCE:
+      return 'system';
+    default:
+      return 'user';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Standing notes for Core's own sources

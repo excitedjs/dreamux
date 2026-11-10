@@ -511,7 +511,15 @@ native identifiers.
 - One accepted input returns one `RuntimeSubmission` handle whose settlement
   resolves to a provider-owned immutable `RuntimeCompletion` created at the real
   native result boundary; one real native result settles every submission it
-  covers.
+  covers. A submission that only states news may instead answer `appended`: the
+  provider put the text into the live session as context and started no work, so
+  nothing settles and no turn answers it.
+- A submission carries an optional `trigger` stating why its turn exists, in
+  Core's vocabulary rather than any provider's. `user` is the only value allowed
+  to interrupt work already in progress; `scheduled`, `completion`, `agent-task`
+  and `system` exist so a runtime can deliver news without cancelling a running
+  response. A provider with no such concept ignores the value, and an omitted
+  trigger keeps the pre-existing ordinary-turn behaviour.
 - A provider fold or steer into the active logical turn settles with the exact
   same completion object; a queued input settles with a distinct completion in
   native order.

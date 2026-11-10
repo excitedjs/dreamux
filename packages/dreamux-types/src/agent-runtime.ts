@@ -210,7 +210,31 @@ export type RuntimeSubmissionSettlement =
  */
 export interface AgentRuntimeSubmissionInput {
   readonly text: string;
+  /**
+   * Why this input exists, in Core's own vocabulary.
+   *
+   * Core answers "why"; translating that into a provider's own vocabulary is
+   * the provider's job. A provider with no equivalent concept ignores the
+   * value rather than guessing at it, and a caller that supplies none keeps
+   * the pre-existing behaviour of an ordinary turn.
+   *
+   * This is deliberately not a provider's word: `kind`/`subkind` belong to one
+   * runtime's protocol and a trigger string to another's, and neither may
+   * appear in the neutral contract.
+   */
+  readonly trigger?: TurnTrigger;
 }
+
+/**
+ * Why a turn exists.
+ *
+ * `user` is the only value that may interrupt work already in progress: a
+ * person speaking outranks whatever the agent is doing. Everything else is
+ * news that can wait for the agent's next step, and exists so a provider can
+ * deliver it without cutting the current response short.
+ */
+export type TurnTrigger =
+  'user' | 'scheduled' | 'completion' | 'agent-task' | 'system';
 
 /**
  * Admission is separate from the eventual outcome of an accepted turn.
@@ -225,12 +249,19 @@ export interface AgentRuntimeSubmissionInput {
  * `skipped` remains a provider-seam state; the Command boundary — not this
  * seam — normalizes it to the public `stopped`.
  *
+ * `appended` is the one admission that carries no turn: the provider put the
+ * text into the live session as context instead of starting work, because the
+ * submission's trigger said it was news rather than a request. Nothing settles
+ * it, so a caller awaiting a settlement has nothing to await — the accepted
+ * fact is that the text reached the thread.
+ *
  * There is no `duplicate` admission: a Provider has no source identity to
  * deduplicate with. Core's own admission ledger returns the public `duplicate`
  * before it ever calls {@link AgentRuntime.submit}.
  */
 export type RuntimeAdmission =
   | { status: 'submitted'; submission: RuntimeSubmission }
+  | { status: 'appended' }
   | { status: 'stopped' }
   | { status: 'skipped' }
   | { status: 'failed'; error: Error }

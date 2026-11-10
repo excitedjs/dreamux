@@ -2036,3 +2036,67 @@ it('keeps new-provider/old-host input values when the public context omits resul
   });
   await runtime.stop();
 });
+
+describe('CodexRuntime delivery by trigger', () => {
+  async function started() {
+    const client = new FakeCodexWsClient();
+    const { deps } = makeDeps({ client });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    return { client, runtime };
+  }
+
+  it.each(['completion', 'scheduled', 'agent-task', 'system'] as const)(
+    'appends a %s submission to a busy thread instead of interrupting it',
+    async (trigger) => {
+      const { client, runtime } = await started();
+      client.emitThreadStatus('fresh-thread-1', 'active');
+      const admission = await runtime.submit({ text: 'news', trigger });
+      // No turn was opened, so nothing settles: the text reached the thread.
+      expect(admission).toEqual({ status: 'appended' });
+      expect(client.methods).toContain('thread/inject_items');
+      expect(client.methods).not.toContain('turn/start');
+      await runtime.stop();
+    },
+  );
+
+  it('starts a turn for the same submission once the thread is idle', async () => {
+    const { client, runtime } = await started();
+    client.emitThreadStatus('fresh-thread-1', 'active');
+    await runtime.submit({ text: 'news', trigger: 'completion' });
+    client.emitThreadStatus('fresh-thread-1', 'idle');
+    const admission = await runtime.submit({
+      text: 'more news',
+      trigger: 'completion',
+    });
+    // Idle means the work stopped; the news is what resumes it.
+    expect(requireSubmitted(admission)).toBeDefined();
+    expect(client.methods).toContain('turn/start');
+    await runtime.stop();
+  });
+
+  it('steers a user submission even while the thread is busy', async () => {
+    const { client, runtime } = await started();
+    client.emitThreadStatus('fresh-thread-1', 'active');
+    const admission = await runtime.submit({
+      text: 'a person speaking',
+      trigger: 'user',
+    });
+    // A person outranks the running work; this is the one trigger allowed to
+    // cut the current response short.
+    expect(requireSubmitted(admission)).toBeDefined();
+    expect(client.methods).toContain('turn/start');
+    expect(client.methods).not.toContain('thread/inject_items');
+    await runtime.stop();
+  });
+
+  it('ignores another thread status and treats an untriggered submission as before', async () => {
+    const { client, runtime } = await started();
+    client.emitThreadStatus('foreign-thread', 'active');
+    const admission = await runtime.submit({ text: 'untriggered' });
+    expect(requireSubmitted(admission)).toBeDefined();
+    expect(client.methods).toContain('turn/start');
+    expect(client.methods).not.toContain('thread/inject_items');
+    await runtime.stop();
+  });
+});

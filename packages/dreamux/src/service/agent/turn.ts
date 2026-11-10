@@ -34,7 +34,7 @@ export interface Turn {
  */
 export type TurnAdmission =
   | { status: 'submitted'; turn: Turn }
-  | { status: 'duplicate' | 'stopped' | 'skipped' }
+  | { status: 'duplicate' | 'stopped' | 'skipped' | 'appended' }
   | { status: 'failed' | 'ambiguous'; error: Error };
 
 export class EntityTurn implements Turn {

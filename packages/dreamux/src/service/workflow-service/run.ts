@@ -562,8 +562,14 @@ export class WorkflowRun {
     admission: TurnAdmission,
   ): Promise<void> {
     if (admission.status !== 'submitted') {
+      // A Workflow step is an assignment, never news: it is submitted with the
+      // `agent-task` trigger, so a provider has no reason to append it instead
+      // of running it. Reaching here means the step produced no value, which
+      // the run must report rather than silently treat as answered.
       const stopped =
-        admission.status === 'stopped' || admission.status === 'skipped';
+        admission.status === 'stopped' ||
+        admission.status === 'skipped' ||
+        admission.status === 'appended';
       const error =
         admission.status === 'failed' || admission.status === 'ambiguous'
           ? admission.error.message

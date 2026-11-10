@@ -247,6 +247,9 @@ export class FakeCodexWsClient {
       return { turn: { id: turnId } } as R;
     }
     if (method === 'turn/interrupt') return {} as R;
+    // Appending to a thread's history opens no turn and settles nothing, so
+    // there is no completion to schedule here.
+    if (method === 'thread/inject_items') return {} as R;
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
   }
 
@@ -265,6 +268,14 @@ export class FakeCodexWsClient {
     this.emit({
       method: 'thread/name/updated',
       params: { threadId, ...(threadName === undefined ? {} : { threadName }) },
+    });
+  }
+
+  /** Report the thread's own busy/idle transition, as codex does. */
+  emitThreadStatus(threadId: string, type: 'idle' | 'active'): void {
+    this.emit({
+      method: 'thread/status/changed',
+      params: { threadId, status: { type } },
     });
   }
 
