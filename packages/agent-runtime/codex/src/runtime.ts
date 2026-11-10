@@ -95,9 +95,11 @@ export class CodexRuntime implements AgentRuntime {
    * and as a new turn while it is false so the work actually resumes. That
    * distinction is the whole reason a submission carries a trigger.
    *
-   * Starts false: a runtime that has not heard from codex yet has no turn of
-   * its own running, and treating the unknown as busy would silently strand
-   * news in a thread nobody is reading.
+   * Starts false, then is seeded from `thread/read` once the thread is
+   * resolved: the status notification only reports transitions, so a runtime
+   * that subscribes to a thread already mid-turn would otherwise never hear
+   * that it is busy. Treating the unknown as busy instead would strand news in
+   * a thread nobody is reading, which is the worse failure.
    */
   private threadBusy = false;
   private startOutcome: AgentRuntimeStartOutcome | null = null;
@@ -285,6 +287,7 @@ export class CodexRuntime implements AgentRuntime {
 
     const thread = await this.resolveThread(generation, options);
     this.assertGeneration(generation);
+    await this.seedThreadBusy(client, thread.thread.id);
 
     client.onNotification((notification) => {
       if (this.client !== client) return;
@@ -445,6 +448,31 @@ export class CodexRuntime implements AgentRuntime {
       if (this.threadBusy) return this.appendToThread(input.text);
     }
     return turnManager.submitInput(input);
+  }
+
+  /**
+   * Read the thread's current busy state once, before any submission can ask.
+   *
+   * `thread/status/changed` reports transitions only, so a runtime that
+   * attaches to a thread already mid-turn would never learn it is busy and
+   * would deliver news as a steer — exactly the interruption the trigger
+   * exists to prevent. A failed read leaves the value false rather than
+   * failing the start: the thread is usable either way, and the notification
+   * stream corrects it on the next transition.
+   */
+  private async seedThreadBusy(
+    client: CodexWsClient,
+    threadId: string,
+  ): Promise<void> {
+    try {
+      const read = await client.request<{
+        thread?: { status?: { type?: string } };
+      }>('thread/read', { threadId });
+      if (this.client !== client) return;
+      this.threadBusy = read.thread?.status?.type === 'active';
+    } catch (error) {
+      this.log('warn', 'could not read the thread status at start', error);
+    }
   }
 
   /**

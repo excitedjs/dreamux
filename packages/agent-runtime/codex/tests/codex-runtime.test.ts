@@ -124,7 +124,14 @@ describe('CodexRuntime start() continuity', () => {
     const outcome = await runtime.start();
 
     expect(outcome).toEqual({ continuity: 'fresh' });
-    expect(client.methods).toEqual(['initialize', 'thread/start']);
+    // The thread's busy state is seeded once at start: the status
+    // notification reports transitions only, so a thread already mid-turn
+    // would otherwise never announce that it is busy.
+    expect(client.methods).toEqual([
+      'initialize',
+      'thread/start',
+      'thread/read',
+    ]);
     await runtime.stop();
   });
 
@@ -135,7 +142,11 @@ describe('CodexRuntime start() continuity', () => {
     const outcome = await runtime.start();
 
     expect(outcome).toEqual({ continuity: 'resumed' });
-    expect(client.methods).toEqual(['initialize', 'thread/resume']);
+    expect(client.methods).toEqual([
+      'initialize',
+      'thread/resume',
+      'thread/read',
+    ]);
     const resumeRequest = client.requests.find(
       (r) => r.method === 'thread/resume',
     );
@@ -289,7 +300,11 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     const outcome = await runtime.start();
     expect(outcome.continuity).toBe('fresh');
-    expect(client1.methods).toEqual(['initialize', 'thread/start']);
+    expect(client1.methods).toEqual([
+      'initialize',
+      'thread/start',
+      'thread/read',
+    ]);
 
     // Simulate the app-server child dying; the runtime restarts and, since a
     // thread id now exists, tries thread/resume first.
@@ -2087,6 +2102,25 @@ describe('CodexRuntime delivery by trigger', () => {
     expect(requireSubmitted(admission)).toBeDefined();
     expect(client.methods).toContain('turn/start');
     expect(client.methods).not.toContain('thread/inject_items');
+    await runtime.stop();
+  });
+
+  it('seeds busy state from thread/read so a thread already mid-turn is not steered', async () => {
+    // The status notification reports transitions only. A runtime attaching to
+    // a thread that is already running would never hear "active", and would
+    // deliver news as a steer — the exact interruption the trigger prevents.
+    const client = new FakeCodexWsClient();
+    client.threadStatusType = 'active';
+    const { deps } = makeDeps({ client });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const admission = await runtime.submit({
+      text: 'news',
+      trigger: 'completion',
+    });
+    expect(admission).toEqual({ status: 'appended' });
+    expect(client.methods).toContain('thread/inject_items');
+    expect(client.methods).not.toContain('turn/start');
     await runtime.stop();
   });
 
