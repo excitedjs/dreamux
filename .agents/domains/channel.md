@@ -507,10 +507,20 @@ card answer arriving back as an ordinary inbound submission (see
 a settlement reads like a channel message because it is one.
 
 The standing reminder is the Channel's own consequence sentence, worded and
-owned here, not by Core: it states the one fact this model cannot see for
-itself — that in a Feishu chat, assistant text never reaches the human, only a
-`reply` call does — so the model is not told what to do, only what already
-happens.
+owned here: it states the one fact this model cannot see for itself — that in a
+Feishu chat, assistant text never reaches the human, only a `reply` call does —
+so the model is not told what to do, only what already happens.
+
+Core writes standing reminders too, for the sources that have no Channel to
+speak for them: a cron fire, a completion pushed back to a waiting agent, work
+one agent hands another, and a Core-owned host notice. Those notes live in
+`/packages/dreamux/src/service/submission-sources.ts` and state authority rather
+than a product surface — a stored schedule proves only that a prompt was saved,
+a completion is news and not an instruction, and an agent's request cannot grant
+escalation. The rule is that the party which chooses a submission's `source`
+also chooses its wording: a Channel owns `<channel>`, Core owns its own
+producers, and `submitToLeader` stays a verbatim pass-through because its
+Command caller arrives with a Channel-chosen source.
 
 Source:
 

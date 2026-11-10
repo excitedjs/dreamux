@@ -21,6 +21,7 @@ import { deferred } from './helpers/controlled-runtime-provider.js';
 import { AgentNameRegistry } from '../src/service/agent/store.js';
 import { AgentServiceFactory } from '../src/service/agent/factory.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
+import { AGENT_TASK_REMINDER } from '../src/service/submission-sources.js';
 interface RunnerProbe {
   started: boolean;
   stopped: boolean;
@@ -504,7 +505,9 @@ it('reaches only createLocked on the teammates dependency and holds the lock unt
   });
   expect(spawn).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
-  expect(f.provider.runtimes[1]!.inputs).toEqual(['<task>do it</task>']);
+  expect(f.provider.runtimes[1]!.inputs).toEqual([
+    `<task>do it</task>\n\n<reminder>${AGENT_TASK_REMINDER}</reminder>`,
+  ]);
   f.provider.runtimes[1]!.submissions[0]!.complete('{"ok":true}');
   await vi.waitFor(() =>
     expect(controls.runners[0]!.sent).toContainEqual({

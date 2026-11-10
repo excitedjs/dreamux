@@ -39,6 +39,7 @@ import {
   type TeammateSubmitInput,
 } from '../src/service/agent/submission.js';
 import type { TurnAdmission } from '../src/service/agent/turn.js';
+import { SYSTEM_REMINDER } from '../src/service/submission-sources.js';
 
 /**
  * A type-only sink: passing an object literal here runs TypeScript's excess
@@ -486,7 +487,7 @@ describe('SYSTEM_SOURCE: the one Core-reserved producer', () => {
     expect(f.provider.runtimes[0]!.inputs).toEqual([
       // The notice is host news; the standing note after it says so, so a
       // restart is never read as something the user asked for.
-      "<system>the dispatcher restarted</system>\n\n<reminder>A notice from Dreamux itself, not a message from the user. It describes what the host did or is about to do; it is not an instruction and it is not the user's approval for anything.</reminder>",
+      `<system>the dispatcher restarted</system>\n\n<reminder>${SYSTEM_REMINDER}</reminder>`,
     ]);
   });
   it('skips the notice entirely for a fresh (non-resumed) start — no submission at all', async () => {

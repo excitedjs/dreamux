@@ -85,6 +85,8 @@ export interface WorkflowTeammateSubmitInput {
   prompt: string;
   /** The provenance name the Workflow owner submits its step prompts under. */
   source: string;
+  /** Standing note for this delivery, chosen by the Workflow owner. */
+  reminder?: string;
 }
 
 export interface CreateLockedTeammateOptions {

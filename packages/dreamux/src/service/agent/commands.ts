@@ -168,6 +168,9 @@ export function teammateCommands(
       return host.addressedDispatcher(context).teammates.send({
         name: input.name,
         prompt: input.prompt,
+        // No standing note: this Command is the operator submitting over
+        // `admin.sock`, so the message is the user's own. An agent-to-agent
+        // note here would tell the reader it did not come from the user.
         ...(input.intent !== null ? { intent: input.intent } : {}),
       });
     },

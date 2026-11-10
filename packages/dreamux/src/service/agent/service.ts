@@ -794,7 +794,11 @@ export class AgentService {
     if (!(await this.ensureRuntimeStarted())) return { status: 'stopped' };
     this.assertLockToken(token);
     return this.submitAdmitted(
-      { source: input.source, text: input.prompt },
+      {
+        source: input.source,
+        text: input.prompt,
+        ...(input.reminder !== undefined ? { reminder: input.reminder } : {}),
+      },
       { wake: true },
     );
   }

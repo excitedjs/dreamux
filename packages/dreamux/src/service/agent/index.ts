@@ -20,7 +20,6 @@ import {
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import type { CompletionOwner } from '../completion-router/index.js';
 import {
-  AGENT_PEER_REMINDER,
   AGENT_TASK_REMINDER,
   AGENT_TASK_SOURCE,
 } from '../submission-sources.js';
@@ -317,12 +316,12 @@ export class TeammateCollection implements TeammateOps {
     entity: AgentService,
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
-    // A general send reaches the target as a peer's request. Only the spawn
-    // path below assigns work, and the two are worded differently on purpose.
+    // The note comes from the caller: one `send` carries every direction, and
+    // only the caller knows which one this is.
     const result = await entity.send({
       source: AGENT_TASK_SOURCE,
       text: input.prompt,
-      reminder: AGENT_PEER_REMINDER,
+      ...(input.reminder !== undefined ? { reminder: input.reminder } : {}),
       intent: input.intent,
       ...(input.attrs !== undefined ? { attrs: input.attrs } : {}),
       completionRecipient: this.opts.completionOwner.completionRecipient(),

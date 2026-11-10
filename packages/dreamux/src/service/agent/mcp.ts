@@ -49,6 +49,7 @@ import {
   type McpToolSuccess,
 } from '../mcp/projection.js';
 import { quoteModelValue } from '@excitedjs/dreamux-utils';
+import { AGENT_PEER_REMINDER } from '../submission-sources.js';
 import {
   DESTRUCTIVE_ANNOTATIONS,
   MUTATING_ANNOTATIONS,
@@ -600,6 +601,9 @@ async function send(
   ).send({
     name: request.name,
     prompt: request.prompt,
+    // An agent messaging another agent is a peer request, whichever of them
+    // happens to be the owner.
+    reminder: AGENT_PEER_REMINDER,
     ...(request.intent !== null ? { intent: request.intent } : {}),
   });
   return submissionReceipt(result, TEAMMATE_DISPATCH_SUCCESS_REMINDER);

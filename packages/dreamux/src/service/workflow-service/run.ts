@@ -15,7 +15,10 @@ import type {
   CompletionDeliveryPolicy,
   CompletionInitiator,
 } from '../completion-router/index.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import {
+  AGENT_TASK_REMINDER,
+  AGENT_TASK_SOURCE,
+} from '../submission-sources.js';
 import { WorkflowPersistenceError } from './errors.js';
 import {
   WorkflowJournal,
@@ -516,6 +519,8 @@ export class WorkflowRun {
         // via CreateLockedTeammateOptions) and cannot vary per submission —
         // WorkflowTeammateSubmitInput carries no outputSchema field.
         source: AGENT_TASK_SOURCE,
+        // A Workflow step is an assignment: the step exists to be carried out.
+        reminder: AGENT_TASK_REMINDER,
       });
       this.deps.log.info(
         {
