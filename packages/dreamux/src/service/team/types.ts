@@ -280,6 +280,8 @@ export interface TeamServiceCreateInput {
   /** Written into the published Team record; absent for internal creation. */
   createRequest?: TeamCreateRequestIdentity | undefined;
   prompt?: string | undefined;
+  /** Standing note for the initial prompt's delivery; see `submission-sources`. */
+  reminder?: string | undefined;
   /**
    * Whether a given `prompt`'s first-turn completion reports back to the
    * Dispatcher Agent; consulted only when `prompt` is present.

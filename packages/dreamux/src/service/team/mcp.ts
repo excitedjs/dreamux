@@ -55,13 +55,11 @@ import {
   READ_ONLY_ANNOTATIONS,
   tool,
 } from '../mcp/tool-metadata.js';
-import type {
-  McpDelegateCall,
-  McpDelegateDescription,
-  McpDelegateResult,
-  McpServerDelegate,
-} from '../mcp/types.js';
-import { AGENT_TASK_REMINDER, AGENT_TASK_SOURCE } from '../submission-sources.js';
+import type { McpServerDelegate } from '../mcp/types.js';
+import {
+  AGENT_TASK_REMINDER,
+  AGENT_TASK_SOURCE,
+} from '../submission-sources.js';
 import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import {

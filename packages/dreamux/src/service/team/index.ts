@@ -51,6 +51,7 @@ import {
   type TeamServiceDeps,
 } from './service.js';
 import { TeamStore, type TeamRecordHandle } from './store.js';
+import { AGENT_TASK_REMINDER } from '../submission-sources.js';
 import { teamSummary } from './team-summary.js';
 import type { TeamsPort } from './teams-port.js';
 import {
@@ -584,6 +585,8 @@ export class TeamCollection implements TeamsPort {
         name: input.name,
         createRequest: input.createRequest,
         prompt: input.prompt,
+        // Creating a Team is the owner assigning its leader the first task.
+        reminder: AGENT_TASK_REMINDER,
         deliverCompletionToDispatcher: input.deliverCompletionToDispatcher,
         leaderAgentRuntime: input.leaderAgentRuntime,
         intent: input.intent,

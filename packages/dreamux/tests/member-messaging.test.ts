@@ -7,6 +7,10 @@ import {
   deferred,
   type ControlledRuntime,
 } from './helpers/controlled-runtime-provider.js';
+import {
+  AGENT_PEER_REMINDER,
+  AGENT_TASK_REMINDER,
+} from '../src/service/submission-sources.js';
 
 async function setup(
   scope: 'team' | 'dispatcher',
@@ -105,7 +109,9 @@ for (const scope of ['team', 'dispatcher'] as const)
       });
       const ownerRuntime = f.provider.runtimes.at(-1)!;
       expect(ownerRuntime.inputs).toEqual([
-        `<task from="${a.name}">blocked</task>`,
+        `<task from="${a.name}">blocked</task>
+
+<reminder>${AGENT_PEER_REMINDER}</reminder>`,
       ]);
       const memberInputs = f.channel.sessions
         .get('fixture-channel')!
@@ -124,7 +130,12 @@ for (const scope of ['team', 'dispatcher'] as const)
       ]);
       ownerRuntime.submissions[0]!.complete('owner response requires send');
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(a.runtime.inputs).toEqual(['<task>initial work</task>']);
+      // `initial work` arrives through spawn, which assigns it.
+      expect(a.runtime.inputs).toEqual([
+        `<task>initial work</task>
+
+<reminder>${AGENT_TASK_REMINDER}</reminder>`,
+      ]);
       expect(
         await a.call('send', { name: a.name, prompt: 'self' }),
       ).toMatchObject({ ok: false });
@@ -150,7 +161,9 @@ for (const scope of ['team', 'dispatcher'] as const)
         ),
       });
       expect(b.runtime.inputs[1]).toBe(
-        `<task from="${a.name}">question</task>`,
+        `<task from="${a.name}">question</task>
+
+<reminder>${AGENT_PEER_REMINDER}</reminder>`,
       );
       expect(notices(ownerRuntime)).toEqual([]);
       b.runtime.context.events({ kind: 'turn.result', completion: native });
@@ -163,7 +176,9 @@ for (const scope of ['team', 'dispatcher'] as const)
         await b.call('send', { name: a.name, prompt: 'explicit answer' }),
       ).toMatchObject({ ok: true });
       expect(a.runtime.inputs.at(-1)).toBe(
-        `<task from="${b.name}">explicit answer</task>`,
+        `<task from="${b.name}">explicit answer</task>
+
+<reminder>${AGENT_PEER_REMINDER}</reminder>`,
       );
       const entity = f.members
         .materializedEntities()

@@ -17,6 +17,7 @@ import { ControlledRuntimeProvider } from './helpers/controlled-runtime-provider
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 import { DREAMUX_MCP_LEASE_ENV } from '../src/mcp/launch.js';
 import { TeammateCollection } from '../src/service/agent/index.js';
+import { AGENT_PEER_REMINDER } from '../src/service/submission-sources.js';
 
 type Adapter = 'claude' | 'codex';
 class ReplayProvider extends ControlledRuntimeProvider {
@@ -525,7 +526,9 @@ for (const adapter of ['claude', 'codex'] as const)
             }),
           ).toMatchObject({ ok: true, structured: { status: 'submitted' } });
           expect(ownerRuntime.inputs.at(-1)).toBe(
-            `<task from="${spawned.teammate.name}">progress</task>`,
+            `<task from="${spawned.teammate.name}">progress</task>
+
+<reminder>${AGENT_PEER_REMINDER}</reminder>`,
           );
           const before = controller.observed.length;
           controller.failConnection();
