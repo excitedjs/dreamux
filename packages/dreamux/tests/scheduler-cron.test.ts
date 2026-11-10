@@ -15,6 +15,7 @@ import { schedulerCommands } from '../src/service/scheduler/commands.js';
 import type { CronJob } from '../src/service/scheduler/types.js';
 import type { TeammateSubmitInput } from '../src/service/agent/submission.js';
 import type { TurnAdmission } from '../src/service/agent/turn.js';
+import { SCHEDULED_REMINDER } from '../src/service/submission-sources.js';
 import { deferred } from './helpers/controlled-runtime-provider.js';
 let root: string;
 const scopes: Array<{ service: SchedulerService; fence: WorkFence }> = [];
@@ -223,9 +224,16 @@ describe('ordinary input admission without a scheduler queue', () => {
     await fence.drain();
     expect(submit).toHaveBeenCalledTimes(1);
     const input = submit.mock.calls[0]![0];
-    expect(Object.keys(input).sort()).toEqual(['source', 'sourceId', 'text']);
+    expect(Object.keys(input).sort()).toEqual([
+      'reminder',
+      'source',
+      'sourceId',
+      'text',
+    ]);
     expect(input.source).toBe('cron');
     expect(input.text).toBe('the prompt');
+    // The schedule records that a prompt was stored, not who asked for it.
+    expect(input.reminder).toBe(SCHEDULED_REMINDER);
     expect(typeof input.sourceId).toBe('string');
     expect((await store().get('job-a'))?.last_fired_at).not.toBeNull();
   });

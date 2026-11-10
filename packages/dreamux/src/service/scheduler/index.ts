@@ -1,7 +1,7 @@
 import { Cron } from 'croner';
 import type { WorkAdmission } from '../../platform/work-fence.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
-import { SCHEDULED_SOURCE } from '../submission-sources.js';
+import { SCHEDULED_REMINDER, SCHEDULED_SOURCE } from '../submission-sources.js';
 
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
@@ -259,6 +259,7 @@ export class SchedulerService implements SchedulerCommands {
       const result = await this.opts.recipient.submitInput({
         source: SCHEDULED_SOURCE,
         text: job.action.prompt,
+        reminder: SCHEDULED_REMINDER,
         sourceId: this.nextFireSourceId(job.id),
       });
       const now = Date.now();

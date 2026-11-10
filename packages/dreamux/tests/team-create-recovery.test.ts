@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ChannelCoreEvent } from '@excitedjs/dreamux-types';
 import * as nameAllocation from '../src/service/name-allocator.js';
 import { TeamService } from '../src/service/team/service.js';
+import { AGENT_TASK_REMINDER } from '../src/service/submission-sources.js';
 import { WorktreeManager } from '../src/service/worktree/manager.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 afterEach(() => vi.restoreAllMocks());
@@ -59,7 +60,11 @@ describe('Team creation persistence and lazy start through real owners', () => {
       }),
     ]);
     expect(f.provider.runtimes).toHaveLength(1);
-    expect(f.provider.runtimes[0]!.inputs).toEqual(['<task>Start work</task>']);
+    expect(f.provider.runtimes[0]!.inputs).toEqual([
+      `<task>Start work</task>
+
+<reminder>${AGENT_TASK_REMINDER}</reminder>`,
+    ]);
     expect(created.leader_state).toBe('running');
     expect(created.leader_runtime_status).toBe('ready');
   });
@@ -98,7 +103,9 @@ describe('Team creation persistence and lazy start through real owners', () => {
     expect(order).toEqual(['input', 'createRuntime', 'start', 'submit']);
     expect(created.status).toBe('running');
     expect(f.provider.runtimes[0]!.inputs).toEqual([
-      '<task>Do the work</task>',
+      `<task>Do the work</task>
+
+<reminder>${AGENT_TASK_REMINDER}</reminder>`,
     ]);
     subscription.unsubscribe();
   });
@@ -289,6 +296,8 @@ describe('Team creation persistence and lazy start through real owners', () => {
       ).status,
     ).toBe('submitted');
     expect(f.provider.runtimes).toHaveLength(1);
+    // `submitToLeader` takes the caller's own `source` and `text` verbatim; it is
+    // not one of Core's own producers, so no standing note is added here.
     expect(f.provider.runtimes[0]!.inputs).toEqual(['<task>Continue</task>']);
     await next.teams.dissolve(created.team_name, { note: 'Done', force: true });
     await left.closed;

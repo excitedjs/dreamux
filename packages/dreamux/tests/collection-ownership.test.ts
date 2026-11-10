@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TeammateCollection } from '../src/service/agent/index.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
+import { AGENT_TASK_REMINDER } from '../src/service/submission-sources.js';
 
 describe('Collections own entity retention and eviction', () => {
   it('observes the Team close fact, removes that owner and serves only its terminal durable record', async () => {
@@ -59,8 +60,12 @@ describe('Collections own entity retention and eviction', () => {
     await original.close({ note: 'Repeated old close' });
     expect(members.materializedEntities()).toEqual([successor]);
     expect(f.provider.runtimes[1]!.inputs).toEqual([
-      '<task>Second work</task>',
-      '<task>Third work</task>',
+      `<task>Second work</task>
+
+<reminder>${AGENT_TASK_REMINDER}</reminder>`,
+      `<task>Third work</task>
+
+<reminder>${AGENT_TASK_REMINDER}</reminder>`,
     ]);
   });
 });

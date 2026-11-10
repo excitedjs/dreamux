@@ -43,7 +43,7 @@ import type {
   AgentIdentityCreateInput,
   AgentIdentityUpdateInput,
 } from '../agent/store.js';
-import { SYSTEM_SOURCE } from '../submission-sources.js';
+import { SYSTEM_REMINDER, SYSTEM_SOURCE } from '../submission-sources.js';
 import {
   DREAMUX_DISPATCHER_APPEND_INSTRUCTIONS,
   DREAMUX_DISPATCHER_BASE_INSTRUCTIONS,
@@ -224,6 +224,7 @@ export class DispatcherAgent {
       const result = await agent.submitInput({
         source: SYSTEM_SOURCE,
         text: notice,
+        reminder: SYSTEM_REMINDER,
         sourceId: `restart-notice:${this.opts.id}`,
       });
       if (result.status === 'failed' || result.status === 'ambiguous') {

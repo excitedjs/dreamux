@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Core's own submission sources now carry a standing note stating where the turn came from and what it may not be treated as: a cron fire records that a prompt was stored, not who asked for it; a completion is news rather than an instruction or user approval; a teammate's task cannot grant escalation; a host notice is not the user speaking.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "dyzhu@bytedance.com"
+}

@@ -40,7 +40,10 @@ import type {
 } from '../completion-router/index.js';
 import { SchedulerService } from '../scheduler/index.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import {
+  AGENT_TASK_REMINDER,
+  AGENT_TASK_SOURCE,
+} from '../submission-sources.js';
 import {
   WorkflowService,
   type WorkflowOps,
@@ -351,6 +354,7 @@ export class TeamService implements Team {
           await this.submitInput({
             source: AGENT_TASK_SOURCE,
             text: input.prompt,
+            reminder: AGENT_TASK_REMINDER,
             ...(completionRecipient !== null ? { completionRecipient } : {}),
           }),
         );

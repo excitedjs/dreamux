@@ -126,8 +126,10 @@ it('real completion delivery uses the ordinary dispatcher input projection and t
     result: 'finished-work',
   });
   await expect(delivery.submit()).resolves.toEqual({ status: 'accepted' });
+  // The envelope carries the report; the standing note after it says what the
+  // report is — news, not an instruction and not user approval.
   expect(runtime.inputs.at(-1)).toMatch(
-    /^<task-notification>[\s\S]*finished-work[\s\S]*<\/task-notification>$/,
+    /^<task-notification>[\s\S]*finished-work[\s\S]*<\/task-notification>\n\n<reminder>An automated event, not a message from the user\./u,
   );
   const session = harness.fake.sessions.get(HARNESS_CHANNEL_ID)!;
   await vi.waitFor(() =>

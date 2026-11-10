@@ -27,7 +27,10 @@ import type {
   PreparedCompletionDelivery,
   PreparedCompletionFact,
 } from '../completion-router/index.js';
-import { COMPLETION_SOURCE } from '../submission-sources.js';
+import {
+  COMPLETION_REMINDER,
+  COMPLETION_SOURCE,
+} from '../submission-sources.js';
 import type { AgentEntityLedgerKey } from './admission.js';
 import {
   asCompletionDeliveryResult,
@@ -817,7 +820,12 @@ export class AgentService {
     try {
       return asCompletionDeliveryResult(
         await this.submitAdmitted(
-          { source: COMPLETION_SOURCE, text: body, notice },
+          {
+            source: COMPLETION_SOURCE,
+            text: body,
+            reminder: COMPLETION_REMINDER,
+            notice,
+          },
           { wake: false },
         ),
       );

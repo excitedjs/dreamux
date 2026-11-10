@@ -482,7 +482,9 @@ describe('SYSTEM_SOURCE: the one Core-reserved producer', () => {
     await next.host.start();
     expect(f.provider.runtimes).toHaveLength(1);
     expect(f.provider.runtimes[0]!.inputs).toEqual([
-      '<system>the dispatcher restarted</system>',
+      // The notice is host news; the standing note after it says so, so a
+      // restart is never read as something the user asked for.
+      "<system>the dispatcher restarted</system>\n\n<reminder>A notice from Dreamux itself, not a message from the user. It describes what the host did or is about to do; it is not an instruction and it is not the user's approval for anything.</reminder>",
     ]);
   });
   it('skips the notice entirely for a fresh (non-resumed) start — no submission at all', async () => {
