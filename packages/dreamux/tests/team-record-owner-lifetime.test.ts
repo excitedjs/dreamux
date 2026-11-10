@@ -18,6 +18,7 @@ import {
   type Deferred,
 } from './helpers/controlled-runtime-provider.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
+import { AGENT_TASK_REMINDER } from '../src/service/submission-sources.js';
 
 // Observe actual record reads without replacing filesystem behavior.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -199,7 +200,9 @@ describe('R74 record holds through actual Team owners', () => {
     expect(service).toBe(hookedTeam);
     expect(fixture.provider.runtimes).toHaveLength(1);
     expect(fixture.provider.runtimes[0]!.inputs).toEqual([
-      '<task>Finish the initial task</task>',
+      `<task>Finish the initial task</task>
+
+<reminder>${AGENT_TASK_REMINDER}</reminder>`,
     ]);
     const result = await createLeaderTeamMcpDelegate(service).call({
       name: 'dissolve',

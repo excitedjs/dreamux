@@ -13,6 +13,7 @@ Current source owners:
 - `/packages/dreamux/src/service/team/leader.ts` (the TeamLeader launch prompt)
 - `/packages/dreamux/src/service/mcp/tool-metadata.ts` (the shared `repo` input and its property descriptions)
 - `/packages/dreamux/src/service/agent/mcp.ts`
+- `/packages/dreamux/src/service/submission-sources.ts` (the standing notes Core's own sources carry)
 - `/packages/dreamux/src/service/agent/system-prompt.ts` (what a TeamMate is told about itself)
 - `/packages/dreamux/src/service/team/mcp.ts`
 - `/packages/dreamux/src/service/scheduler/mcp.ts`

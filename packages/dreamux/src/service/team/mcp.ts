@@ -56,7 +56,10 @@ import {
   tool,
 } from '../mcp/tool-metadata.js';
 import type { McpServerDelegate } from '../mcp/types.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import {
+  AGENT_PEER_REMINDER,
+  AGENT_TASK_SOURCE,
+} from '../submission-sources.js';
 import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import {
@@ -198,6 +201,10 @@ async function send(
   const intent = optionalNonBlankString(args, 'intent');
   const admission = await teams.submitToLeader(teamName, {
     text: prompt,
+    // A follow-up turn to a leader that already exists is one agent messaging
+    // another, the same shape as the TeamMate `send` above. Only the creation
+    // prompt assigns, and that one goes through `TeamServiceCreateInput`.
+    reminder: AGENT_PEER_REMINDER,
     ...(intent !== null ? { intent } : {}),
     // This is one Agent handing work to another, so it reaches the TeamLeader
     // as `task` provenance — not as `channel`, which is what the Command

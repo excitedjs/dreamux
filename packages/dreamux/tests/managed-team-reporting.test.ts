@@ -3,6 +3,10 @@ import { expect, it, vi } from 'vitest';
 import { createTeamMcpDelegate } from '../src/service/team/mcp.js';
 import { dispatcherFixture, teamRequest } from './helpers/real-dispatcher.js';
 import { foldSubmissions } from './helpers/runtime-submission.js';
+import {
+  AGENT_PEER_REMINDER,
+  AGENT_TASK_REMINDER,
+} from '../src/service/submission-sources.js';
 
 const result = (text: string): RuntimeCompletion =>
   Object.freeze({ status: 'completed', resultText: text });
@@ -156,4 +160,42 @@ it('a Channel-originated Team request retains its value without acquiring a Disp
   expect(
     dispatcher.inputs.filter((text) => text.startsWith('<task-notification>')),
   ).toEqual([]);
+});
+
+it('words a creation prompt as an assignment and a follow-up send as a peer request', async () => {
+  // Creating a Team hands its leader the first task; a later `send` is one
+  // agent messaging another. The two carry opposite authority, so the note
+  // differs — and nothing else in the suite pins the `send` half.
+  const f = await dispatcherFixture();
+  await f.host.start();
+  const ready = await f.host.submitInput({
+    source: 'channel',
+    text: 'dispatcher ready',
+  });
+  if (ready.status !== 'submitted') throw new Error('dispatcher not active');
+  const delegate = createTeamMcpDelegate({ teams: f.host.teams });
+  const created = await delegate.call({
+    name: 'create',
+    arguments: {
+      name_prefix: 'noted',
+      intent: 'assignment wording',
+      leader_agent_runtime: 'controlled',
+      prompt: 'first task',
+    },
+  });
+  const leader = f.provider.runtimes.at(-1)!;
+  expect(leader.inputs.at(-1)).toContain(
+    `<reminder>${AGENT_TASK_REMINDER}</reminder>`,
+  );
+
+  if (!created.ok) throw new Error('create failed: ' + created.message);
+  const structured = created.structured as Record<string, unknown>;
+  const name = String(structured['team_name']);
+  await delegate.call({
+    name: 'send',
+    arguments: { team_name: name, prompt: 'later ask' },
+  });
+  expect(leader.inputs.at(-1)).toContain(
+    `<reminder>${AGENT_PEER_REMINDER}</reminder>`,
+  );
 });

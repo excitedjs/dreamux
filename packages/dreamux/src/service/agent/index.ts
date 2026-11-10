@@ -19,7 +19,10 @@ import {
 } from '../../platform/shutdown-errors.js';
 import { composeLaunchDraft } from '../../plugin/hooks.js';
 import type { CompletionOwner } from '../completion-router/index.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import {
+  AGENT_TASK_REMINDER,
+  AGENT_TASK_SOURCE,
+} from '../submission-sources.js';
 import { reuseCwdWorktree, type WorktreeManager } from '../worktree/manager.js';
 import {
   assertManagedWorktreeAvailable,
@@ -196,6 +199,7 @@ export class TeammateCollection implements TeammateOps {
       const submission = await entity.submitInput({
         source: AGENT_TASK_SOURCE,
         text: input.prompt,
+        reminder: AGENT_TASK_REMINDER,
         ...(recipient !== undefined ? { completionRecipient: recipient } : {}),
       });
       return {
@@ -312,9 +316,12 @@ export class TeammateCollection implements TeammateOps {
     entity: AgentService,
     input: SendTeamMateInput,
   ): Promise<AgentEntitySendResult> {
+    // The note comes from the caller: one `send` carries every direction, and
+    // only the caller knows which one this is.
     const result = await entity.send({
       source: AGENT_TASK_SOURCE,
       text: input.prompt,
+      ...(input.reminder !== undefined ? { reminder: input.reminder } : {}),
       intent: input.intent,
       ...(input.attrs !== undefined ? { attrs: input.attrs } : {}),
       completionRecipient: this.opts.completionOwner.completionRecipient(),

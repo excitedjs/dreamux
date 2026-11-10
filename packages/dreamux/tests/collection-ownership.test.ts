@@ -58,6 +58,8 @@ describe('Collections own entity retention and eviction', () => {
     expect(f.provider.runtimes).toHaveLength(2);
     await original.close({ note: 'Repeated old close' });
     expect(members.materializedEntities()).toEqual([successor]);
+    // `send` takes the note from its caller, and this test calls it directly:
+    // a bare send carries none, exactly as an operator submission does not.
     expect(f.provider.runtimes[1]!.inputs).toEqual([
       '<task>Second work</task>',
       '<task>Third work</task>',

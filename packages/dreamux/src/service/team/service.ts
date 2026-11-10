@@ -351,6 +351,7 @@ export class TeamService implements Team {
           await this.submitInput({
             source: AGENT_TASK_SOURCE,
             text: input.prompt,
+            ...(input.reminder !== undefined && { reminder: input.reminder }),
             ...(completionRecipient !== null ? { completionRecipient } : {}),
           }),
         );

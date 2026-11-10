@@ -35,6 +35,16 @@ export interface SendTeamMateInput {
   intent?: string;
   /** Host-bound message provenance; never supplied through model arguments. */
   attrs?: Readonly<Record<string, string>>;
+  /**
+   * Standing note for this delivery, chosen by the caller that knows the
+   * direction.
+   *
+   * One `send` serves every direction: an owner handing work down, a member
+   * messaging its owner, a member messaging a peer, and an operator submitting
+   * over `admin.sock`. Those carry different authority, so the note cannot be
+   * decided here — this method only knows that a message is being delivered.
+   */
+  reminder?: string;
 }
 
 export interface CloseTeamMateInput {

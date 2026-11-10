@@ -14,7 +14,10 @@
 import { mustNonEmptyString } from '../../command/payload.js';
 import { ValidationError } from '../../platform/errors.js';
 import { STRING, arrayOf, objectSchema } from '../../command/schema.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import {
+  AGENT_PEER_REMINDER,
+  AGENT_TASK_SOURCE,
+} from '../submission-sources.js';
 import {
   createToolRecordDelegate,
   submissionReceipt,
@@ -103,6 +106,9 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
                 await scope.owner.submitInput({
                   source: AGENT_TASK_SOURCE,
                   text: prompt,
+                  // A member messaging its owner is still one agent asking
+                  // another: a request to weigh, not an assignment.
+                  reminder: AGENT_PEER_REMINDER,
                   attrs,
                   notice: {
                     kind: 'teammate_message',
@@ -113,6 +119,7 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
             : await scope.owner.teammates.send({
                 name: agentEntityNameParam(args, 'name'),
                 prompt,
+                reminder: AGENT_PEER_REMINDER,
                 attrs,
               });
         return submissionReceipt(
