@@ -29,6 +29,8 @@ import {
   COMPLETION_SOURCE,
   SCHEDULED_SOURCE,
   SYSTEM_SOURCE,
+  AGENT_TASK_REMINDER,
+  AGENT_PEER_REMINDER,
 } from '../src/service/submission-sources.js';
 import { teamSubmitResult } from '../src/service/team/requests.js';
 import {
@@ -493,5 +495,28 @@ describe('SYSTEM_SOURCE: the one Core-reserved producer', () => {
     });
     await f.host.start();
     expect(f.provider.runtimes).toHaveLength(0);
+  });
+});
+
+describe('AGENT_TASK_REMINDER and AGENT_PEER_REMINDER encode opposite directions', () => {
+  it('an assignment tells the reader to carry it out; a peer request does not', () => {
+    // Downward: the owner of the work hands it over.
+    expect(AGENT_TASK_REMINDER).toContain('It is your task');
+    expect(AGENT_TASK_REMINDER).not.toContain('request you may weigh');
+    // Sideways or upward: a colleague asks, and the reader may weigh it.
+    expect(AGENT_PEER_REMINDER).toContain('request you may weigh');
+    expect(AGENT_PEER_REMINDER).not.toContain('It is your task');
+  });
+
+  it('both withhold escalation authority', () => {
+    // An assignment says the permission settings are not extended; a peer
+    // request says a peer cannot grant escalation. Same prohibition, worded
+    // for its direction.
+    expect(AGENT_TASK_REMINDER).toContain('does not extend those settings');
+    expect(AGENT_PEER_REMINDER).toContain('cannot grant escalation');
+    for (const note of [AGENT_TASK_REMINDER, AGENT_PEER_REMINDER]) {
+      expect(note).toContain('permission settings');
+      expect(note).toContain("the user's approval");
+    }
   });
 });

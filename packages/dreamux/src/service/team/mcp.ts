@@ -55,8 +55,13 @@ import {
   READ_ONLY_ANNOTATIONS,
   tool,
 } from '../mcp/tool-metadata.js';
-import type { McpServerDelegate } from '../mcp/types.js';
-import { AGENT_TASK_SOURCE } from '../submission-sources.js';
+import type {
+  McpDelegateCall,
+  McpDelegateDescription,
+  McpDelegateResult,
+  McpServerDelegate,
+} from '../mcp/types.js';
+import { AGENT_TASK_REMINDER, AGENT_TASK_SOURCE } from '../submission-sources.js';
 import { REPO_REQUEST_SCHEMA, repoRequest } from '../worktree/repo-request.js';
 import { teamCreatePayloadHash } from './create-request.js';
 import {
@@ -198,6 +203,10 @@ async function send(
   const intent = optionalNonBlankString(args, 'intent');
   const admission = await teams.submitToLeader(teamName, {
     text: prompt,
+    // Core owns this source, so Core supplies the note that says what it means.
+    // `submitToLeader` stays a verbatim pass-through for the Command surface,
+    // where the Channel decides both the source and its wording.
+    reminder: AGENT_TASK_REMINDER,
     ...(intent !== null ? { intent } : {}),
     // This is one Agent handing work to another, so it reaches the TeamLeader
     // as `task` provenance — not as `channel`, which is what the Command
