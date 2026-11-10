@@ -793,9 +793,10 @@ export class AgentService {
     this.assertLockToken(token);
     if (!(await this.ensureRuntimeStarted())) return { status: 'stopped' };
     this.assertLockToken(token);
-    const e = input.reminder === undefined ? {} : { reminder: input.reminder };
-    const sub = { source: input.source, text: input.prompt, ...e };
-    return this.submitAdmitted(sub, { wake: true });
+    const extra =
+      input.reminder === undefined ? {} : { reminder: input.reminder };
+    const submission = { source: input.source, text: input.prompt, ...extra };
+    return this.submitAdmitted(submission, { wake: true });
   }
 
   /**

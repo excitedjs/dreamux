@@ -31,6 +31,7 @@ import {
   SYSTEM_SOURCE,
   AGENT_TASK_REMINDER,
   AGENT_PEER_REMINDER,
+  SYSTEM_REMINDER,
 } from '../src/service/submission-sources.js';
 import { teamSubmitResult } from '../src/service/team/requests.js';
 import {
@@ -39,7 +40,6 @@ import {
   type TeammateSubmitInput,
 } from '../src/service/agent/submission.js';
 import type { TurnAdmission } from '../src/service/agent/turn.js';
-import { SYSTEM_REMINDER } from '../src/service/submission-sources.js';
 
 /**
  * A type-only sink: passing an object literal here runs TypeScript's excess
