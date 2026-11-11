@@ -185,7 +185,11 @@ export class FakeCodexWsClient {
     if (method === 'thread/start') {
       const id = this.options.freshThreadId ?? 'fresh-thread-1';
       return {
-        thread: { id, path: `/fake/sessions/${id}.jsonl` },
+        thread: {
+          id,
+          path: `/fake/sessions/${id}.jsonl`,
+          status: { type: this.threadStatusType },
+        },
         model: this.options.model ?? 'test-model',
         reasoningEffort:
           this.options.reasoningEffort === undefined
@@ -199,7 +203,11 @@ export class FakeCodexWsClient {
       }
       const threadId = (params as { threadId: string }).threadId;
       return {
-        thread: { id: threadId, path: `/fake/sessions/${threadId}.jsonl` },
+        thread: {
+          id: threadId,
+          path: `/fake/sessions/${threadId}.jsonl`,
+          status: { type: this.threadStatusType },
+        },
         model: this.options.model ?? 'test-model',
         reasoningEffort:
           this.options.reasoningEffort === undefined
@@ -247,6 +255,9 @@ export class FakeCodexWsClient {
       return { turn: { id: turnId } } as R;
     }
     if (method === 'turn/interrupt') return {} as R;
+    // Appending to a thread's history opens no turn and settles nothing, so
+    // there is no completion to schedule here.
+    if (method === 'thread/inject_items') return {} as R;
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
   }
 
@@ -265,6 +276,21 @@ export class FakeCodexWsClient {
     this.emit({
       method: 'thread/name/updated',
       params: { threadId, ...(threadName === undefined ? {} : { threadName }) },
+    });
+  }
+
+  /**
+   * The status the `thread/start` and `thread/resume` responses report for
+   * this thread, and that `emitThreadStatus` keeps current.
+   */
+  threadStatusType: 'idle' | 'active' = 'idle';
+
+  /** Report the thread's own busy/idle transition, as codex does. */
+  emitThreadStatus(threadId: string, type: 'idle' | 'active'): void {
+    this.threadStatusType = type;
+    this.emit({
+      method: 'thread/status/changed',
+      params: { threadId, status: { type } },
     });
   }
 

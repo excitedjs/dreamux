@@ -446,6 +446,7 @@ export class FeishuDocumentComments {
  */
 const DOC_COMMENT_DELIVERY_MESSAGES: SubmitOutcomeMessages = {
   submitted: 'feishu document comment delivered',
+  appended: 'feishu document comment was appended without opening a turn',
   not_admitted: 'feishu document comment was not admitted',
   rejected: 'feishu document comment was rejected before admission',
   ambiguous: 'feishu document comment admission was ambiguous; not replaying',

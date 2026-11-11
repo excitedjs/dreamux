@@ -26,6 +26,7 @@ import type {
   RuntimeCompletion,
   RuntimeSubmission,
   RuntimeSubmissionSettlement,
+  TurnTrigger,
 } from '@excitedjs/dreamux-types';
 
 interface SubmissionDeferred {
@@ -74,7 +75,9 @@ export class TurnManager {
    */
   submitInput(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
     return this.trackAdmission(
-      this.enqueueDecision(() => this.submit(input.text, 'submission')),
+      this.enqueueDecision(() =>
+        this.submit(input.text, 'submission', input.trigger),
+      ),
     );
   }
 
@@ -115,6 +118,7 @@ export class TurnManager {
   private async submit(
     text: string,
     description: string,
+    turnTrigger?: TurnTrigger,
   ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
     if (this.protocolFailure !== null)
@@ -141,6 +145,7 @@ export class TurnManager {
         asked.hint === undefined ? [text] : [text, asked.hint],
         this.opts.codec?.wireSchema,
         asked.effort,
+        turnTrigger,
       );
     } catch (error) {
       const normalized = asError(error);

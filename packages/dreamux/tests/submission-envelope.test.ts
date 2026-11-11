@@ -32,6 +32,7 @@ import {
   AGENT_TASK_REMINDER,
   AGENT_PEER_REMINDER,
   SYSTEM_REMINDER,
+  triggerForSource,
 } from '../src/service/submission-sources.js';
 import { teamSubmitResult } from '../src/service/team/requests.js';
 import {
@@ -519,5 +520,55 @@ describe('AGENT_TASK_REMINDER and AGENT_PEER_REMINDER encode opposite directions
       expect(note).toContain('permission settings');
       expect(note).toContain("the user's approval");
     }
+  });
+});
+
+describe('trigger: the same source fact in the runtime vocabulary', () => {
+  it('maps every source Core owns to its trigger', () => {
+    expect(triggerForSource(CHANNEL_SOURCE)).toBe('user');
+    expect(triggerForSource(SCHEDULED_SOURCE)).toBe('scheduled');
+    expect(triggerForSource(COMPLETION_SOURCE)).toBe('completion');
+    expect(triggerForSource(AGENT_TASK_SOURCE)).toBe('agent-task');
+    expect(triggerForSource(SYSTEM_SOURCE)).toBe('system');
+  });
+
+  it('treats a source Core does not know as a person speaking', () => {
+    // A Channel's own inbound form, or an operator's `team.submit`, names
+    // itself. Core cannot classify it, and `user` is the only trigger allowed
+    // to interrupt work already in progress — the safe reading of "someone
+    // asked for this".
+    expect(triggerForSource('channel-web')).toBe('user');
+    expect(triggerForSource('')).toBe('user');
+  });
+
+  it('reserves the interrupting trigger for people alone', () => {
+    // Only `user` may cut a running response short; every other source exists
+    // precisely so it can be delivered without doing that.
+    const others = [
+      SCHEDULED_SOURCE,
+      COMPLETION_SOURCE,
+      AGENT_TASK_SOURCE,
+      SYSTEM_SOURCE,
+    ].map(triggerForSource);
+    expect(others).not.toContain('user');
+  });
+});
+
+describe('appended admission', () => {
+  it('reports delivery without a turn identity, never as a duplicate', () => {
+    // `appended` means the text reached the live session as context. Promising
+    // a `submitted` receipt would promise a settlement that never arrives, and
+    // `duplicate` would say the opposite of what happened — that Core refused
+    // before any submission — which is exactly the reverse of "delivered but
+    // started no turn".
+    expect(teamSubmitResult({ status: 'appended' })).toEqual({
+      status: 'appended',
+    });
+  });
+
+  it('is not what a duplicate means', () => {
+    expect(teamSubmitResult({ status: 'duplicate' })).toEqual({
+      status: 'duplicate',
+    });
   });
 });

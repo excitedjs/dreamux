@@ -205,11 +205,16 @@ describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared paylo
     expect(sharedView.text).toBe('team-bound text');
   });
 
-  it('TeamSubmitResult status is exactly submitted | duplicate | stopped | failed | ambiguous', () => {
+  it('TeamSubmitResult status is exactly submitted | appended | duplicate | stopped | failed | ambiguous', () => {
     assertType<
       Equal<
         TeamSubmitResult['status'],
-        'submitted' | 'duplicate' | 'stopped' | 'failed' | 'ambiguous'
+        | 'submitted'
+        | 'appended'
+        | 'duplicate'
+        | 'stopped'
+        | 'failed'
+        | 'ambiguous'
       >
     >();
   });
@@ -219,6 +224,8 @@ describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared paylo
       switch (result.status) {
         case 'submitted':
           return `submitted:${result.turn_id ?? 'unknown'}`;
+        case 'appended':
+          return 'appended';
         case 'duplicate':
           return 'duplicate';
         case 'stopped':
@@ -238,6 +245,7 @@ describe('SubmitCommand / TeamSubmitCommand / TeamSubmitResult: one shared paylo
     expect(summarize({ status: 'submitted', turn_id: 't1' })).toBe(
       'submitted:t1',
     );
+    expect(summarize({ status: 'appended' })).toBe('appended');
     expect(summarize({ status: 'duplicate' })).toBe('duplicate');
     expect(
       summarize({

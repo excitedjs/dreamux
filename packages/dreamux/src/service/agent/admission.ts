@@ -111,7 +111,14 @@ export class AdmissionLedger {
     task: Promise<TurnAdmission>,
     status: TurnAdmission['status'],
   ): void {
-    if (status === 'submitted' || status === 'ambiguous') this.commit(key);
+    // `appended` commits like `submitted`: the text is already in the thread,
+    // so replaying the same source id would append it twice.
+    if (
+      status === 'submitted' ||
+      status === 'appended' ||
+      status === 'ambiguous'
+    )
+      this.commit(key);
     this.releaseUncommitted(key, task);
   }
 
@@ -135,6 +142,9 @@ export function toSubmissionResult(
 ): AgentEntitySubmissionResult {
   switch (admission.status) {
     case 'submitted':
+      return { status: 'submitted' };
+    case 'appended':
+      // The text reached the thread as context; no turn answers this input.
       return { status: 'submitted' };
     case 'duplicate':
     case 'stopped':
@@ -161,6 +171,7 @@ export function asCompletionDeliveryResult(
   switch (result.status) {
     case 'submitted':
     case 'duplicate':
+    case 'appended':
       return { status: 'accepted' };
     case 'stopped':
       return { status: 'unsupported', reason: 'runtime stopped' };
@@ -191,6 +202,7 @@ export function failedAdmissionReason(result: TurnAdmission): string | null {
   switch (result.status) {
     case 'submitted':
     case 'duplicate':
+    case 'appended':
       return null;
     case 'stopped':
       return 'the agent runtime is not running';

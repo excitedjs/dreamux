@@ -529,6 +529,7 @@ function reportDelivery(
 /** The chat path's words for each outcome. The classification is shared. */
 const INBOUND_DELIVERY_MESSAGES: SubmitOutcomeMessages = {
   submitted: 'feishu inbound submitted',
+  appended: 'feishu inbound was appended without opening a turn',
   not_admitted: 'feishu inbound not admitted',
   rejected: 'feishu inbound was rejected before admission',
   ambiguous: 'feishu inbound admission was ambiguous; not replaying',

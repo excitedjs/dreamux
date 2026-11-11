@@ -461,6 +461,12 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   share one completion delivered once per recipient; the turn's original trigger
   does not override those relationships.
   (Requirement: [background-turn repair](/.agents/tasks/completion-routing/adopt-completion-token-routing/requirement.md#background-turn-repair-2026-09-07).)
+- **Only a person interrupts work in progress.** A completion report is news, so
+  a busy Codex recipient reads it at its next step instead of having the response
+  it was writing cancelled; an idle recipient still starts a turn, which is what
+  resumes the work. A person's message is the one input that cuts in. A runtime
+  that cannot tell the difference delivers everything as before, so this changes
+  behaviour only where the runtime can act on it.
 - **An owner is not told about the stop it asked for.** Closing a TeamMate,
   stopping a Workflow, dissolving a Team, and stopping or restarting the
   service end work that owner already decided to end; none of them push a

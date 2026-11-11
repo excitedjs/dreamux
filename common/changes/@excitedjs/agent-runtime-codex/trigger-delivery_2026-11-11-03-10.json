@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A non-`user` submission arriving while the thread is busy is appended to the conversation as context instead of starting a turn, so a completion report can no longer cancel the response being written. Idle threads still start a turn, and a `user` submission still steers. Thread busy state is tracked from codex's own `thread/status/changed`.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "dyzhu@bytedance.com"
+}

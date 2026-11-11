@@ -53,7 +53,12 @@ export interface ThreadStartParams {
 }
 
 export interface ThreadStartResponse {
-  thread: { id: string; path?: string | null };
+  thread: {
+    id: string;
+    path?: string | null;
+    /** The thread's runtime status at the moment it was reported. */
+    status?: { type?: string };
+  };
   model: string;
   reasoningEffort: string | null;
   [k: string]: unknown;
@@ -67,7 +72,12 @@ export interface ThreadResumeParams {
 }
 
 export interface ThreadResumeResponse {
-  thread: { id: string; path?: string | null };
+  thread: {
+    id: string;
+    path?: string | null;
+    /** The thread's runtime status at the moment it was reported. */
+    status?: { type?: string };
+  };
   model: string;
   reasoningEffort: string | null;
   [k: string]: unknown;

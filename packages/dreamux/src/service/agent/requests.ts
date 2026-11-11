@@ -237,6 +237,7 @@ export function agentCloseRequest(params: CommandPayload): AgentCloseRequest {
  */
 export const SUBMISSION_STATUS_VALUES = [
   'submitted',
+  'appended',
   'duplicate',
   'stopped',
   'failed',

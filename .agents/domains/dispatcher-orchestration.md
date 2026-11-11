@@ -429,6 +429,14 @@ selected value; it has no recipient, delivery task or second delivery controller
 One agent-owned in-flight set joins started reports at close and host stop; retained
 accepted inputs still prove runtime-stop convergence and are evicted after selection.
 
+A completion push-back is news, not a request, so it must not cancel whatever
+the recipient is writing. Every submission states why it exists as a `trigger`
+derived from its source; only a person's message carries `user`, the one value
+allowed to interrupt. A runtime that can deliver without interrupting does so
+for the rest, and the report still reaches the recipient's next sampling step.
+The `appended` admission is that delivery's answer: no turn was opened, so no
+settlement follows and the receipt promises none.
+
 An ordinary member's native subscription binds its actual collection owner at
 construction; createLocked binds none. Team and root collections share this rule.
 A managed TeamLeader has no subscription: only explicitly requested Dispatcher

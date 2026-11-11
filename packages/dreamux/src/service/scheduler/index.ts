@@ -238,8 +238,10 @@ export class SchedulerService implements SchedulerCommands {
    * Read once, submit, record.
    *
    * A cron job is a scheduled instruction, not a polite request for a quiet
-   * moment: when it is due it goes through the same submission path a person
-   * would use, and the runtime folds or steers it into whatever is running.
+   * moment: when it is due it is submitted at once, and the runtime decides how
+   * that lands. It submits under the `scheduled` trigger, so a busy agent
+   * receives it as appended context at its next step rather than having the
+   * response it is writing cancelled — only a person's message interrupts.
    * Nothing here asks whether the agent is busy, holds a fire for later, or
    * keeps a second queue beside the one the runtime already owns.
    *

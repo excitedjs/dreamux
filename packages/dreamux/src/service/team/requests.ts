@@ -120,6 +120,11 @@ export function teamSubmitResult(admission: TurnAdmission): TeamSubmitResult {
   switch (admission.status) {
     case 'submitted':
       return { status: 'submitted', turn_id: admission.turn.id };
+    case 'appended':
+      // The text did reach the live session as context, so this is the reverse
+      // of `duplicate`: it was delivered and simply started no turn. There is
+      // no turn identity to report, because nothing will settle.
+      return { status: 'appended' };
     case 'duplicate':
       // Core returned before runtime admission, so there is no second turn
       // identity to report.

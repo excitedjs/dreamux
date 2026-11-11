@@ -14,6 +14,7 @@ import type {
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
+import { injectThreadItems } from './events.js';
 import { performInitializeHandshake } from './handshake.js';
 import { codexSpawnEnv } from './paths.js';
 import { CodexReasoningEffort } from './reasoning-effort.js';
@@ -86,6 +87,23 @@ export class CodexRuntime implements AgentRuntime {
   private turnManager: TurnManager | null = null;
   private threadId: string | null = null;
   private threadResumed = false;
+  /**
+   * Whether this thread currently has a turn in flight, kept current from
+   * codex's own `thread/status/changed`.
+   *
+   * A submission that is only news — a completion report, say — is delivered
+   * as context while this is true so it cannot cut the running response short,
+   * and as a new turn while it is false so the work actually resumes. That
+   * distinction is the whole reason a submission carries a trigger.
+   *
+   * Starts false, then is seeded from the status the `thread/start` or
+   * `thread/resume` response already carries: the notification stream reports
+   * transitions only, so a runtime attaching to a thread already mid-turn
+   * would otherwise never hear that it is busy. Treating the unknown as busy
+   * instead would strand news in a thread nobody is reading, which is the
+   * worse failure.
+   */
+  private threadBusy = false;
   private startOutcome: AgentRuntimeStartOutcome | null = null;
   /**
    * The provider-local fatal path for authoritative state writes. Any failure
@@ -144,6 +162,9 @@ export class CodexRuntime implements AgentRuntime {
     }
     this.restarting = false;
     this.generation += 1;
+    // The value describes a thread this generation no longer owns; the new
+    // thread's own state is seeded once it resolves.
+    this.threadBusy = false;
     this.clearRestartTimer();
     const generation = this.generation;
     const task = this.startRuntime(generation);
@@ -273,11 +294,17 @@ export class CodexRuntime implements AgentRuntime {
     this.assertGeneration(generation);
 
     client.onNotification((notification) => {
-      if (
-        this.client !== client ||
-        notification.method !== 'thread/name/updated'
-      )
+      if (this.client !== client) return;
+      if (notification.method === 'thread/status/changed') {
+        const { threadId, status } = notification.params as {
+          threadId: string;
+          status: { type?: string };
+        };
+        if (threadId !== thread.thread.id) return;
+        this.threadBusy = status?.type === 'active';
         return;
+      }
+      if (notification.method !== 'thread/name/updated') return;
       const { threadId, threadName } =
         notification.params as ThreadNameUpdatedNotification;
       if (
@@ -346,6 +373,7 @@ export class CodexRuntime implements AgentRuntime {
       });
       this.assertGeneration(generation);
       this.threadId = candidateThreadId;
+      this.threadBusy = isBusyStatus(res.thread.status);
       this.log('info', `started fresh thread ${this.threadId}`);
       return res;
     }
@@ -387,6 +415,7 @@ export class CodexRuntime implements AgentRuntime {
       });
       this.assertGeneration(generation);
       this.threadId = replacementThreadId;
+      this.threadBusy = isBusyStatus(res.thread.status);
       return res;
     }
     this.assertGeneration(generation);
@@ -397,6 +426,7 @@ export class CodexRuntime implements AgentRuntime {
     });
     this.assertGeneration(generation);
     this.threadId = resumedThreadId;
+    this.threadBusy = isBusyStatus(resumed.thread.status);
     this.threadResumed = true;
     this.log('info', `resumed thread ${this.threadId}`);
     return resumed;
@@ -415,7 +445,54 @@ export class CodexRuntime implements AgentRuntime {
     }
     // The text is already the complete model-facing message: this runtime
     // renders no envelope and never branches on where the turn came from.
+    //
+    // A trigger does not change what the model reads, only how the input
+    // arrives. A person speaking outranks the running work and steers it;
+    // everything else is news, so it joins the current turn as context
+    // instead of cancelling the response being written, and starts a turn of
+    // its own once the thread is idle.
+    if (input.trigger !== undefined && input.trigger !== 'user') {
+      if (this.threadBusy) return this.appendToThread(input.text);
+    }
     return turnManager.submitInput(input);
+  }
+
+  /**
+   * Deliver text into the live thread as context, without starting a turn and
+   * without interrupting one.
+   *
+   * This is codex's own "append items to the history" path: an idle thread
+   * records the item and reads it at its next turn, and a busy one folds it
+   * into the next sampling step. Either way the running response is never
+   * cancelled — which is exactly the property a steer does not have.
+   */
+  private async appendToThread(text: string): Promise<RuntimeAdmission> {
+    const client = this.client;
+    const threadId = this.threadId;
+    if (client === null || threadId === null) {
+      // Proven pre-admission: nothing was written anywhere, so a retry is free.
+      return {
+        status: 'failed',
+        error: new Error('codex thread is not available'),
+      };
+    }
+    try {
+      await injectThreadItems(client, threadId, text);
+    } catch (error) {
+      // The request left this process, so the item may already be in the
+      // thread's history even though the reply never arrived. Reporting that as
+      // `failed` would let the caller retry and the ledger release its key,
+      // together appending the same news twice; `ambiguous` says the native
+      // boundary may have been crossed and must not be replayed. `turn/start`
+      // reports an in-flight rejection the same way, for the same reason.
+      return {
+        status: 'ambiguous',
+        error: error instanceof Error ? error : new Error(String(error)),
+      };
+    }
+    // An appended item is not a turn, so there is no submission to settle: the
+    // caller learns only that the text reached the thread.
+    return { status: 'appended' };
   }
 
   interrupt(): Promise<AgentRuntimeInterruptOutcome> {
@@ -743,4 +820,9 @@ function throwSettledFailures(
   if (failures.length === 0) return;
   if (failures.length === 1) throw failures[0];
   throw new AggregateError(failures, message);
+}
+
+/** Whether a reported thread status means a turn is in flight. */
+function isBusyStatus(status: { type?: string } | undefined): boolean {
+  return status?.type === 'active';
 }

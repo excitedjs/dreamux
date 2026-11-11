@@ -7,6 +7,7 @@ import {
   LineBuffer,
   parseLine,
   TurnAggregator,
+  type SubmissionEnvelope,
 } from './stream.js';
 import { ClaudeCodeControlRpc } from './control-rpc.js';
 import type { ParsedLine, TurnOutcome } from './types.js';
@@ -85,6 +86,7 @@ export class ClaudeCodeStreamRpc {
   submit(
     prompt: string,
     commandUuid: string = randomUUID(),
+    envelope?: SubmissionEnvelope,
   ): Promise<RuntimeAdmission> {
     if (this.closed || !this.stdin.writable) {
       return Promise.resolve({
@@ -107,7 +109,7 @@ export class ClaudeCodeStreamRpc {
       this.armIdleTimer();
       try {
         this.stdin.write(
-          `${buildUserMessage(prompt, commandUuid)}\n`,
+          `${buildUserMessage(prompt, commandUuid, envelope)}\n`,
           (error) => {
             if (error != null) this.failWrite(commandUuid, request, error);
             else this.acceptRequest(request);

@@ -101,7 +101,7 @@ describe('real AgentService admission owner', () => {
     ).resolves.toMatchObject({ status: 'submitted' });
     expect(f.order.slice(before)).toEqual(['start', 'submit']);
   });
-  it('hands the runtime exactly { text } — sourceId and intent never appear on the submit payload', async () => {
+  it('hands the runtime exactly { text, trigger } — sourceId and intent never appear on the submit payload', async () => {
     const f = await fixture();
     await f.service.submitInput({
       source: 'channel',
@@ -109,7 +109,13 @@ describe('real AgentService admission owner', () => {
       sourceId: 'source-one',
       intent: 'recovery intent',
     });
-    expect(f.inputs).toEqual([{ text: '<channel>body</channel>' }]);
+    // The trigger is the one Core fact a runtime receives beyond the text: it
+    // says why the turn exists, and only `user` may interrupt work in flight.
+    // Source id and intent stay Core-side — the first is the duplicate ledger's
+    // key, the second the recovery subject, and neither is model input.
+    expect(f.inputs).toEqual([
+      { text: '<channel>body</channel>', trigger: 'user' },
+    ]);
   });
   it('records intent on a fresh admission, and a later duplicate never rewrites it', async () => {
     const f = await fixture();

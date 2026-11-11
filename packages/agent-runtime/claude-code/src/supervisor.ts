@@ -14,6 +14,7 @@ import { dirname } from 'node:path';
 import type { RuntimeAdmission } from '@excitedjs/dreamux-types';
 import { removeEmptyLogFile, SupervisedChild } from '@excitedjs/dreamux-utils';
 import { ClaudeCodeStreamRpc } from './rpc.js';
+import type { SubmissionEnvelope } from './stream.js';
 import type { ClaudeCodeSession, ClaudeCodeSessionSpec } from './types.js';
 
 /** The live session: spawns and supervises the real `claude` child. */
@@ -124,7 +125,11 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     if (this.spec.remoteControl) rpc.enableRemoteControl();
   }
 
-  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission> {
+  submit(
+    prompt: string,
+    commandUuid?: string,
+    envelope?: SubmissionEnvelope,
+  ): Promise<RuntimeAdmission> {
     if (this.exitError !== null)
       return Promise.resolve({ status: 'failed', error: this.exitError });
     if (this.stopRequested || this.stopped)
@@ -135,7 +140,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
         error: new Error('claude resident child is not running'),
       });
     }
-    return this.rpc.submit(prompt, commandUuid);
+    return this.rpc.submit(prompt, commandUuid, envelope);
   }
 
   /**

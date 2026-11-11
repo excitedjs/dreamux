@@ -189,9 +189,42 @@ function rememberTerminal(terminals: Set<string>, turnId: string): boolean {
 }
 
 /**
+ * Append one user-role message to a thread's history, opening no turn.
+ *
+ * Codex reads it at the thread's next sampling step, so a busy thread folds it
+ * into the work already running and an idle one picks it up when it next runs.
+ * Either way the response in flight is never cancelled — the property a steer
+ * does not have.
+ */
+export async function injectThreadItems(
+  client: CodexWsClient,
+  threadId: string,
+  text: string,
+): Promise<void> {
+  await client.request<Record<string, never>>('thread/inject_items', {
+    threadId,
+    items: [
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text }],
+      },
+    ],
+  });
+}
+
+/**
  * Send a `turn/start` request and resolve once Codex accepts the submission.
  * This is the production Feishu inbound primitive: it intentionally does not
  * wait for `turn/completed`.
+ *
+ * `turnTrigger` is codex's own optional source classification for the caller
+ * that starts the turn (`TurnStartParams.turn_trigger`). It reaches only the
+ * turn's metadata — the `x-codex-turn-metadata` payload sent with each
+ * Responses API request — and changes no delivery behaviour; codex ignores it
+ * when the request steers an already-active turn. It is stated so a turn
+ * started by a schedule or a completion report is not indistinguishable from
+ * one a person typed.
  */
 export async function submitTurnStart(
   client: CodexWsClient,
@@ -199,6 +232,7 @@ export async function submitTurnStart(
   texts: string[],
   outputSchema?: Record<string, unknown>,
   effort?: string,
+  turnTrigger?: string,
 ): Promise<TurnStartResponse> {
   const input: UserInput[] = texts.map((text) => ({
     type: 'text',
@@ -208,6 +242,7 @@ export async function submitTurnStart(
   const params: Record<string, unknown> = { threadId, input };
   if (outputSchema !== undefined) params.outputSchema = outputSchema;
   if (effort !== undefined) params.effort = effort;
+  if (turnTrigger !== undefined) params.turnTrigger = turnTrigger;
   return client.request<TurnStartResponse>('turn/start', params);
 }
 

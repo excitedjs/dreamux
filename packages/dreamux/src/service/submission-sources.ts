@@ -13,6 +13,7 @@
  * stay spelled identically, which is what a model reading provenance and a
  * Channel filtering on `turn_source` both depend on.
  */
+import type { TurnTrigger } from '@excitedjs/dreamux-types';
 
 /**
  * Every turn Core accepted from a Channel: a routed inbound message, an
@@ -45,6 +46,42 @@ export const COMPLETION_SOURCE = 'task-notification';
  * runtime check would guard a path that does not exist.
  */
 export const SYSTEM_SOURCE = 'system';
+
+// ---------------------------------------------------------------------------
+// Why each source exists, as the runtime contract states it
+// ---------------------------------------------------------------------------
+
+/**
+ * Translate one submission's provenance into the neutral reason a runtime is
+ * told.
+ *
+ * This lives beside the source names because it is the same fact said twice:
+ * whoever picks a `source` already knows why the input exists, so deriving the
+ * trigger here keeps the two from drifting apart.
+ *
+ * A source this file does not name falls to `user`. That default is defence in
+ * depth for a producer added later, not an external authority: no caller-facing
+ * surface carries a `source` at all — the Command payloads have no such field
+ * and the Channel supplies its own name only through Core's own producers — so
+ * an outside party cannot reach this function with a value of its choosing.
+ * The fallback therefore answers "someone Core has not classified yet", and
+ * `user` is the reading that keeps an unknown producer from losing the ability
+ * to interrupt rather than one that grants it.
+ */
+export function triggerForSource(source: string): TurnTrigger {
+  switch (source) {
+    case SCHEDULED_SOURCE:
+      return 'scheduled';
+    case COMPLETION_SOURCE:
+      return 'completion';
+    case AGENT_TASK_SOURCE:
+      return 'agent-task';
+    case SYSTEM_SOURCE:
+      return 'system';
+    default:
+      return 'user';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Standing notes for Core's own sources

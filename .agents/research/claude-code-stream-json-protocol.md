@@ -193,6 +193,24 @@ which the runtime's own comments already say:
   through `origin.kind: "unclassified"`: such a message is "framed to the
   model as a non-user source rather than treating it as human input."
 
+**What the published SDK types do cover**, checked against
+`@anthropic-ai/claude-agent-sdk@0.3.322`'s `sdk.d.ts`:
+
+- `SDKMessageOrigin` is a documented union. An application may set
+  `{ kind: "human" }` and, under a process-level opt-in, `{ kind:
+  "task-notification", subkind: "scheduled-trigger" }`; the remaining kinds
+  (`channel`, `peer`, `coordinator`, `auto-continuation`, `unclassified`) are
+  the CLI's or its servers' to assign, and setting one is documented as
+  ignored or read as the user's by default.
+- `client_composed` is documented as skipping the **whole** turn-start
+  attachment pass — nested `CLAUDE.md` and rules files, skill and tool
+  listings, reminders — not merely `@path` and slash-command expansion. That
+  is why this package states provenance with `isSynthetic` and never sets
+  `client_composed`.
+- `priority` (`'now' | 'next' | 'later'`) is documented, and `'now'` is the
+  only value that aborts a running response. This package sets none: no
+  trigger needs to interrupt here.
+
 Nothing in the docs contradicts a row above; the one change they produced is
 the narrowing of row 4.
 

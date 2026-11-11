@@ -30,6 +30,7 @@ import type {
 import {
   COMPLETION_REMINDER,
   COMPLETION_SOURCE,
+  triggerForSource,
 } from '../submission-sources.js';
 import type { AgentEntityLedgerKey } from './admission.js';
 import {
@@ -328,7 +329,9 @@ export class AgentService {
     }
     const runtime = this.runtimeGeneration.mustRuntime();
     return this.submitRuntimeTurn(
-      () => runtime.submit({ text }),
+      // The source says why this turn exists; the trigger says it in the
+      // runtime's vocabulary.
+      () => runtime.submit({ text, trigger: triggerForSource(input.source) }),
       input.completionRecipient ?? null,
     );
   }

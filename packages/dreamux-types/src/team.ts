@@ -203,10 +203,16 @@ export interface TeamSubmitCommand extends SubmitCommand {
  * second runtime submission or turn identity. The provider seam's internal
  * `skipped` is normalized to `stopped` here. `ambiguous` is an unknown boundary
  * outcome and is never retried.
+ *
+ * `appended` is the opposite of `duplicate`: the input did cross the runtime
+ * seam and is in the recipient's history, but it started no turn, so no
+ * settlement follows and no `turn_id` exists to name. Reporting it as
+ * `duplicate` would tell the caller its message was a repeat that was never
+ * delivered, which is the reverse of what happened.
  */
 export interface TeamSubmitResult {
   readonly status:
-    'submitted' | 'duplicate' | 'stopped' | 'failed' | 'ambiguous';
+    'submitted' | 'appended' | 'duplicate' | 'stopped' | 'failed' | 'ambiguous';
   readonly turn_id?: string;
   readonly error?: ChannelCommandError;
 }

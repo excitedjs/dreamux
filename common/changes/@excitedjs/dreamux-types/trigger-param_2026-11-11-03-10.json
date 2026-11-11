@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A submission now states why its turn exists as an optional `trigger`. Only `user` may interrupt work in progress; every other value exists so a runtime can deliver news without cutting a running response short. A runtime that ignores the value behaves exactly as before.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux-types"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-types",
+  "email": "dyzhu@bytedance.com"
+}

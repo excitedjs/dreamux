@@ -698,6 +698,28 @@ describe('outbound builders', () => {
     expect('priority' in JSON.parse(buildUserMessage('hi'))).toBe(false);
   });
 
+  it('buildUserMessage states a human origin when one is given', () => {
+    const parsed = JSON.parse(
+      buildUserMessage('hi', undefined, { origin: { kind: 'human' } }),
+    );
+    expect(parsed['origin']).toEqual({ kind: 'human' });
+  });
+
+  it('buildUserMessage states synthetic text when one is given', () => {
+    const parsed = JSON.parse(
+      buildUserMessage('hi', undefined, { isSynthetic: true }),
+    );
+    expect(parsed['isSynthetic']).toBe(true);
+    // Documented shape for text the user did not write: no origin.
+    expect('origin' in parsed).toBe(false);
+  });
+
+  it('buildUserMessage omits every provenance field when no envelope is given', () => {
+    const parsed = JSON.parse(buildUserMessage('hi'));
+    for (const field of ['origin', 'isSynthetic'])
+      expect(field in parsed).toBe(false);
+  });
+
   it('buildCanUseToolAllow echoes the tool input back as updatedInput', () => {
     const parsed = JSON.parse(buildCanUseToolAllow('r1', { command: 'ls' }));
     expect(parsed).toEqual({
