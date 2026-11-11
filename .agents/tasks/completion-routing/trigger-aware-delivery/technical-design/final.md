@@ -100,10 +100,12 @@ its to assign. So:
 The other documented `origin` kinds (`task-notification`, `peer`, `channel`,
 `coordinator`, `auto-continuation`, `unclassified`) are the CLI's or its
 servers' to assign, so this package sets none of them. `task-notification` was
-tried and is ignored on this path: the CLI only honours a declared scheduled
-run when the process was started with `CLAUDE_CODE_HOST_SCHEDULED_RUN=1` and
-carries neither `CLAUDECODE` nor `CLAUDE_CODE_CHILD_SESSION`, and a resident
-Dreamux child carries the first of those.
+tried and is ignored on this path. The deterministic reason is that the CLI
+honours a declared scheduled run only in a process started with
+`CLAUDE_CODE_HOST_SCHEDULED_RUN=1`, and Dreamux never sets that variable for a
+resident child. The CLI also refuses the declaration when the process carries
+`CLAUDECODE` or `CLAUDE_CODE_CHILD_SESSION`; that is a second condition this
+package does not control, and it is not the one relied on here.
 
 An earlier revision wrote a made-up `origin` kind set taken from the CLI's
 binary, and a later one removed the field entirely on the mistaken belief that
