@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A submit receipt can now answer `appended`: Core put the message into the recipient's history without opening a turn, because it was news rather than a request. It is reported as its own outcome rather than as `duplicate`, which means the reverse — that Core refused before any submission — and its delivery log says so.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "dyzhu@bytedance.com"
+}

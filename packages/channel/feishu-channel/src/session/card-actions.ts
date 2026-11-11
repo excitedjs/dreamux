@@ -60,6 +60,7 @@ export type FeishuCardActionResult =
 /** The card-action-forward path's words for each outcome. The classification is shared. */
 const EXTENSION_FORWARD_MESSAGES: SubmitOutcomeMessages = {
   submitted: '[extension] card forward delivered',
+  appended: '[extension] card forward was appended without opening a turn',
   not_admitted: '[extension] card forward was not admitted',
   rejected: '[extension] card forward was rejected before admission',
   ambiguous: '[extension] card forward admission was ambiguous',

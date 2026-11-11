@@ -185,7 +185,11 @@ export class FakeCodexWsClient {
     if (method === 'thread/start') {
       const id = this.options.freshThreadId ?? 'fresh-thread-1';
       return {
-        thread: { id, path: `/fake/sessions/${id}.jsonl` },
+        thread: {
+          id,
+          path: `/fake/sessions/${id}.jsonl`,
+          status: { type: this.threadStatusType },
+        },
         model: this.options.model ?? 'test-model',
         reasoningEffort:
           this.options.reasoningEffort === undefined
@@ -199,7 +203,11 @@ export class FakeCodexWsClient {
       }
       const threadId = (params as { threadId: string }).threadId;
       return {
-        thread: { id: threadId, path: `/fake/sessions/${threadId}.jsonl` },
+        thread: {
+          id: threadId,
+          path: `/fake/sessions/${threadId}.jsonl`,
+          status: { type: this.threadStatusType },
+        },
         model: this.options.model ?? 'test-model',
         reasoningEffort:
           this.options.reasoningEffort === undefined

@@ -573,13 +573,16 @@ function originFor(
 }
 
 /**
- * This CLI's origin vocabulary for a Core trigger.
+ * This CLI's origin vocabulary for a Core trigger that needs one stated.
  *
  * The two lists are not the same length, so this is a stated mapping rather
- * than a rename: a scheduled fire and a host notice both arrive as
- * `task-notification` to this CLI, and only a peer's words carry an author.
+ * than a rename: a completion report, a scheduled fire and a host notice all
+ * arrive as `task-notification` to this CLI, and only a peer's words carry an
+ * author. `user` is absent by construction — it is this CLI's default for
+ * stdin input, so stating it would say nothing, and `originFor` returns before
+ * asking.
  */
-function originKindFor(trigger: TurnTrigger): string {
+function originKindFor(trigger: Exclude<TurnTrigger, 'user'>): string {
   switch (trigger) {
     case 'completion':
       return 'task-notification';
@@ -589,7 +592,5 @@ function originKindFor(trigger: TurnTrigger): string {
       return 'peer';
     case 'system':
       return 'task-notification';
-    case 'user':
-      return 'human';
   }
 }

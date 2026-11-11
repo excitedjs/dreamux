@@ -124,14 +124,7 @@ describe('CodexRuntime start() continuity', () => {
     const outcome = await runtime.start();
 
     expect(outcome).toEqual({ continuity: 'fresh' });
-    // The thread's busy state is seeded once at start: the status
-    // notification reports transitions only, so a thread already mid-turn
-    // would otherwise never announce that it is busy.
-    expect(client.methods).toEqual([
-      'initialize',
-      'thread/start',
-      'thread/read',
-    ]);
+    expect(client.methods).toEqual(['initialize', 'thread/start']);
     await runtime.stop();
   });
 
@@ -142,11 +135,7 @@ describe('CodexRuntime start() continuity', () => {
     const outcome = await runtime.start();
 
     expect(outcome).toEqual({ continuity: 'resumed' });
-    expect(client.methods).toEqual([
-      'initialize',
-      'thread/resume',
-      'thread/read',
-    ]);
+    expect(client.methods).toEqual(['initialize', 'thread/resume']);
     const resumeRequest = client.requests.find(
       (r) => r.method === 'thread/resume',
     );
@@ -300,11 +289,7 @@ describe('CodexRuntime developerInstructions re-supply', () => {
     const runtime = new CodexRuntime(identity(null), deps);
     const outcome = await runtime.start();
     expect(outcome.continuity).toBe('fresh');
-    expect(client1.methods).toEqual([
-      'initialize',
-      'thread/start',
-      'thread/read',
-    ]);
+    expect(client1.methods).toEqual(['initialize', 'thread/start']);
 
     // Simulate the app-server child dying; the runtime restarts and, since a
     // thread id now exists, tries thread/resume first.
@@ -2090,6 +2075,21 @@ describe('CodexRuntime delivery by trigger', () => {
     await runtime.stop();
   });
 
+  it('reports an in-flight inject rejection as ambiguous, never as a retryable failure', async () => {
+    // The request left this process, so the item may already be in the thread
+    // even though the reply never arrived. `failed` would let the caller retry
+    // and the ledger release its key, together appending the same news twice.
+    const { client, runtime } = await started();
+    client.emitThreadStatus('fresh-thread-1', 'active');
+    client.block('thread/inject_items');
+    const pending = runtime.submit({ text: 'news', trigger: 'completion' });
+    await waitFor(() => client.hasBlocked('thread/inject_items'));
+    client.rejectBlocked('thread/inject_items', new Error('socket closed'));
+    const admission = await pending;
+    expect(admission.status).toBe('ambiguous');
+    await runtime.stop();
+  });
+
   it('steers a user submission even while the thread is busy', async () => {
     const { client, runtime } = await started();
     client.emitThreadStatus('fresh-thread-1', 'active');
@@ -2105,10 +2105,11 @@ describe('CodexRuntime delivery by trigger', () => {
     await runtime.stop();
   });
 
-  it('seeds busy state from thread/read so a thread already mid-turn is not steered', async () => {
+  it('seeds busy state from the start response so a thread already mid-turn is not steered', async () => {
     // The status notification reports transitions only. A runtime attaching to
     // a thread that is already running would never hear "active", and would
     // deliver news as a steer — the exact interruption the trigger prevents.
+    // thread/start already reports the status, so no extra read is needed.
     const client = new FakeCodexWsClient();
     client.threadStatusType = 'active';
     const { deps } = makeDeps({ client });

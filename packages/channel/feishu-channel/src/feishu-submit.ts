@@ -128,6 +128,12 @@ export function chatSubmission(input: {
  */
 export type FeishuCommandSubmitOutcome =
   | { readonly status: 'submitted'; readonly turnId: string | null }
+  /**
+   * Core put the message into the recipient's history without opening a turn,
+   * because it was news rather than a request. It was delivered — the opposite
+   * of `duplicate` — but nothing will answer it, so there is no turn to name.
+   */
+  | { readonly status: 'appended' }
   | { readonly status: 'duplicate' | 'stopped' }
   | {
       readonly status: 'failed' | 'ambiguous';
@@ -205,7 +211,12 @@ export type FeishuBoundTeamSubmitOutcome =
  */
 export interface SubmitOutcomeReport {
   readonly kind:
-    'submitted' | 'not_admitted' | 'rejected' | 'ambiguous' | 'failed';
+    | 'submitted'
+    | 'appended'
+    | 'not_admitted'
+    | 'rejected'
+    | 'ambiguous'
+    | 'failed';
   readonly level: 'info' | 'warn' | 'error';
   readonly fields: Readonly<Record<string, unknown>>;
 }
@@ -224,6 +235,14 @@ export function describeSubmitOutcome(
         kind: 'submitted',
         level: 'info',
         fields: { turn_id: outcome.turnId },
+      };
+    case 'appended':
+      // Delivered, but it opened no turn. Reporting it as `not_admitted`
+      // would say the opposite of what happened.
+      return {
+        kind: 'appended',
+        level: 'info',
+        fields: { status: outcome.status },
       };
     case 'duplicate':
     case 'stopped':
@@ -271,6 +290,7 @@ export function submitOutcome(
   switch (result.status) {
     case 'submitted':
       return { status: 'submitted', turnId: result.turn_id ?? null };
+    case 'appended':
     case 'duplicate':
     case 'stopped':
       return { status: result.status };

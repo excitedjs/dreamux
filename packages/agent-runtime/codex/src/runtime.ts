@@ -14,6 +14,7 @@ import type {
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
+import { injectThreadItems } from './events.js';
 import { performInitializeHandshake } from './handshake.js';
 import { codexSpawnEnv } from './paths.js';
 import { CodexReasoningEffort } from './reasoning-effort.js';
@@ -160,6 +161,9 @@ export class CodexRuntime implements AgentRuntime {
     }
     this.restarting = false;
     this.generation += 1;
+    // The value describes a thread this generation no longer owns; the new
+    // thread's own state is seeded once it resolves.
+    this.threadBusy = false;
     this.clearRestartTimer();
     const generation = this.generation;
     const task = this.startRuntime(generation);
@@ -287,7 +291,6 @@ export class CodexRuntime implements AgentRuntime {
 
     const thread = await this.resolveThread(generation, options);
     this.assertGeneration(generation);
-    await this.seedThreadBusy(client, thread.thread.id);
 
     client.onNotification((notification) => {
       if (this.client !== client) return;
@@ -369,6 +372,7 @@ export class CodexRuntime implements AgentRuntime {
       });
       this.assertGeneration(generation);
       this.threadId = candidateThreadId;
+      this.threadBusy = isBusyStatus(res.thread.status);
       this.log('info', `started fresh thread ${this.threadId}`);
       return res;
     }
@@ -410,6 +414,7 @@ export class CodexRuntime implements AgentRuntime {
       });
       this.assertGeneration(generation);
       this.threadId = replacementThreadId;
+      this.threadBusy = isBusyStatus(res.thread.status);
       return res;
     }
     this.assertGeneration(generation);
@@ -420,6 +425,7 @@ export class CodexRuntime implements AgentRuntime {
     });
     this.assertGeneration(generation);
     this.threadId = resumedThreadId;
+    this.threadBusy = isBusyStatus(resumed.thread.status);
     this.threadResumed = true;
     this.log('info', `resumed thread ${this.threadId}`);
     return resumed;
@@ -451,31 +457,6 @@ export class CodexRuntime implements AgentRuntime {
   }
 
   /**
-   * Read the thread's current busy state once, before any submission can ask.
-   *
-   * `thread/status/changed` reports transitions only, so a runtime that
-   * attaches to a thread already mid-turn would never learn it is busy and
-   * would deliver news as a steer — exactly the interruption the trigger
-   * exists to prevent. A failed read leaves the value false rather than
-   * failing the start: the thread is usable either way, and the notification
-   * stream corrects it on the next transition.
-   */
-  private async seedThreadBusy(
-    client: CodexWsClient,
-    threadId: string,
-  ): Promise<void> {
-    try {
-      const read = await client.request<{
-        thread?: { status?: { type?: string } };
-      }>('thread/read', { threadId });
-      if (this.client !== client) return;
-      this.threadBusy = read.thread?.status?.type === 'active';
-    } catch (error) {
-      this.log('warn', 'could not read the thread status at start', error);
-    }
-  }
-
-  /**
    * Deliver text into the live thread as context, without starting a turn and
    * without interrupting one.
    *
@@ -488,25 +469,23 @@ export class CodexRuntime implements AgentRuntime {
     const client = this.client;
     const threadId = this.threadId;
     if (client === null || threadId === null) {
+      // Proven pre-admission: nothing was written anywhere, so a retry is free.
       return {
         status: 'failed',
         error: new Error('codex thread is not available'),
       };
     }
     try {
-      await client.request<Record<string, never>>('thread/inject_items', {
-        threadId,
-        items: [
-          {
-            type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text }],
-          },
-        ],
-      });
+      await injectThreadItems(client, threadId, text);
     } catch (error) {
+      // The request left this process, so the item may already be in the
+      // thread's history even though the reply never arrived. Reporting that as
+      // `failed` would let the caller retry and the ledger release its key,
+      // together appending the same news twice; `ambiguous` says the native
+      // boundary may have been crossed and must not be replayed. `turn/start`
+      // reports an in-flight rejection the same way, for the same reason.
       return {
-        status: 'failed',
+        status: 'ambiguous',
         error: error instanceof Error ? error : new Error(String(error)),
       };
     }
@@ -840,4 +819,9 @@ function throwSettledFailures(
   if (failures.length === 0) return;
   if (failures.length === 1) throw failures[0];
   throw new AggregateError(failures, message);
+}
+
+/** Whether a reported thread status means a turn is in flight. */
+function isBusyStatus(status: { type?: string } | undefined): boolean {
+  return status?.type === 'active';
 }

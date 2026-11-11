@@ -200,13 +200,16 @@ export type RuntimeSubmissionSettlement =
 /**
  * The single input shape a live runtime accepts.
  *
- * Deliberately nothing but text: it is already the complete model-facing
- * message, so the seam carries no discriminator, no source enum, no source
- * identity, and no rendering instruction. Every caller prepares its final text
- * before submitting, so a runtime never renders an envelope and never branches
- * on where a turn came from. Stable source identity, origin, intent, and
- * display correlation stay on Core's own turn/admission state, and Core — not a
- * Provider — deduplicates with them.
+ * The text is already the complete model-facing message, so the seam carries no
+ * source identity and no rendering instruction: every caller prepares its final
+ * text before submitting, so a runtime never renders an envelope. Stable source
+ * identity, intent, and display correlation stay on Core's own turn/admission
+ * state, and Core — not a Provider — deduplicates with them.
+ *
+ * `trigger` is the one thing said about the text beyond the text itself, and it
+ * is not a source: it says why the turn exists, which is what a runtime needs
+ * in order to tell an interruption from news. It carries no identity and no
+ * content a provider could branch on beyond that single decision.
  */
 export interface AgentRuntimeSubmissionInput {
   readonly text: string;

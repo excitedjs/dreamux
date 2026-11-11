@@ -189,6 +189,31 @@ function rememberTerminal(terminals: Set<string>, turnId: string): boolean {
 }
 
 /**
+ * Append one user-role message to a thread's history, opening no turn.
+ *
+ * Codex reads it at the thread's next sampling step, so a busy thread folds it
+ * into the work already running and an idle one picks it up when it next runs.
+ * Either way the response in flight is never cancelled — the property a steer
+ * does not have.
+ */
+export async function injectThreadItems(
+  client: CodexWsClient,
+  threadId: string,
+  text: string,
+): Promise<void> {
+  await client.request<Record<string, never>>('thread/inject_items', {
+    threadId,
+    items: [
+      {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text }],
+      },
+    ],
+  });
+}
+
+/**
  * Send a `turn/start` request and resolve once Codex accepts the submission.
  * This is the production Feishu inbound primitive: it intentionally does not
  * wait for `turn/completed`.

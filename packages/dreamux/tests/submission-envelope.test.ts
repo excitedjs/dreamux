@@ -555,10 +555,19 @@ describe('trigger: the same source fact in the runtime vocabulary', () => {
 });
 
 describe('appended admission', () => {
-  it('reports no turn identity, because no turn answers it', () => {
+  it('reports delivery without a turn identity, never as a duplicate', () => {
     // `appended` means the text reached the live session as context. Promising
-    // a `submitted` receipt would promise a settlement that never arrives.
+    // a `submitted` receipt would promise a settlement that never arrives, and
+    // `duplicate` would say the opposite of what happened — that Core refused
+    // before any submission — which is exactly the reverse of "delivered but
+    // started no turn".
     expect(teamSubmitResult({ status: 'appended' })).toEqual({
+      status: 'appended',
+    });
+  });
+
+  it('is not what a duplicate means', () => {
+    expect(teamSubmitResult({ status: 'duplicate' })).toEqual({
       status: 'duplicate',
     });
   });
