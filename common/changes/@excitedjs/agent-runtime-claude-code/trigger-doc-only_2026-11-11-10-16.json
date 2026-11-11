@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Document why a submission's trigger is neither acted on nor restated in the stream-json envelope: this runtime already delivers input mid-turn and never aborts a running response, so every trigger behaves the way only `user` may. No behavior change.",
+      "type": "none",
+      "packageName": "@excitedjs/agent-runtime-claude-code"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-claude-code",
+  "email": "dyzhu@bytedance.com"
+}
