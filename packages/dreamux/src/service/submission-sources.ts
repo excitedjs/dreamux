@@ -57,10 +57,16 @@ export const SYSTEM_SOURCE = 'system';
  *
  * This lives beside the source names because it is the same fact said twice:
  * whoever picks a `source` already knows why the input exists, so deriving the
- * trigger here keeps the two from drifting apart. A source this file does not
- * name — a Channel's own invention, an operator's own `team.submit` — is
- * `user`: an input Core cannot classify is one a person is behind, and that is
- * the only value permitted to interrupt work already in progress.
+ * trigger here keeps the two from drifting apart.
+ *
+ * A source this file does not name falls to `user`. That default is defence in
+ * depth for a producer added later, not an external authority: no caller-facing
+ * surface carries a `source` at all — the Command payloads have no such field
+ * and the Channel supplies its own name only through Core's own producers — so
+ * an outside party cannot reach this function with a value of its choosing.
+ * The fallback therefore answers "someone Core has not classified yet", and
+ * `user` is the reading that keeps an unknown producer from losing the ability
+ * to interrupt rather than one that grants it.
  */
 export function triggerForSource(source: string): TurnTrigger {
   switch (source) {

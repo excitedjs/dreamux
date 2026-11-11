@@ -96,11 +96,12 @@ export class CodexRuntime implements AgentRuntime {
    * and as a new turn while it is false so the work actually resumes. That
    * distinction is the whole reason a submission carries a trigger.
    *
-   * Starts false, then is seeded from `thread/read` once the thread is
-   * resolved: the status notification only reports transitions, so a runtime
-   * that subscribes to a thread already mid-turn would otherwise never hear
-   * that it is busy. Treating the unknown as busy instead would strand news in
-   * a thread nobody is reading, which is the worse failure.
+   * Starts false, then is seeded from the status the `thread/start` or
+   * `thread/resume` response already carries: the notification stream reports
+   * transitions only, so a runtime attaching to a thread already mid-turn
+   * would otherwise never hear that it is busy. Treating the unknown as busy
+   * instead would strand news in a thread nobody is reading, which is the
+   * worse failure.
    */
   private threadBusy = false;
   private startOutcome: AgentRuntimeStartOutcome | null = null;

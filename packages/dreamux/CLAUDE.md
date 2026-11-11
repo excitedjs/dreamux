@@ -90,8 +90,9 @@ Two settled shape rules govern where code lives:
   layer (the Feishu reply MCP tool takes `chat_id` as an explicit parameter).
   A Channel supplies opaque display attributes and faithful body text, and
   `AgentService` renders the one provenance envelope Core owns; the Agent
-  Runtime seam receives final text and nothing else, so no runtime sees a
-  source taxonomy, a channel identifier, or a rendering decision.
+  Runtime seam receives that final text plus, at most, the neutral `trigger`
+  saying why the turn exists — so no runtime sees a source taxonomy, a channel
+  identifier, or a rendering decision.
 - Direct Lark SDK / Feishu JSAPI calls belong in `@excitedjs/feishu-transport`;
   the built-in Feishu channel package (`@excitedjs/feishu-channel`) owns its
   session, tool backing, caller-scoped tool catalog, reply/react wire mapping,

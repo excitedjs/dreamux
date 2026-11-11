@@ -576,11 +576,15 @@ function originFor(
  * This CLI's origin vocabulary for a Core trigger that needs one stated.
  *
  * The two lists are not the same length, so this is a stated mapping rather
- * than a rename: a completion report, a scheduled fire and a host notice all
- * arrive as `task-notification` to this CLI, and only a peer's words carry an
- * author. `user` is absent by construction — it is this CLI's default for
- * stdin input, so stating it would say nothing, and `originFor` returns before
- * asking.
+ * than a rename. It names host-side provenance, not a value this CLI is
+ * documented to branch on: the only origin kinds its source settles are
+ * `channel` and `coordinator`, both for inbound paths this seam does not use,
+ * and it reads `origin` on neither the stdin path nor anywhere a stream-json
+ * turn arrives. So the values here are Dreamux's own labels for "automated
+ * input of this shape", carried so the envelope can say what it is.
+ *
+ * `user` is absent by construction — it is this CLI's default for stdin input,
+ * so stating it would say nothing, and `originFor` returns before asking.
  */
 function originKindFor(trigger: Exclude<TurnTrigger, 'user'>): string {
   switch (trigger) {
@@ -589,7 +593,7 @@ function originKindFor(trigger: Exclude<TurnTrigger, 'user'>): string {
     case 'scheduled':
       return 'task-notification';
     case 'agent-task':
-      return 'peer';
+      return 'agent-task';
     case 'system':
       return 'task-notification';
   }

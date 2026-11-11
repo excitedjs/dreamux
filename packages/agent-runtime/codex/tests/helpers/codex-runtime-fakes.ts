@@ -258,14 +258,6 @@ export class FakeCodexWsClient {
     // Appending to a thread's history opens no turn and settles nothing, so
     // there is no completion to schedule here.
     if (method === 'thread/inject_items') return {} as R;
-    if (method === 'thread/read') {
-      return {
-        thread: {
-          id: 'fresh-thread-1',
-          status: { type: this.threadStatusType },
-        },
-      } as R;
-    }
     throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
   }
 
@@ -287,7 +279,10 @@ export class FakeCodexWsClient {
     });
   }
 
-  /** What `thread/read` reports for this thread. */
+  /**
+   * The status the `thread/start` and `thread/resume` responses report for
+   * this thread, and that `emitThreadStatus` keeps current.
+   */
   threadStatusType: 'idle' | 'active' = 'idle';
 
   /** Report the thread's own busy/idle transition, as codex does. */

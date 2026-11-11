@@ -60,7 +60,7 @@ contributed into the same registry by their own always-loaded plugin, before
 an operator-configured `npm:` provider or plugin loads into it:
 
 - **Agent Runtime** — a provider factory creates a runtime handle with
-  `start` / `submit({ text })` / `stop`; provider-private session state crosses
+  `start` / `submit({ text, trigger? })` / `stop`; provider-private session state crosses
   the seam as an opaque serializable value; history reads use the neutral
   `readRecentActivity`. Owner: [Provider runtime](provider-runtime.md) —
   including configuration (`agents[]` / `dispatchers[]`), system prompts
