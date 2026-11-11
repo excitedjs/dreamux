@@ -36,6 +36,7 @@ import {
   type ClaudeCodeSession,
   type ClaudeCodeSessionSpec,
 } from '../src/supervisor.js';
+import type { SubmissionEnvelope } from '../src/stream.js';
 import type { TurnOutcome } from '../src/types.js';
 import { STATE_LEASE_REVOKED_ERROR_NAME } from '@excitedjs/dreamux-utils';
 import type {
@@ -85,7 +86,13 @@ class FakeSession implements ClaudeCodeSession {
   alive = false;
   stopCalls = 0;
   onExitHandler: ((error: Error) => void) | null = null;
-  readonly submits: Array<{ prompt: string; commandUuid: string }> = [];
+  readonly submits: Array<{
+    prompt: string;
+    commandUuid: string;
+    envelope?: SubmissionEnvelope;
+  }> = [];
+  /** The provenance envelope of the most recent submit, for adapter tests. */
+  lastEnvelope: SubmissionEnvelope | undefined = undefined;
   /** Every control request written to stdin, in order (interrupt included). */
   readonly controlRequests: Array<{ request_id: string }> = [];
   interruptCalls = 0;
@@ -137,8 +144,13 @@ class FakeSession implements ClaudeCodeSession {
     this.alive = true;
   }
 
-  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission> {
-    return this.rpc.submit(prompt, commandUuid);
+  submit(
+    prompt: string,
+    commandUuid?: string,
+    envelope?: SubmissionEnvelope,
+  ): Promise<RuntimeAdmission> {
+    this.lastEnvelope = envelope;
+    return this.rpc.submit(prompt, commandUuid, envelope);
   }
 
   interrupt(reason: string): Promise<boolean> {
@@ -619,6 +631,45 @@ describe('ClaudeCodeRuntime submit contract', () => {
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await admission.submission.settled;
     expect(capturedPrompt).toBe(raw);
+  });
+
+  it('states a user trigger as a human origin', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'typed', trigger: 'user' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    expect(h.sessions[0]!.lastEnvelope).toEqual({ origin: { kind: 'human' } });
+    await runtime.stop();
+  });
+
+  it('states every non-user trigger as synthetic text the user did not write', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({
+      text: 'a completion report',
+      trigger: 'completion',
+    });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    expect(h.sessions[0]!.lastEnvelope).toEqual({
+      isSynthetic: true,
+      client_composed: true,
+    });
+    await runtime.stop();
+  });
+
+  it('states nothing for an untriggered submission', async () => {
+    const h = new Harness();
+    const runtime = await tracked(h.createRuntime());
+    await runtime.start();
+    const admission = await runtime.submit({ text: 'untriggered' });
+    if (admission.status !== 'submitted') throw new Error('expected submitted');
+    await admission.submission.settled;
+    expect(h.sessions[0]!.lastEnvelope).toEqual({});
+    await runtime.stop();
   });
 });
 

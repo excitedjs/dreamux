@@ -2125,6 +2125,34 @@ describe('CodexRuntime delivery by trigger', () => {
     await runtime.stop();
   });
 
+  it('states the trigger as turn/start turnTrigger', async () => {
+    // codex's own optional source classification. It reaches the turn's
+    // metadata only and changes no delivery behaviour; it is stated so a turn
+    // started by a schedule or a completion report is distinguishable from one
+    // a person typed.
+    const { client, runtime } = await started();
+    await runtime.submit({ text: 'a scheduled fire', trigger: 'scheduled' });
+    const turnStart = client.requests.find((r) => r.method === 'turn/start');
+    expect(turnStart?.params).toMatchObject({ turnTrigger: 'scheduled' });
+    await runtime.stop();
+  });
+
+  it('states a user trigger as turnTrigger too', async () => {
+    const { client, runtime } = await started();
+    await runtime.submit({ text: 'a person speaking', trigger: 'user' });
+    const turnStart = client.requests.find((r) => r.method === 'turn/start');
+    expect(turnStart?.params).toMatchObject({ turnTrigger: 'user' });
+    await runtime.stop();
+  });
+
+  it('omits turnTrigger for an untriggered submission', async () => {
+    const { client, runtime } = await started();
+    await runtime.submit({ text: 'untriggered' });
+    const turnStart = client.requests.find((r) => r.method === 'turn/start');
+    expect(turnStart?.params).not.toHaveProperty('turnTrigger');
+    await runtime.stop();
+  });
+
   it('ignores another thread status and treats an untriggered submission as before', async () => {
     const { client, runtime } = await started();
     client.emitThreadStatus('foreign-thread', 'active');

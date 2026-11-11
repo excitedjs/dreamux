@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "A started turn now carries its trigger as codex's own `turn/start` `turnTrigger`, so a turn opened by a schedule, a completion report, or another agent is distinguishable from one a person typed. The value reaches only the turn's `x-codex-turn-metadata` payload and changes no delivery behaviour.",
+      "type": "minor",
+      "packageName": "@excitedjs/agent-runtime-codex"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex",
+  "email": "dyzhu@bytedance.com"
+}

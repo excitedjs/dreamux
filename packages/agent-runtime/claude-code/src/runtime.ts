@@ -12,12 +12,14 @@ import type {
   AgentRuntimeSubmissionInput,
   DreamuxLogger,
   RuntimeAdmission,
+  TurnTrigger,
 } from '@excitedjs/dreamux-types';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import { claudeCodeResidentArgs } from './args.js';
 import type { DispatcherClaudeCodeConfig } from './config.js';
 import { stringifyClaudeCodeMcpConfig } from './mcp-config.js';
 import { claudeSpawnEnv } from './paths.js';
+import type { SubmissionEnvelope } from './stream.js';
 import {
   createNativeActivityState,
   endNativeTurn,
@@ -240,7 +242,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    * ahead of this call.
    */
   submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
-    return this.trackAdmission(this.acceptInput(input.text));
+    return this.trackAdmission(this.acceptInput(input.text, input.trigger));
   }
 
   /**
@@ -260,7 +262,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       : { status: 'idle' };
   }
 
-  private async acceptInput(text: string): Promise<RuntimeAdmission> {
+  private async acceptInput(
+    text: string,
+    trigger?: TurnTrigger,
+  ): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
     let session: ClaudeCodeSession;
     try {
@@ -274,14 +279,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       };
     }
     if (this.stopped) return { status: 'stopped' };
-    // The trigger deliberately changes nothing here. This runtime delivers a
-    // stream-json submission mid-turn and never aborts a running response, so
-    // every trigger already behaves the way only `user` may behave on a
-    // runtime that can interrupt. It is therefore neither acted on nor
-    // restated in the envelope: the only origin vocabulary this CLI publishes
-    // covers inbound paths this seam does not use, and inventing a value for
-    // the others would state a protocol fact this package cannot verify.
-    const admission = await session.submit(text);
+    // Delivery is unchanged: this runtime hands every submission to a resident
+    // session that reads it mid-turn and never aborts a running response, so no
+    // trigger needs to change when the text arrives. What the trigger does
+    // change is what the message says it is, which the CLI records and reasons
+    // about — see `submissionOrigin`.
+    const admission = await session.submit(
+      text,
+      undefined,
+      submissionOrigin(trigger),
+    );
     if (
       !this.stopped &&
       this.session === session &&
@@ -551,4 +558,26 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
   }
+}
+
+/**
+ * How one submission states what it is, in the CLI's own published vocabulary.
+ *
+ * A person's input is `origin: { kind: 'human' }` — the kind the CLI documents
+ * for what the user typed, and the one it checks where a prompt must be
+ * human-typed rather than machine-supplied. Everything else is text the user
+ * did not write, which the CLI's documented shape for that is `isSynthetic`
+ * with no `origin`, plus `client_composed` so text this package composed is
+ * delivered as written rather than expanded as `@path` mentions or executed as
+ * a leading-slash command.
+ *
+ * An untriggered submission is left as an ordinary message: no caller stated a
+ * reason, so stating one would invent it.
+ */
+function submissionOrigin(
+  trigger: TurnTrigger | undefined,
+): SubmissionEnvelope {
+  if (trigger === 'user') return { origin: { kind: 'human' } };
+  if (trigger === undefined) return {};
+  return { isSynthetic: true, client_composed: true };
 }

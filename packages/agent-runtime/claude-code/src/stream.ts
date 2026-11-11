@@ -302,14 +302,49 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
 
 // ─── Outbound message builders (stdin) ──────────────────────────────────────
 
-/** One user turn as a stream-json `user` message line (no trailing newline). */
-export function buildUserMessage(text: string, commandUuid?: string): string {
-  const envelope: Record<string, unknown> = {
+/**
+ * The provenance fields an inbound user message may carry.
+ *
+ * Both are documented members of the CLI's `SDKUserMessage`:
+ *
+ *  - `origin` names where the message came from. `{ kind: 'human' }` is what a
+ *    person typed; the CLI checks it where a prompt must be human-typed rather
+ *    than machine-supplied.
+ *  - `isSynthetic` marks text the user did not write. Paired with
+ *    `client_composed`, which stops the CLI expanding `@path` mentions and
+ *    running a leading `/` as a command in text we composed ourselves.
+ *
+ * The other documented `origin` kinds describe deliveries the CLI assigns
+ * itself; setting one is documented as ignored or downgraded, so this package
+ * sets none of them.
+ */
+export interface SubmissionEnvelope {
+  readonly origin?: { readonly kind: 'human' };
+  readonly isSynthetic?: true;
+  readonly client_composed?: true;
+}
+
+/**
+ * One user turn as a stream-json `user` message line (no trailing newline).
+ *
+ * `envelope` states what the message is. It is not a delivery instruction: the
+ * CLI reads stdin input mid-turn either way and this runtime never asks it to
+ * interrupt.
+ */
+export function buildUserMessage(
+  text: string,
+  commandUuid?: string,
+  envelope?: SubmissionEnvelope,
+): string {
+  const wire: Record<string, unknown> = {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] },
   };
-  if (commandUuid !== undefined) envelope['uuid'] = commandUuid;
-  return JSON.stringify(envelope);
+  if (commandUuid !== undefined) wire['uuid'] = commandUuid;
+  if (envelope?.origin !== undefined) wire['origin'] = envelope.origin;
+  if (envelope?.isSynthetic === true) wire['isSynthetic'] = true;
+  if (envelope?.client_composed === true) wire['client_composed'] = true;
+  return JSON.stringify(wire);
 }
 
 /** Enable Claude Code Remote Control via a stream-json control request. */

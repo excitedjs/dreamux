@@ -520,6 +520,19 @@ native identifiers.
   and `system` exist so a runtime can deliver news without cancelling a running
   response. A provider with no such concept ignores the value, and an omitted
   trigger keeps the pre-existing ordinary-turn behaviour.
+- Each provider says the trigger in its own published vocabulary rather than
+  acting on a shared meaning. Codex delivers a non-`user` trigger as
+  `thread/inject_items` while its thread is busy and as a started turn while it
+  is idle, and states the trigger on a started turn as `turn/start`'s
+  `turnTrigger` — codex's own optional source classification, which reaches only
+  the turn's `x-codex-turn-metadata` payload and changes no delivery behaviour.
+  Claude Code never changes delivery by trigger (it reads every submission
+  mid-turn and aborts nothing) but states it on the envelope: `user` sends
+  `origin: { kind: "human" }`, the CLI's documented kind for what a person
+  typed, and every other trigger sends `isSynthetic` with `client_composed` and
+  no `origin`, the CLI's documented shape for text the user did not write.
+  Neither value is a Dreamux invention: both come from the CLI's published SDK
+  type for a streamed user message.
 - A provider fold or steer into the active logical turn settles with the exact
   same completion object; a queued input settles with a distinct completion in
   native order.

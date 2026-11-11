@@ -76,15 +76,50 @@ loss, and no turn started while the thread is idle.
 
 ## Claude Code adapter
 
-No change at all. That runtime already delivers a stream-json submission
+Delivery is unchanged. That runtime already delivers a stream-json submission
 mid-turn and never aborts a running response, so every trigger already behaves
-the way only `user` may behave on a runtime that can interrupt. The trigger is
-therefore neither acted on nor restated in the envelope.
+the way only `user` may behave on a runtime that can interrupt.
 
-An earlier revision wrote it into the envelope as `origin` with kind values
-taken from the CLI's binary. Those values have no published documentation
-behind them, and stating a protocol fact this package cannot verify is not
-worth doing — so the mapping was removed rather than sourced.
+The trigger is nevertheless stated on the envelope, in the CLI's own published
+vocabulary. The CLI's `SDKUserMessage` documents `origin` and `isSynthetic` as
+fields an application sets on a message it sends, and documents which kinds are
+its to assign. So:
+
+- `user` sends `origin: { kind: "human" }` — the documented kind for what the
+  user typed, and the one the CLI checks where a prompt must be human-typed
+  rather than machine-supplied.
+- Every other trigger sends `isSynthetic: true` with `client_composed: true`
+  and no `origin` — the documented shape for text the user did not write, with
+  `client_composed` stopping the CLI expanding `@path` mentions or running a
+  leading `/` as a command in text this package composed.
+- An untriggered submission sends neither, because no caller stated a reason.
+
+The other documented `origin` kinds (`task-notification`, `peer`, `channel`,
+`coordinator`, `auto-continuation`, `unclassified`) are the CLI's or its
+servers' to assign, so this package sets none of them. `task-notification` was
+tried and is ignored on this path: the CLI only honours a declared scheduled
+run when the process was started with `CLAUDE_CODE_HOST_SCHEDULED_RUN=1` and
+carries neither `CLAUDECODE` nor `CLAUDE_CODE_CHILD_SESSION`, and a resident
+Dreamux child carries the first of those.
+
+An earlier revision wrote a made-up `origin` kind set taken from the CLI's
+binary, and a later one removed the field entirely on the mistaken belief that
+no published vocabulary covered this path. Both were wrong; the mapping above
+rests on the published SDK type.
+
+## Codex: the trigger on a started turn
+
+`turn/start` accepts codex's own `turnTrigger` (its `TurnStartParams.turn_trigger`
+in the openai/codex source), documented there as an optional source
+classification for the caller that starts the turn and ignored when the request
+steers an active one. It reaches only the turn's `x-codex-turn-metadata`
+payload sent with each Responses API request.
+
+A started turn states the trigger here. This changes no delivery behaviour — the
+busy/idle routing above is what decides that — but it stops a turn opened by a
+schedule, a completion report, or another agent from being indistinguishable in
+codex's own telemetry from one a person typed. An appended submission starts no
+turn, so there is nothing to classify.
 
 ## Receipts
 
@@ -102,8 +137,11 @@ worth doing — so the mapping was removed rather than sourced.
 
 - Codex adapter: appended on busy for each non-`user` trigger; turn started when
   idle; `user` still steers while busy; a foreign thread's status is ignored;
-  an untriggered submission is unchanged.
-- Claude adapter: the envelope is unchanged for every trigger.
+  an untriggered submission is unchanged; a started turn states its trigger as
+  `turnTrigger`, and an untriggered one omits the field.
+- Claude adapter: a `user` trigger sends a human origin; every other trigger
+  sends synthetic text with no origin; an untriggered submission sends neither.
+  Delivery is identical in all three cases.
 - Core: every source maps to its trigger, an unknown source maps to `user`, and
   no non-`user` source can map to `user`.
 - Contract tests: the input key set, the trigger union, and the admission union

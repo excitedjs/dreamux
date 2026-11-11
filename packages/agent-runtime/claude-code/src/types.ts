@@ -8,6 +8,7 @@ import type {
   DreamuxLogger,
   RuntimeAdmission,
 } from '@excitedjs/dreamux-types';
+import type { SubmissionEnvelope } from './stream.js';
 
 /** A parsed JSON object. */
 export type JsonObject = Record<string, unknown>;
@@ -213,7 +214,11 @@ export interface ClaudeCodeSession {
   /** Spawn the child and resolve once it is up (reject on spawn error). */
   start(): Promise<void>;
   /** Resolve native admission; the returned submission carries eventual settlement. */
-  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission>;
+  submit(
+    prompt: string,
+    commandUuid?: string,
+    envelope?: SubmissionEnvelope,
+  ): Promise<RuntimeAdmission>;
   /** Interrupt whatever claude is doing; false when it is doing nothing. */
   interrupt(reason: string): Promise<boolean>;
   /** Whether the child is currently alive. */
