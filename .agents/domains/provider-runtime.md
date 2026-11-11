@@ -529,8 +529,10 @@ native identifiers.
   Claude Code never changes delivery by trigger (it reads every submission
   mid-turn and aborts nothing) but states it on the envelope: `user` sends
   `origin: { kind: "human" }`, the CLI's documented kind for what a person
-  typed, and every other trigger sends `isSynthetic` with `client_composed` and
-  no `origin`, the CLI's documented shape for text the user did not write.
+  typed, and every other trigger sends `isSynthetic` with no `origin`, the
+  CLI's documented shape for text the user did not write. `client_composed` is
+  deliberately not sent: the CLI documents it as skipping the whole turn-start
+  attachment pass, not merely mention expansion.
   Neither value is a Dreamux invention: both come from the CLI's published SDK
   type for a streamed user message.
 - A provider fold or steer into the active logical turn settles with the exact

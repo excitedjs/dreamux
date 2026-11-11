@@ -567,9 +567,15 @@ export class ClaudeCodeRuntime implements AgentRuntime {
  * for what the user typed, and the one it checks where a prompt must be
  * human-typed rather than machine-supplied. Everything else is text the user
  * did not write, which the CLI's documented shape for that is `isSynthetic`
- * with no `origin`, plus `client_composed` so text this package composed is
- * delivered as written rather than expanded as `@path` mentions or executed as
- * a leading-slash command.
+ * with no `origin`.
+ *
+ * `client_composed` is deliberately NOT set. It is documented to skip the whole
+ * turn-start attachment pass — nested `CLAUDE.md` and rules files, skill and
+ * tool listings, reminders — not merely `@path` and slash-command expansion.
+ * Those attachments are context this runtime's prompts depend on, and no
+ * submission is worth losing them for a mention-expansion nicety. The cost is
+ * that `@path` and a leading `/` in a composed message are still interpreted;
+ * that is the pre-existing behaviour and a separate question.
  *
  * An untriggered submission is left as an ordinary message: no caller stated a
  * reason, so stating one would invent it.
@@ -579,5 +585,5 @@ function submissionOrigin(
 ): SubmissionEnvelope {
   if (trigger === 'user') return { origin: { kind: 'human' } };
   if (trigger === undefined) return {};
-  return { isSynthetic: true, client_composed: true };
+  return { isSynthetic: true };
 }

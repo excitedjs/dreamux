@@ -310,9 +310,12 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
  *  - `origin` names where the message came from. `{ kind: 'human' }` is what a
  *    person typed; the CLI checks it where a prompt must be human-typed rather
  *    than machine-supplied.
- *  - `isSynthetic` marks text the user did not write. Paired with
- *    `client_composed`, which stops the CLI expanding `@path` mentions and
- *    running a leading `/` as a command in text we composed ourselves.
+ *  - `isSynthetic` marks text the user did not write.
+ *
+ * `client_composed` is a third documented field this package does not set: it
+ * is documented to skip the whole turn-start attachment pass (nested
+ * `CLAUDE.md` and rules, skill and tool listings, reminders), not merely
+ * mention expansion. See `submissionOrigin` in `runtime.ts`.
  *
  * The other documented `origin` kinds describe deliveries the CLI assigns
  * itself; setting one is documented as ignored or downgraded, so this package
@@ -321,7 +324,6 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
 export interface SubmissionEnvelope {
   readonly origin?: { readonly kind: 'human' };
   readonly isSynthetic?: true;
-  readonly client_composed?: true;
 }
 
 /**
@@ -343,7 +345,6 @@ export function buildUserMessage(
   if (commandUuid !== undefined) wire['uuid'] = commandUuid;
   if (envelope?.origin !== undefined) wire['origin'] = envelope.origin;
   if (envelope?.isSynthetic === true) wire['isSynthetic'] = true;
-  if (envelope?.client_composed === true) wire['client_composed'] = true;
   return JSON.stringify(wire);
 }
 

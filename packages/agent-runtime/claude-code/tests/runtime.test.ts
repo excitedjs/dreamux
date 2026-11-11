@@ -654,10 +654,10 @@ describe('ClaudeCodeRuntime submit contract', () => {
     });
     if (admission.status !== 'submitted') throw new Error('expected submitted');
     await admission.submission.settled;
-    expect(h.sessions[0]!.lastEnvelope).toEqual({
-      isSynthetic: true,
-      client_composed: true,
-    });
+    // `client_composed` is deliberately absent: it is documented to skip the
+    // whole turn-start attachment pass (nested CLAUDE.md and rules, skill and
+    // tool listings, reminders), which these prompts depend on.
+    expect(h.sessions[0]!.lastEnvelope).toEqual({ isSynthetic: true });
     await runtime.stop();
   });
 

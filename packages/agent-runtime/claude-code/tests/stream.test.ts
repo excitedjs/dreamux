@@ -707,20 +707,16 @@ describe('outbound builders', () => {
 
   it('buildUserMessage states synthetic text when one is given', () => {
     const parsed = JSON.parse(
-      buildUserMessage('hi', undefined, {
-        isSynthetic: true,
-        client_composed: true,
-      }),
+      buildUserMessage('hi', undefined, { isSynthetic: true }),
     );
     expect(parsed['isSynthetic']).toBe(true);
-    expect(parsed['client_composed']).toBe(true);
     // Documented shape for text the user did not write: no origin.
     expect('origin' in parsed).toBe(false);
   });
 
   it('buildUserMessage omits every provenance field when no envelope is given', () => {
     const parsed = JSON.parse(buildUserMessage('hi'));
-    for (const field of ['origin', 'isSynthetic', 'client_composed'])
+    for (const field of ['origin', 'isSynthetic'])
       expect(field in parsed).toBe(false);
   });
 

@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "A submission's trigger now states what the message is in the stream-json envelope. A `user` trigger sends `origin: { kind: \"human\" }`, the CLI's documented kind for what a person typed; every other trigger sends `isSynthetic: true` with `client_composed: true` and no origin, the CLI's documented shape for text the user did not write. Delivery is unchanged: this runtime already reads input mid-turn and never aborts a running response, so no trigger needs to change when the text arrives.",
+      "comment": "A submission's trigger now states what the message is in the stream-json envelope. A `user` trigger sends `origin: { kind: \"human\" }`, the CLI's documented kind for what a person typed; every other trigger sends `isSynthetic: true` with no origin, the CLI's documented shape for text the user did not write. Delivery is unchanged: this runtime already reads input mid-turn and never aborts a running response, so no trigger needs to change when the text arrives.",
       "type": "minor",
       "packageName": "@excitedjs/agent-runtime-claude-code"
     }

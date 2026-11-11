@@ -88,10 +88,13 @@ its to assign. So:
 - `user` sends `origin: { kind: "human" }` — the documented kind for what the
   user typed, and the one the CLI checks where a prompt must be human-typed
   rather than machine-supplied.
-- Every other trigger sends `isSynthetic: true` with `client_composed: true`
-  and no `origin` — the documented shape for text the user did not write, with
-  `client_composed` stopping the CLI expanding `@path` mentions or running a
-  leading `/` as a command in text this package composed.
+- Every other trigger sends `isSynthetic: true` and no `origin` — the documented
+  shape for text the user did not write. `client_composed` is deliberately NOT
+  sent: the CLI documents it as skipping the whole turn-start attachment pass
+  (nested `CLAUDE.md` and rules files, skill and tool listings, reminders), not
+  merely `@path` and slash-command expansion. Those attachments are context
+  these prompts depend on, so losing them is a worse trade than still
+  interpreting a mention in a composed message.
 - An untriggered submission sends neither, because no caller stated a reason.
 
 The other documented `origin` kinds (`task-notification`, `peer`, `channel`,
