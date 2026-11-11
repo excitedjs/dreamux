@@ -76,16 +76,22 @@ loss, and no turn started while the thread is idle.
 
 ## Claude Code adapter
 
-No delivery change. That runtime already delivers a stream-json submission as
-`priority: 'next'`, and only `'now'` aborts an in-flight response. The trigger is
-still written into the envelope as `origin`, this CLI's own word for the same
-fact, so the message can say what it is.
+No change at all. That runtime already delivers a stream-json submission
+mid-turn and never aborts a running response, so every trigger already behaves
+the way only `user` may behave on a runtime that can interrupt. The trigger is
+therefore neither acted on nor restated in the envelope.
+
+An earlier revision wrote it into the envelope as `origin` with kind values
+taken from the CLI's binary. Those values have no published documentation
+behind them, and stating a protocol fact this package cannot verify is not
+worth doing — so the mapping was removed rather than sourced.
 
 ## Receipts
 
 - `toSubmissionResult` reports `appended` as `submitted` — the text was accepted.
-- `teamSubmitResult` reports it as `duplicate`, because there is no turn
-  identity to name and promising one would promise a settlement that never comes.
+- `teamSubmitResult` reports it as its own public `appended`: delivered, with no
+  turn identity to name. `duplicate` would say the reverse — that Core refused
+  before any submission.
 - `asCompletionDeliveryResult` reports it as `accepted`.
 - `failedAdmissionReason` returns `null`: the display surface should not be
   closed as failed.
@@ -97,8 +103,7 @@ fact, so the message can say what it is.
 - Codex adapter: appended on busy for each non-`user` trigger; turn started when
   idle; `user` still steers while busy; a foreign thread's status is ignored;
   an untriggered submission is unchanged.
-- Claude adapter: envelope omits `origin` unless supplied, and carries it
-  verbatim when it is.
+- Claude adapter: the envelope is unchanged for every trigger.
 - Core: every source maps to its trigger, an unknown source maps to `user`, and
   no non-`user` source can map to `user`.
 - Contract tests: the input key set, the trigger union, and the admission union

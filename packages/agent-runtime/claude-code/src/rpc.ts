@@ -85,7 +85,6 @@ export class ClaudeCodeStreamRpc {
   submit(
     prompt: string,
     commandUuid: string = randomUUID(),
-    origin?: Record<string, unknown>,
   ): Promise<RuntimeAdmission> {
     if (this.closed || !this.stdin.writable) {
       return Promise.resolve({
@@ -108,7 +107,7 @@ export class ClaudeCodeStreamRpc {
       this.armIdleTimer();
       try {
         this.stdin.write(
-          `${buildUserMessage(prompt, commandUuid, origin)}\n`,
+          `${buildUserMessage(prompt, commandUuid)}\n`,
           (error) => {
             if (error != null) this.failWrite(commandUuid, request, error);
             else this.acceptRequest(request);

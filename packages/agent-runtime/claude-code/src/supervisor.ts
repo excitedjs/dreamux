@@ -124,11 +124,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
     if (this.spec.remoteControl) rpc.enableRemoteControl();
   }
 
-  submit(
-    prompt: string,
-    commandUuid?: string,
-    origin?: Record<string, unknown>,
-  ): Promise<RuntimeAdmission> {
+  submit(prompt: string, commandUuid?: string): Promise<RuntimeAdmission> {
     if (this.exitError !== null)
       return Promise.resolve({ status: 'failed', error: this.exitError });
     if (this.stopRequested || this.stopped)
@@ -139,7 +135,7 @@ class LiveClaudeCodeSession implements ClaudeCodeSession {
         error: new Error('claude resident child is not running'),
       });
     }
-    return this.rpc.submit(prompt, commandUuid, origin);
+    return this.rpc.submit(prompt, commandUuid);
   }
 
   /**

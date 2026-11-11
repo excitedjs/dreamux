@@ -698,27 +698,6 @@ describe('outbound builders', () => {
     expect('priority' in JSON.parse(buildUserMessage('hi'))).toBe(false);
   });
 
-  it('buildUserMessage omits origin unless one is supplied', () => {
-    expect('origin' in JSON.parse(buildUserMessage('hi'))).toBe(false);
-  });
-
-  it('buildUserMessage carries a supplied origin verbatim', () => {
-    // `origin` states why the message exists. This CLI reads it on its MCP
-    // channel and mailbox paths, not on this stdin path, so it changes no
-    // delivery behaviour here — the envelope still has to be able to say what
-    // it is, which is why Core states a trigger at all.
-    expect(
-      JSON.parse(
-        buildUserMessage('hi', 'uuid-1', { kind: 'task-notification' }),
-      ),
-    ).toEqual({
-      type: 'user',
-      message: { role: 'user', content: [{ type: 'text', text: 'hi' }] },
-      uuid: 'uuid-1',
-      origin: { kind: 'task-notification' },
-    });
-  });
-
   it('buildCanUseToolAllow echoes the tool input back as updatedInput', () => {
     const parsed = JSON.parse(buildCanUseToolAllow('r1', { command: 'ls' }));
     expect(parsed).toEqual({

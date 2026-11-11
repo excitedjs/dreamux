@@ -302,27 +302,13 @@ function parseCommandLifecycle(parsed: Record<string, unknown>): ParsedLine {
 
 // ─── Outbound message builders (stdin) ──────────────────────────────────────
 
-/**
- * One user turn as a stream-json `user` message line (no trailing newline).
- *
- * `origin` states why the message exists. It is carried for the transcript and
- * for any future consumer; this CLI build reads it only on the MCP-channel and
- * mailbox paths, not on the stream-json stdin path, so today it changes no
- * behaviour here. The value still travels because the runtime is the only layer
- * that knows it, and dropping it would make the envelope unable to say what it
- * is — the reason Core states a trigger at all.
- */
-export function buildUserMessage(
-  text: string,
-  commandUuid?: string,
-  origin?: Record<string, unknown>,
-): string {
+/** One user turn as a stream-json `user` message line (no trailing newline). */
+export function buildUserMessage(text: string, commandUuid?: string): string {
   const envelope: Record<string, unknown> = {
     type: 'user',
     message: { role: 'user', content: [{ type: 'text', text }] },
   };
   if (commandUuid !== undefined) envelope['uuid'] = commandUuid;
-  if (origin !== undefined) envelope['origin'] = origin;
   return JSON.stringify(envelope);
 }
 

@@ -12,7 +12,6 @@ import type {
   AgentRuntimeSubmissionInput,
   DreamuxLogger,
   RuntimeAdmission,
-  TurnTrigger,
 } from '@excitedjs/dreamux-types';
 import { RuntimeStateFence } from '@excitedjs/dreamux-utils';
 import { claudeCodeResidentArgs } from './args.js';
@@ -241,7 +240,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
    * ahead of this call.
    */
   submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
-    return this.trackAdmission(this.acceptInput(input));
+    return this.trackAdmission(this.acceptInput(input.text));
   }
 
   /**
@@ -261,10 +260,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       : { status: 'idle' };
   }
 
-  private async acceptInput(
-    input: AgentRuntimeSubmissionInput,
-  ): Promise<RuntimeAdmission> {
-    const text = input.text;
+  private async acceptInput(text: string): Promise<RuntimeAdmission> {
     if (this.stopped) return { status: 'stopped' };
     let session: ClaudeCodeSession;
     try {
@@ -278,13 +274,14 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       };
     }
     if (this.stopped) return { status: 'stopped' };
-    // The trigger rides along as `origin`, this CLI's own word for the same
-    // fact. It is stated rather than acted on: this build consumes `origin`
-    // only on the MCP-channel and mailbox paths, so a stream-json turn keeps
-    // its ordinary `next` delivery and never interrupts work in flight. That
-    // is the intended behaviour here — only `user` may interrupt, and on this
-    // runtime nothing needs to, because no submission aborts a running turn.
-    const admission = await session.submit(text, undefined, originFor(input));
+    // The trigger deliberately changes nothing here. This runtime delivers a
+    // stream-json submission mid-turn and never aborts a running response, so
+    // every trigger already behaves the way only `user` may behave on a
+    // runtime that can interrupt. It is therefore neither acted on nor
+    // restated in the envelope: the only origin vocabulary this CLI publishes
+    // covers inbound paths this seam does not use, and inventing a value for
+    // the others would state a protocol fact this package cannot verify.
+    const admission = await session.submit(text);
     if (
       !this.stopped &&
       this.session === session &&
@@ -553,48 +550,5 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     err?: unknown,
   ): void {
     this.logger[level](err !== undefined ? { err } : {}, msg);
-  }
-}
-
-/**
- * The trigger as this CLI's own `origin`, or `undefined` for an ordinary turn.
- *
- * Only a trigger that says something beyond "a person is speaking" is worth
- * stating: `human` is what this CLI already assumes for stdin input, so an
- * explicit origin for it would be noise. Everything else is mapped to the
- * origin kind this CLI uses for the same distinction.
- */
-function originFor(
-  input: AgentRuntimeSubmissionInput,
-): Record<string, unknown> | undefined {
-  const trigger = input.trigger;
-  if (trigger === undefined || trigger === 'user') return undefined;
-  return { kind: originKindFor(trigger) };
-}
-
-/**
- * This CLI's origin vocabulary for a Core trigger that needs one stated.
- *
- * The two lists are not the same length, so this is a stated mapping rather
- * than a rename. It names host-side provenance, not a value this CLI is
- * documented to branch on: the only origin kinds its source settles are
- * `channel` and `coordinator`, both for inbound paths this seam does not use,
- * and it reads `origin` on neither the stdin path nor anywhere a stream-json
- * turn arrives. So the values here are Dreamux's own labels for "automated
- * input of this shape", carried so the envelope can say what it is.
- *
- * `user` is absent by construction — it is this CLI's default for stdin input,
- * so stating it would say nothing, and `originFor` returns before asking.
- */
-function originKindFor(trigger: Exclude<TurnTrigger, 'user'>): string {
-  switch (trigger) {
-    case 'completion':
-      return 'task-notification';
-    case 'scheduled':
-      return 'task-notification';
-    case 'agent-task':
-      return 'agent-task';
-    case 'system':
-      return 'task-notification';
   }
 }
