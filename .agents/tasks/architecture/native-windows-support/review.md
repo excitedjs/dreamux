@@ -3,6 +3,10 @@
 Status: assigned complete-diff reviews received; R1-R4 corrected and verified.
 R5 validation was deferred by the operator. On 2026-11-12 the operator approved
 knowledge-closeout with that explicit coverage limitation retained.
+After the operator approved `done`, delivery CI exposed R6. The operator chose
+a new branch and replacement PR instead of the proposed workflow correction.
+The old failure remains recorded; fresh delivery CI is required. The prior
+completed review does not certify the failed push event.
 
 ## Target and evidence
 
@@ -48,6 +52,25 @@ with that stated limitation on 2026-11-12.
 | R3 (P1): Windows uninstall protection compares paths case-sensitively | Accepted and resolved | The pre-correction comparisons at `onboard/uninstall.ts:181` and `:239-240` allowed case aliases on Windows to bypass protection. Comparison keys now normalize Windows case without changing filesystem targets or Unix behavior. Eight isolated regressions and the complete uninstall file pass; independent review and all integrated gates pass. See the R3 verification section. | Operator selected "Correct and verify" on 2026-11-12 at 13:34 (UTC+08:00); correction stayed within that scope |
 | R4 (P2): service-owned installation drops the restart handoff result | Accepted and resolved | The pre-correction register/install chain discarded the control result and inferred `started: true` from the request. It now preserves `handedOff`, reports `started: false` for self-install handoff and states unconfirmed completion in daemon/onboard output. Eight focused cases, independent review and all integrated gates pass. Unix and dry-run behavior and the control mechanism are unchanged; see the R4 verification section. | Operator selected "Correct and verify" on 2026-11-12; correction stayed within that scope |
 | R5: stopping a service entry before it joins the Job lacks lifecycle evidence | Validation deferred by the operator; coverage gap remains open | `windows-entry.ts:26-29` opens stderr before asynchronous Job creation/assignment. Stop can reserve an empty Job during this interval, then relies on Task completion checks. Existing control fixtures wait for ready first. Entry exit and file release in this window remain unverified; passing ready-state tests do not cover it. No failure is claimed and no experiment was prepared or executed. | Operator selected "Defer this item" on 2026-11-12; suspend this validation and retain the review-closeout boundary |
+
+## Delivery finding R6: unavailable push-before commit
+
+The [first rebased push run](https://github.com/excitedjs/dreamux/actions/runs/43207356712)
+failed its commit-metadata job while calculating the old/new revision range:
+`git log` reported `Invalid revision range` and exited 128 before evaluating
+author email. The checkout fetched current heads and tags with full depth, but
+the force-push's previous tip was no longer reachable through those refs.
+The new head checked out successfully. The PR metadata job's success does not
+resolve this push-event failure.
+
+Independent source/log review confirmed the workflow gap. A narrow fetch of
+the missing old commit, followed by the unchanged range check, was proposed.
+In response to the correction card on 2026-11-12, the operator instead requested
+closing the old PR and opening a new one. PR #488 now targets `next` from a new
+branch; PR #476 is closed with a replacement link. No workflow correction or
+isolated Git regression was executed, and noreply, ERE and denylist policy are
+unchanged. The original force-push boundary remains uncorrected; new-branch
+delivery must pass its own CI and is not evidence that the old failure was fixed.
 
 ## Completed coverage
 
