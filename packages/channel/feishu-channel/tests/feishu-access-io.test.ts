@@ -10,7 +10,7 @@ import {
   type DispatcherAccessStateV3,
 } from '../src/access/state.js';
 import type { GateInbound } from '../src/access/gate.js';
-import { expectOwnerOnlyPermissions } from '../../../../common/scripts/test-permissions.mjs';
+import { expectOwnerOnlyPermissions } from '../../../../common/testing/test-permissions.mjs';
 
 const log: DreamuxLogger = {
   error() {},

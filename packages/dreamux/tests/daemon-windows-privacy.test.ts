@@ -16,14 +16,14 @@ import {
   isWindowsAdministrator,
   readWindowsPermissions,
   setWindowsFixturePermissions,
-} from '../../../common/scripts/test-permissions.mjs';
+} from '../../../common/testing/test-permissions.mjs';
 
 import { createServiceHost } from '../src/daemon/host.js';
 import { installUserService } from '../src/daemon/install.js';
 import type { ServiceInstallAnswers } from '../src/daemon/environment.js';
 import type { CommandRunner } from '../src/platform/command-runner.js';
 import { TransparentFileLedger } from '../src/platform/file-ledger.js';
-import { logsRoot, windowsServiceFile } from '../src/platform/paths.js';
+import { logsRoot } from '../src/platform/paths.js';
 
 interface LogPermissions {
   currentUser: string;
@@ -119,9 +119,18 @@ describe.skipIf(process.platform !== 'win32')(
           before.entries.every((entry) => entry.owner === 'S-1-5-32-544'),
         ).toBe(true);
       }
+      let guardRead = false;
       let registered = false;
       const runner: CommandRunner = {
         run: async () => {
+          throw new Error('unexpected task command');
+        },
+        capture: async () => {
+          if (!guardRead) {
+            guardRead = true;
+            return 'null';
+          }
+          expect(registered).toBe(false);
           const prepared = await permissions();
           expect(prepared.entries.map((entry) => entry.path).sort()).toEqual(
             [
@@ -141,29 +150,37 @@ describe.skipIf(process.platform !== 'win32')(
             });
           }
           registered = true;
+          return '\\Dreamux-fixture';
         },
-        capture: async () => 'null',
         check: async () => {
           throw new Error('unexpected task check');
         },
       };
-      await installUserService({
+      const ledger = new TransparentFileLedger();
+      const result = await installUserService({
         answers,
-        ledger: new TransparentFileLedger(),
+        ledger,
         host: createServiceHost({ runner, platform: 'win32' }),
       });
       expect(registered).toBe(true);
+      expect(result.unitPath).toBe('\\Dreamux-fixture');
+      expect(
+        ledger.entries().some((entry) => entry.path === result.unitPath),
+      ).toBe(false);
       expect(
         await readFile(join(logsRoot(), 'workflow', 'existing.log'), 'utf8'),
       ).toBe('existing diagnostic\n');
+      await expect(readFile(join(root, 'daemon.mjs'))).rejects.toMatchObject({
+        code: 'ENOENT',
+      });
     }, 20000);
 
     it('leaves existing log ownership, ACLs and contents unchanged during dry run', async () => {
       await exposeExistingLogs();
       const before = await permissions();
       const runner: CommandRunner = {
-        run: async (_command, _args, options) => {
-          expect(options?.dryRun).toBe(true);
+        run: async () => {
+          throw new Error('unexpected task command');
         },
         capture: async () => {
           throw new Error('unexpected task query');
@@ -182,7 +199,7 @@ describe.skipIf(process.platform !== 'win32')(
       expect(
         await readFile(join(logsRoot(), 'workflow', 'existing.log'), 'utf8'),
       ).toBe('existing diagnostic\n');
-      await expect(readFile(windowsServiceFile())).rejects.toMatchObject({
+      await expect(readFile(join(root, 'daemon.mjs'))).rejects.toMatchObject({
         code: 'ENOENT',
       });
     }, 20000);

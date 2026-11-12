@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { expectOwnerOnlyPermissions } from './permissions.js';
+import { expectOwnerOnlyPermissions } from '../../../common/testing/test-permissions.mjs';
 
 import {
   COMPLETION_INLINE_BUDGET_DEFAULT,

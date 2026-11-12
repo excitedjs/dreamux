@@ -22,7 +22,6 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { expectOwnerOnlyPermissions } from './permissions.js';
 import {
   currentWindowsUserSid,
   isWindowsAdministrator,
@@ -30,7 +29,8 @@ import {
   readWindowsPermissions,
   setWindowsFixturePermissions,
   withWindowsRestorePrivilege,
-} from '../../../common/scripts/test-permissions.mjs';
+  expectOwnerOnlyPermissions,
+} from '../../../common/testing/test-permissions.mjs';
 
 import {
   isProcessAlive,

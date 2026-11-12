@@ -35,7 +35,7 @@ import { renderSubmission } from '../src/service/agent/submission.js';
 import {
   expectOwnerOnlyPermissions,
   makeWorldReadable,
-} from '../../../common/scripts/test-permissions.mjs';
+} from '../../../common/testing/test-permissions.mjs';
 
 /**
  * The production pipeline one Command runs: a payload carrying the Channel's

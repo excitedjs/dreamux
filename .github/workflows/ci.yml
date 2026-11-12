@@ -117,20 +117,71 @@ jobs:
           '
 
   commit-metadata:
-    name: commit metadata - author email check
+    name: commit metadata — author email check
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
       - name: Check commit author emails
         env:
-          AUTHOR_EMAIL_DENYLIST_REGEX: ${{ vars.AUTHOR_EMAIL_DENYLIST_REGEX }}
-        run: node common/scripts/check-author-emails.mjs
+          # Optional private denylist (an extended-regex), kept in repository
+          # config rather than committed so this public workflow carries no
+          # company-specific policy data. Set it under repo Settings → Secrets
+          # and variables → Actions → Variables, e.g.
+          #   AUTHOR_EMAIL_DENYLIST_REGEX = @([^@]*\.)?example\.com$|@([^@]*\.)?example\.org$
+          # The committed checks below already reject machine-local and
+          # malformed author identities even when this variable is unset.
+          DENYLIST_RE: ${{ vars.AUTHOR_EMAIL_DENYLIST_REGEX }}
+        run: |
+          set -euo pipefail
+
+          zero=0000000000000000000000000000000000000000
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            commits=$(git log --format='%H' \
+              "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}")
+          elif [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            commits=$(git log -1 --format='%H' HEAD)
+          elif [ "${{ github.event.before }}" = "$zero" ]; then
+            commits=$(git log -1 --format='%H' "${{ github.event.after }}")
+          else
+            commits=$(git log --format='%H' \
+              "${{ github.event.before }}..${{ github.event.after }}")
+          fi
+
+          fail=0
+          while IFS= read -r c; do
+            [ -z "$c" ] && continue
+            email=$(git log -1 --format='%ae' "$c")
+            # Generic, committed checks: GitHub privacy emails pass; machine-local
+            # and malformed identities are rejected outright.
+            case "$email" in
+              *@users.noreply.github.com)
+                continue
+                ;;
+              *@localhost|*@*.local|*@local)
+                echo "::error::commit $c uses a machine-local author email: $email"
+                fail=1
+                continue
+                ;;
+              *@*)
+                : # has a domain — fall through to the optional private denylist
+                ;;
+              *)
+                echo "::error::commit $c has an invalid author email: $email"
+                fail=1
+                continue
+                ;;
+            esac
+            # Optional private denylist from repo config, enforced only when set —
+            # keeps company-specific domains out of this committed file.
+            if [ -n "${DENYLIST_RE}" ] && printf '%s' "$email" | grep -qiE "${DENYLIST_RE}"; then
+              echo "::error::commit $c author email matches the configured denylist: $email"
+              fail=1
+            fi
+          done <<< "$commits"
+          [ "$fail" = 0 ]
 
   scripts:
     name: repository scripts (${{ matrix.os }})

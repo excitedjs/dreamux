@@ -226,7 +226,7 @@ interrupt row with one shared id both appear.
   result, a JSON-text string result, and a plain string result render as
   before.
 - Gates: `rush build`, `rush lint`, `rush test`, `rush typecheck:tests`,
-  `.agents/scripts/check.mjs`.
+  `.agents/scripts/check.sh`.
 - Coverage limit: no live Feishu probe; card behaviour is asserted through the
   projected events.
 

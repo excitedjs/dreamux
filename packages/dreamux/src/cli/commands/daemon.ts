@@ -11,6 +11,9 @@ import {
 } from '../../service/dispatcher-service/restart-intent.js';
 import { controlUserService, type DaemonVerb } from '../../daemon/control.js';
 import { getServiceStatus } from '../../daemon/status.js';
+import { windowsServiceRoot } from '../../daemon/windows.js';
+import { ExecaCommandRunner } from '../../platform/command-runner.js';
+import { restartIntentPath } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
 import { noopHandler, type DreamuxCommand } from './types.js';
@@ -149,7 +152,11 @@ function createDaemonRestartCommand(): CommandModule<{}, DaemonRestartArgv> {
 async function runDaemonControl(verb: DaemonVerb): Promise<void> {
   const result = await controlUserService(verb, {});
   if (result.platform === 'windows') {
-    console.log(`dreamux daemon ${verb}: Windows Task Scheduler`);
+    console.log(
+      result.handedOff
+        ? `dreamux daemon ${verb}: handed off to an external controller; completion is not yet confirmed`
+        : `dreamux daemon ${verb}: ${verb === 'stop' ? 'service stopped' : 'service responding'}`,
+    );
     return;
   }
   const issued = result.commands
@@ -177,6 +184,13 @@ async function handleDaemonRestart(argv: DaemonRestartArgv): Promise<void> {
     targets,
     announce: argv.announce,
     now: Date.now(),
+    ...(process.platform === 'win32'
+      ? {
+          path: restartIntentPath(
+            await windowsServiceRoot(new ExecaCommandRunner()),
+          ),
+        }
+      : {}),
     runControl: () => runDaemonControl('restart'),
   });
 }
@@ -189,5 +203,10 @@ function printDaemonInstallResult(result: DaemonInstallResult): void {
   console.log(
     `dreamux daemon install service: ${result.service.platform} ${result.service.unitPath}`,
   );
+  if (result.service.handedOff) {
+    console.log(
+      'dreamux daemon install: handed off to an external controller; completion is not yet confirmed',
+    );
+  }
   printServiceWarnings(result.service.lingerEnabled, result.service.warnings);
 }

@@ -139,6 +139,10 @@ Codex needs an explicit temporary `CODEX_HOME`. Tests exercising a missing-home
 fallback must mock `homedir()` to a disposable directory. Never derive a
 recursive cleanup target from an ambient or restored user home.
 
+The shared permission oracle is `/common/testing/test-permissions.mjs`, with
+TypeScript declarations in `/common/testing/test-permissions.d.mts`. Tests and
+their fixtures import it directly; it is not a package runtime capability.
+
 Assert native behavior: current-user DACLs on Windows, POSIX modes on Unix,
 realpath equivalence for junction/symlink targets, complete literal argv
 (including multiline prompts) and termination of descendants after their
@@ -168,7 +172,7 @@ intentionally lacks Codex; it does not certify provider compatibility.
 The model cases in `codex-native-contracts-live.test.ts`,
 `codex-activity-live.test.ts` and `codex-inbound-live.test.ts` additionally require
 `DREAMUX_RUN_LIVE_MODEL_GATE=1` and usable model authentication. Only that
-opt-in makes the wrapper retain the original Codex home in
+opt-in makes the shared global setup retain the original Codex home in
 `DREAMUX_TEST_AUTH_HOME`; the live fixtures read its auth file into their
 disposable homes rather than creating sessions in the operator home. This explicit
 execution boundary lets normal hosted CI check installed/protocol compatibility

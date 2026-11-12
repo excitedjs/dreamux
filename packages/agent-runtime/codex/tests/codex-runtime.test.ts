@@ -2061,7 +2061,7 @@ it('keeps new-provider/old-host input values when the public context omits resul
 
 describe('CodexRuntime delivery by trigger', () => {
   async function started() {
-    const client = new FakeCodexWsClient();
+    const client = new FakeCodexRpcClient();
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);
     await runtime.start();
@@ -2132,7 +2132,7 @@ describe('CodexRuntime delivery by trigger', () => {
     // a thread that is already running would never hear "active", and would
     // deliver news as a steer — the exact interruption the trigger prevents.
     // thread/start already reports the status, so no extra read is needed.
-    const client = new FakeCodexWsClient();
+    const client = new FakeCodexRpcClient();
     client.threadStatusType = 'active';
     const { deps } = makeDeps({ client });
     const runtime = new CodexRuntime(identity(null), deps);

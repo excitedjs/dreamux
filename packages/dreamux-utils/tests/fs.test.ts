@@ -14,11 +14,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { publishFileExclusive, writeFileAtomic } from '../src/fs.js';
 import { TransactionalStore } from '../src/transactional-store.js';
-import { expectOwnerOnlyPermissions } from './permissions.js';
 import {
   holdWindowsReadLock,
   makeWorldReadable,
-} from '../../../common/scripts/test-permissions.mjs';
+  expectOwnerOnlyPermissions,
+} from '../../../common/testing/test-permissions.mjs';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof fs>();

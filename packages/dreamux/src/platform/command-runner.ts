@@ -33,6 +33,7 @@ export interface CommandRunner {
       cwd?: string;
       env?: NodeJS.ProcessEnv;
       dryRun?: boolean;
+      input?: string;
     },
   ): Promise<string>;
 }
@@ -74,11 +75,12 @@ export class ExecaCommandRunner implements CommandRunner {
   async capture(
     command: string,
     args: string[],
-    options: CommandOptions = {},
+    options: CommandOptions & { input?: string } = {},
   ): Promise<string> {
     if (options.dryRun) return '';
     const result = await execa(command, args, {
       ...execaEnvironment(options),
+      ...(options.input !== undefined ? { input: options.input } : {}),
     });
     return result.stdout;
   }

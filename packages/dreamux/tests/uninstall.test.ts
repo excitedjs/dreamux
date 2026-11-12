@@ -266,6 +266,84 @@ describe('dreamux uninstall', () => {
     expect(runner.calls).toEqual([]);
   });
 
+  it.skipIf(process.platform !== 'win32').each(['HOME', 'cwd'])(
+    'rejects Windows case aliases of %s before service operations',
+    async (protectedLocation) => {
+      const previousCwd = process.cwd();
+      const protectedDir =
+        protectedLocation === 'HOME' ? join(root, 'home') : root;
+      const marker = join(protectedDir, 'keep.txt');
+      writeFileSync(marker, 'protected directory');
+      const alias = protectedDir.toUpperCase();
+      expect(alias).not.toBe(protectedDir);
+      vi.stubEnv('DREAMUX_ROOT', alias);
+      const runner = new FakeRunner();
+      const check = vi.spyOn(runner, 'check');
+      const capture = vi.spyOn(runner, 'capture');
+      try {
+        if (protectedLocation === 'cwd') process.chdir(protectedDir);
+        for (const dryRun of [true, false]) {
+          await expect(
+            runUninstall({ runner, dryRun, platform: 'win32' }),
+          ).rejects.toEqual(
+            new Error(
+              `refusing to remove unsafe dreamux config directory: ${alias}`,
+            ),
+          );
+          expect(readFileSync(marker, 'utf8')).toBe('protected directory');
+          expect(runner.calls).toEqual([]);
+          expect(check).not.toHaveBeenCalled();
+          expect(capture).not.toHaveBeenCalled();
+        }
+      } finally {
+        process.chdir(previousCwd);
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'win32').each([
+    ['CODEX_HOME', 'equal'],
+    ['CODEX_HOME', 'inside'],
+    ['CODEX_HOME', 'contains'],
+    ['CLAUDE_CONFIG_DIR', 'equal'],
+    ['CLAUDE_CONFIG_DIR', 'inside'],
+    ['CLAUDE_CONFIG_DIR', 'contains'],
+  ] as const)(
+    'rejects Windows case aliases of %s with %s overlap before service operations',
+    async (variable, relation) => {
+      const protectedDir = join(root, 'operator-parent', 'runtime');
+      const configDir =
+        relation === 'equal'
+          ? protectedDir
+          : relation === 'inside'
+            ? join(protectedDir, 'child')
+            : dirname(protectedDir);
+      mkdirSync(protectedDir, { recursive: true });
+      mkdirSync(configDir, { recursive: true });
+      const marker = join(protectedDir, 'keep.txt');
+      const configMarker = join(configDir, 'config-keep.txt');
+      writeFileSync(marker, 'operator state');
+      writeFileSync(configMarker, 'removal root');
+      vi.stubEnv(variable, protectedDir);
+      const alias = configDir.toUpperCase();
+      expect(alias).not.toBe(configDir);
+      vi.stubEnv('DREAMUX_ROOT', alias);
+      const runner = new FakeRunner();
+      const check = vi.spyOn(runner, 'check');
+      const capture = vi.spyOn(runner, 'capture');
+      for (const dryRun of [true, false]) {
+        await expect(
+          runUninstall({ runner, dryRun, platform: 'win32' }),
+        ).rejects.toThrow(/operator agent runtime state/);
+        expect(readFileSync(marker, 'utf8')).toBe('operator state');
+        expect(readFileSync(configMarker, 'utf8')).toBe('removal root');
+        expect(runner.calls).toEqual([]);
+        expect(check).not.toHaveBeenCalled();
+        expect(capture).not.toHaveBeenCalled();
+      }
+    },
+  );
+
   it.each(['CODEX_HOME', 'CLAUDE_CONFIG_DIR'])(
     'protects the provider-derived %s directory and its descendants before service removal',
     async (variable) => {

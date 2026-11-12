@@ -2,8 +2,10 @@
  * Service-manager lifecycle wrappers for the `dreamux daemon` command group.
  *
  * These talk to the native user-level service manager directly (Linux
- * `systemctl --user`, macOS `launchctl`, Windows Task Scheduler) — not the admin socket — so they work
- * even when the server is down. Each verb maps to the platform's idiom:
+ * `systemctl --user`, macOS `launchctl`, Windows Task Scheduler), so control
+ * remains available when the server is down. Windows also checks the admin
+ * endpoint before reporting a completed start/restart. Each verb maps to the
+ * platform's idiom:
  *
  *   verb     | systemd --user                       | launchd (gui/<uid>/<label>)
  *   ---------|--------------------------------------|----------------------------
@@ -38,8 +40,10 @@ export interface ServiceControlOptions {
 export interface ServiceControlResult {
   platform: ServicePlatform;
   verb: DaemonVerb;
-  /** Commands actually issued (command + args), in order. */
+  /** Lifecycle commands issued (command + args), excluding status queries. */
   commands: Array<{ command: string; args: string[] }>;
+  /** An external controller must finish after this service-owned caller exits. */
+  handedOff?: boolean;
 }
 
 export async function controlUserService(
@@ -47,17 +51,18 @@ export async function controlUserService(
   options: ServiceControlOptions,
 ): Promise<ServiceControlResult> {
   const host = createServiceHost(options);
-  const unit = serviceUnitPath(host.platform, host.homeDir);
   const dryRun = options.dryRun ?? false;
   const commands: Array<{ command: string; args: string[] }> = [];
 
-  if (unit.platform === 'windows') {
+  if (host.platform === 'win32') {
     return {
       platform: 'windows',
       verb,
-      commands: await controlWindowsService(verb, host.runner, dryRun),
+      ...(await controlWindowsService(verb, host.runner, dryRun)),
     };
   }
+
+  const unit = serviceUnitPath(host.platform, host.homeDir);
 
   if (unit.platform === 'systemd') {
     const args = ['--user', verb, SYSTEMD_UNIT];

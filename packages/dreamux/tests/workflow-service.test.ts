@@ -525,7 +525,9 @@ it('reaches only createLocked on the teammates dependency and holds the lock unt
   });
   expect(spawn).not.toHaveBeenCalled();
   expect(send).not.toHaveBeenCalled();
-  expect(runtime.inputs).toEqual([`<task>do it</task>\n\n<reminder>${AGENT_TASK_REMINDER}</reminder>`]);
+  expect(runtime.inputs).toEqual([
+    `<task>do it</task>\n\n<reminder>${AGENT_TASK_REMINDER}</reminder>`,
+  ]);
   const resultSent = deferred<void>();
   const runner = controls.runners[0]!;
   const sendResult = runner.send.bind(runner);

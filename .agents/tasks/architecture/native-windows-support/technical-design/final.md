@@ -62,49 +62,99 @@ The discovery budget and its behavior for valid queries are unchanged.
 Windows registers a Password, limited-token Task Scheduler task for the current
 user at logon. Password logon runs without the interactive desktop console;
 the logon trigger remains separate from that login mode. The same registration
-PowerShell process collects the account password with `Read-Host -AsSecureString`
-only for a new task or a conversion from another mode. It passes a transient
-credential directly to the Scheduler Object parameter set. Dreamux does not
+PowerShell process opens a native Windows credential dialog for a new task,
+a conversion from another mode, or changed installation Data. The dialog requests
+the current Windows account password, not a Windows Hello PIN. It passes a transient
+credential directly to credentialed Scheduler XML registration. Dreamux does not
 receive the password in JavaScript or put it in arguments, environment, files
-or logs. Task Scheduler stores the login credential. Registration can prompt
-only in a terminal; without one, PowerShell's non-interactive mode rejects the
-prompt. Dry runs do not prompt or launch registration.
+or logs. Task Scheduler stores the login credential. The dialog does not depend
+on a TTY branch. Cancellation or a native error aborts registration; credential
+buffers are cleared and freed in the same PowerShell process. Dry runs do not
+open the dialog or launch registration.
 
-An existing Password task receives an action-only update. Other existing tasks
-keep their full definition, including triggers, settings, description and run
-level, while installation updates the action and selects the current user's
-Password principal. Errors propagate without fallback to Interactive or S4U.
-Installation owns
-`DREAMUX_ROOT/daemon.mjs`, including pinned executable,
-arguments, environment and append-only log routing. The Node launcher owns a
-named service Job in the `Global` namespace with a current-user-only DACL, so
-the desktop CLI and non-interactive service refer to the same kernel object.
-Ordinary supervised children retain their own nested Jobs.
-Stop disables the task and acquires its named Job, reserving the name if startup
-has not created it yet. It terminates and awaits the owned processes before
-stopping the task action, then releases the Job. A late launcher cannot create
-another Job during this interval. No process tree is reconstructed from PIDs. The
-previous task-enabled state is preserved. Unix service managers remain unchanged.
+Only an existing Password task with ordinal-equal Data receives an action-only
+update without another prompt. Other registrations update Action and Data from
+one COM TaskDefinition through credentialed XML registration in that same
+PowerShell process. Existing triggers, settings, description and run level are
+preserved; a new task uses `IgnoreNew`. Errors propagate without falling back to
+Interactive or S4U. Installation data enters PowerShell over UTF-8 stdin rather
+than increasing the encoded command arguments. Preserving definition XML does
+not by itself prove preservation of the task object's ACL or stored credentials.
+New-task XML sets `RegistrationInfo.SecurityDescriptor` to grant the current SID,
+SYSTEM and Administrators full access for the Limited self-controller; updates
+do not explicitly reset an existing task's custom descriptor.
 
-Before service installation writes or registration changes, installation inspects
-the actual registered launcher and refuses to change a running or queued task's
-Job identity. This includes a previous alpha's Local Job or moving the service
-to another root. The operator must stop that service from outside its process
-tree first. This avoids
-overwriting the only recorded old Job name or terminating an installer running
-inside it. The old cross-session stop/wait limitation is not retroactively
-repaired; the Global guarantee begins with the newly launched definition.
-Normal Global reinstalls and self-upgrade retain the existing control path.
+The Action invokes the selected Node executable and published
+`dist/daemon/windows-entry.js` with the registered task name. Its absolute
+WorkingDirectory is `<DREAMUX_ROOT>/state`; the parent supplies the root for
+startup, logs, status and control. TaskDefinition.Data is JSON containing only
+`{ environment: Record<string, string>; execStart: string[] }`. It retains the
+installation PATH, selected Node and custom Dreamux command. `environment`
+excludes `DREAMUX_ROOT`; startup derives that value from WorkingDirectory.
+Doctor receives this business command and environment, not the bootstrap Action.
+Windows returns the native RegisteredTask.Path as the existing `unitPath: string`;
+it is a task identifier, never a file-ledger entry or filesystem removal target.
+`serviceUnitPath` describes only Unix unit files. Generated JavaScript, its regex
+reader, launcher file writes/removal and the install-time utils import URL are
+removed, without adding a configuration file or registry.
 
-Dispatcher self-upgrade invokes the restart command from inside that same Job.
-Before mutating the task, service control checks membership against its actual
-registered launcher's Job. A member hands the operation to a short-lived
-same-user WMI-created Node process, which survives the old Job and runs the same
-control path against the registered task name. No extra scheduled task or
-durable operation record is introduced. External callers still await control
-directly; the existing resumed notification confirms an internal restart.
-This uses the documented [WMI process creation behavior for Job membership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+The published entry opens append logs and creates and joins the root-hash named
+service Job before querying task data or launching business children. Its
+`Global` namespace and current-user-only DACL let the desktop CLI and service
+address the same object; ordinary SupervisedChild owners retain nested Jobs.
+Bootstrap failures go to the daemon stderr log. Before installation writes,
+the registered task data and WorkingDirectory establish the existing root;
+an active or queued task at a different root must first be stopped from outside
+its service tree.
+
+External stop disables the task, acquires/reserves its named Job, terminates
+members and awaits their held process handles. It then calls Task.Stop and
+validates that the task is neither Running nor Queued and has zero instances,
+retaining the Job reservation throughout. Finally it releases the Job and
+restores the prior enabled state. Neither Job-name availability nor Scheduler
+state alone is a process-exit barrier. Restart completes this stop before one
+COM Run; a failure does not fall through to Run. Start/restart enable the task,
+require the returned running instance to leave Queued and enter Running, then
+await `server.status` at the registered root within a 30-second startup deadline.
+The responding PID must belong to the opened service Job. Observation opens an
+existing Job without reserving its name. This proves an answering admin endpoint,
+not readiness of every provider or Dispatcher. Unix service managers are unchanged.
+
+A caller inside the service hands stop/restart to a short-lived WMI-created Node
+process invoking that same published entry, task name and control verb. The
+control branch does not join the service Job it must terminate. The caller reports
+`handedOff`, not completion; the external controller performs the same stop/start
+and readiness checks and writes errors to the registered root's daemon stderr.
+The new server's existing restart-intent consumer alone consumes the resumed
+notice from that registered root. No extra task or durable operation record is
+introduced. This retains the documented
+[WMI process creation behavior for Job membership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)
 without enabling breakaway for ordinary supervised children.
+
+### Approved Windows alpha service reinstall
+
+The operator approved the published entry and one-time reinstall on 2026-11-12
+in the [service-entry revision](service-entry-revision.md). A task without the
+new Data fails loudly; WorkingDirectory cannot establish an old launcher's
+Local/Global Job identity, and no legacy parser or fallback is retained.
+
+Before upgrading an existing Windows alpha service:
+
+1. Keep the old version available and use the original Windows account and
+   original `DREAMUX_ROOT`, from a terminal outside the service tree.
+2. Run the old version's `dreamux daemon uninstall` and confirm success. If it
+   fails, stop the upgrade rather than overwrite the task. If the old version
+   is unavailable, restore a usable old version before proceeding.
+3. Upgrade and run `dreamux daemon install`, using the native credential dialog.
+
+This removes and recreates only the service installation; do not delete config,
+state or logs. It is the approved upgrade-blocking service-format change, not
+an automatic migration or authorization to operate the live installation.
+Real dialog interaction, saved-credential reuse and cross-session operation
+remain unverified native acceptance boundaries. Query results and registration
+shadows do not establish them.
+
+### Filesystem and log privacy
 
 Shared filesystem utilities enforce Windows ACLs and Unix modes. The Windows
 owner converts filesystem paths with Node's `toNamespacedPath` before native
@@ -160,5 +210,6 @@ first, then dispatches the existing alpha workflow on that branch.
 The product catalog adds native Windows execution and qualifies managed stop:
 Windows task termination cannot promise Unix signal-based draining. Existing
 Unix shutdown behavior, local state ownership, uninstall containment, channel
-routing and provider-neutral orchestration remain in force. The change removes
-no existing user-visible capability.
+routing and provider-neutral orchestration remain in force. The Windows service
+definition changes to task-owned launch data and a published entry, with the
+explicitly approved one-time alpha service reinstall above.

@@ -233,6 +233,70 @@ console.log(await job.containsCurrentProcess());
       }
     });
 
+    it('queries a live member and outsider without changing either process', async () => {
+      const job = await WindowsJob.create();
+      const children: ChildProcess[] = [];
+      const closed: Promise<void>[] = [];
+      let held: ReturnType<typeof retainProcesses> | undefined;
+      try {
+        for (let index = 0; index < 2; index++) {
+          const child = spawn(
+            process.execPath,
+            ['-e', 'process.stdin.resume()'],
+            {
+              windowsHide: true,
+              stdio: ['pipe', 'ignore', 'ignore'],
+            },
+          );
+          children.push(child);
+          closed.push(
+            new Promise<void>((resolve) => {
+              child.once('close', () => resolve());
+            }),
+          );
+          await once(child, 'spawn');
+        }
+        const member = children[0]!;
+        const outsider = children[1]!;
+        held = retainProcesses([member.pid!, outsider.pid!]);
+        await job.openRoot(member.pid!);
+        await job.assign();
+        expect(await job.containsProcess(member.pid!)).toBe(true);
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+        expect(held.states()).toEqual([258, 258]);
+
+        member.kill();
+        await closed[0];
+        expect(held.states()).toEqual([0, 258]);
+        // Both the fixture and Job still hold the exited member's exact object.
+        expect(await job.containsProcess(member.pid!)).toBe(false);
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+        expect(held.states()).toEqual([0, 258]);
+
+        outsider.kill();
+        await closed[1];
+        expect(held.states()).toEqual([0, 0]);
+        await held.dispose();
+        held = undefined;
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+      } finally {
+        for (const child of children) {
+          if (
+            child.pid !== undefined &&
+            child.exitCode === null &&
+            child.signalCode === null
+          )
+            child.kill();
+        }
+        try {
+          await Promise.all(closed);
+        } finally {
+          job.close();
+          await held?.dispose();
+        }
+      }
+    });
+
     it('refuses PID-only Windows tree termination without touching the process', async () => {
       await expect(killProcessGroup(process.pid, 'SIGKILL')).rejects.toThrow(
         'launch-owned Job',

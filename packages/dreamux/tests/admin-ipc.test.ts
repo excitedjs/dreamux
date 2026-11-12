@@ -7,7 +7,7 @@ import * as windowsPipe from '@excitedjs/dreamux-utils';
 import {
   currentWindowsUserSid,
   readWindowsPermissions,
-} from '../../../common/scripts/test-permissions.mjs';
+} from '../../../common/testing/test-permissions.mjs';
 
 import { adminJsonInvoker } from '../src/admin/client.js';
 import {

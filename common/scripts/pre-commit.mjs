@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Mandatory staged lint, author identity, secret and internal-content gates.
+// Mandatory staged lint, secret and internal-content gates; the hook checks identity.
 import { execFile, spawn } from 'node:child_process';
 import { access } from 'node:fs/promises';
 import { constants } from 'node:fs';
@@ -7,7 +7,6 @@ import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { authorEmailError } from './check-author-emails.mjs';
 
 const execFileAsync = promisify(execFile);
 const git = async (args) =>
@@ -86,15 +85,6 @@ async function main() {
     }
     await run(process.execPath, [eslint, ...files], directory);
   }
-  const email =
-    process.env.GIT_AUTHOR_EMAIL ||
-    (await git(['config', '--get', 'user.email']).catch(() => ''));
-  const authorError = authorEmailError(email);
-  if (authorError)
-    throw new Error(
-      `[author-identity] ${authorError}. Set an allowed email with git config user.email.`,
-    );
-
   const binary = process.platform === 'win32' ? 'gitleaks.exe' : 'gitleaks';
   const pathKey = Object.keys(process.env).find(
     (key) => key.toLowerCase() === 'path',

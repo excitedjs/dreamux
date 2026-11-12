@@ -119,7 +119,7 @@ function checked(
     );
 }
 
-/** Launch-owned Windows process tree. No operation resolves an unowned PID. */
+/** Launch-owned Windows process tree. Mutations use retained, owned process objects. */
 export class WindowsJob {
   private root: bigint | null = null;
 
@@ -215,6 +215,31 @@ export class WindowsJob {
       'IsProcessInJob',
     );
     return member[0] !== 0;
+  }
+
+  /** Observe the PID's current object; membership is not authority to mutate it. */
+  async containsProcess(pid: number): Promise<boolean> {
+    if (this.job === null) throw new Error('Windows Job is closed');
+    const handle = this.api.openProcess(0x1000, 0, pid);
+    const code = this.api.lastError();
+    if (handle === null && code === 87) return false;
+    checked(handle, 'OpenProcess', code);
+    try {
+      const member = [0];
+      checked(
+        await promisify(this.api.isProcessInJob.async)(
+          handle!,
+          this.job,
+          member,
+        ),
+        'IsProcessInJob',
+      );
+      // A retained object can outlive process exit. The Job list excludes exited
+      // members; IsProcessInJob above also rejects an unrelated reused PID.
+      return member[0] !== 0 && (await this.memberIds()).includes(pid);
+    } finally {
+      this.api.closeHandle(handle!);
+    }
   }
 
   /** Hold the candidate object; the caller must prove identity over its child IPC before assign(). */

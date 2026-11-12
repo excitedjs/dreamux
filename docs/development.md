@@ -101,7 +101,7 @@ The pre-commit hook scans staged changes for secrets and private content. Instal
 its required scanner if needed:
 
 ```bash
-common/scripts/install-gitleaks.sh
+node common/scripts/install-gitleaks.mjs
 ```
 
 Ensure the installed binary is on `PATH` and use the repository hook. Never skip
@@ -113,7 +113,7 @@ cross-process behavior also update the owning knowledge entry. Validate those
 updates with:
 
 ```bash
-.agents/scripts/check.sh
+node .agents/scripts/check.mjs
 ```
 
 User-facing release changes need a Rush change file, created with
