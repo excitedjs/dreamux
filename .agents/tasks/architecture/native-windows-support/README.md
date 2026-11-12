@@ -8,10 +8,10 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Review: [Complete-change review and rulings](review.md)
-- Blockers: No unresolved accepted correction. R1 through R4 are resolved and verified. The operator approved knowledge-closeout with R5 explicitly deferred and unverified; native credential and cross-session limits also remain recorded.
-- Next action: Pass the full KB and mandatory commit gates, deliver the reviewed change to the PR, verify CI, publish the branch alpha and update the local installation under the existing authorization. Do not prepare or execute R5. The latest code gates remain R4's build, lint, test-aware checks and default suite (3,193 passed, 26 skipped). Merge remains paused; GitHub owns CI and delivery status.
+- Blockers: Fresh delivery CI is pending for the replacement branch. For R6, the operator chose closing the old PR and opening a new one; the workflow was not changed, and the old force-push range failure remains recorded. R1-R4 remain resolved; R5 remains explicitly deferred and unverified, with native acceptance limits recorded.
+- Next action: Verify the replacement PR's final head and normal CI, then publish its branch alpha and update the local installation under the existing authorization. Full KB, mandatory commit hooks and Rush change verification passed for the reviewed implementation; delivery-record changes must pass their applicable checks before pushing. Do not prepare or execute R5. The latest integrated local code gates remain R4's 3,193 passed and 26 skipped tests plus build, lint and test-aware checks. Merge remains paused; GitHub owns CI and delivery status.
 - Coverage limit: The operator's reported restart failure has not been reproduced. WMI process creation and Scheduler command completion do not establish a new responding server. Native credential storage, dialog behavior and cross-session service operation still need independent acceptance; earlier CI results do not cover this revision.
-- Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/476)
+- Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/488); replaces [the closed original PR](https://github.com/excitedjs/dreamux/pull/476).
 - Related tasks: None.
 
 ## Development approval
@@ -33,6 +33,14 @@
 - On 2026-10-20 at 21:36 (UTC+08:00), the operator clarified: "For the earlier black window issue, I meant installation should use Password mode, not continue installing in the original mode." This authorizes correcting the installation default to Password within the existing PR. It supersedes the Interactive default and the proposed console-hiding workaround. Credentials must be entered locally, never requested in chat or persisted by Dreamux; verification must not modify the operator's running task. The statement does not request a different trigger or resume merging.
 
 ## Delivery
+
+On 2026-11-12, in response to the R6 correction card, the operator requested
+closing the old PR and opening a new one. Delivery therefore uses the new
+`fix/pr-476-review-20261019` branch and PR #488 targeting `next`; PR #476 was
+closed after the replacement existed and now links to it. No workflow or email
+policy correction was authorized or applied. The original force-push failure
+remains evidence of that workflow boundary, and fresh delivery checks are
+required; replacing the PR does not turn the old failed run into a pass.
 
 On 2026-11-12 the operator selected "Enter delivery" in the closeout-completion
 card; this approval was recorded at 19:12 (UTC+08:00). The task is now `done`,

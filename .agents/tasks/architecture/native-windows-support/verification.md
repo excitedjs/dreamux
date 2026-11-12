@@ -9,6 +9,26 @@ the root. The approval preserves the recorded R5 deferral and native acceptance
 limits. Mandatory commit hooks, reviewed-branch CI and publication remain
 delivery checks; they are not inferred from the earlier local test results.
 
+Mandatory staged lint, gitleaks and internal-content checks passed during the
+delivery commit; Rush change verification passed afterward. The reviewed change
+was pushed to the existing PR branch with an exact lease on its previous tip.
+The [push CI run](https://github.com/excitedjs/dreamux/actions/runs/43207356712)
+then failed commit metadata at revision-range resolution, before checking any
+author email. Independent review confirmed R6's absent pre-force-push object.
+The [matching PR run](https://github.com/excitedjs/dreamux/actions/runs/43207362580)
+finished successfully. All six platform Rush jobs completed, and each complete
+log showed eight successful packages (the host with model-exclusion warnings).
+The push run still failed overall because of commit metadata; the PR success
+does not remove that failure. These logs report package results, not the local
+suite's individual test counts.
+
+The operator answered the correction card by requesting a replacement PR.
+The new branch `fix/pr-476-review-20261019` was created, PR #488 opened against
+`next`, and PR #476 closed with a replacement link. No workflow correction or
+new regression was executed; the original failure remains recorded. Fresh CI
+is required for the replacement delivery head. No alpha was dispatched and the
+local installation was not changed during this handoff.
+
 ## Knowledge closeout
 
 The operator approved knowledge-closeout on 2026-11-12 while explicitly retaining
