@@ -23,7 +23,7 @@ import {
 import {
   expectOwnerOnlyPermissions,
   makeWorldReadable,
-} from '../../../common/scripts/test-permissions.mjs';
+} from '../../../common/testing/test-permissions.mjs';
 
 function captureSink(): { sink: Writable; text: () => string } {
   const chunks: string[] = [];

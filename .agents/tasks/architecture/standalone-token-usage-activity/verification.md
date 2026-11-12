@@ -3,7 +3,7 @@
 ## Gates
 
 ```bash
-.agents/scripts/check.mjs
+.agents/scripts/check.sh
 node common/scripts/install-run-rush.js build --to @excitedjs/dreamux-types --to @excitedjs/dreamux \
   --to @excitedjs/agent-runtime-codex --to @excitedjs/agent-runtime-claude-code \
   --to @excitedjs/feishu-channel

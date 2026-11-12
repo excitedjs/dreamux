@@ -1,6 +1,448 @@
 # Verification
 
-## Tarball fixture budget follow-up
+## Submission readiness
+
+The operator approved `done` on 2026-11-12 after independent knowledge-closeout
+review. The full `node .agents/scripts/check.mjs` gate then passed without any
+in-flight exception: 63 task records checked and 414 KB files reachable from
+the root. The approval preserves the recorded R5 deferral and native acceptance
+limits. Mandatory commit hooks, reviewed-branch CI and publication remain
+delivery checks; they are not inferred from the earlier local test results.
+
+## Knowledge closeout
+
+The operator approved knowledge-closeout on 2026-11-12 while explicitly retaining
+the deferred R5 early-entry stop gap. R1-R4 are resolved. The task requirement,
+final entry decision, review and evidence were reconciled with the already
+approved implementation; no production behavior or test assertion changed in
+this stage. The task README lists each affected knowledge owner and the reason
+for updates or N/A. Independent service/native and tooling audits checked those
+owners against current source. Current checker names, the shell author-check
+boundary, CI noreply exemption and shared test-setup/helper ownership were
+corrected without changing historical test evidence.
+
+Independent final closeout review found one stale present-tense statement in
+the earlier R5 ruling; it now explicitly describes the state at that ruling.
+The review confirmed the remaining task and owner records agree: R1-R4 are
+resolved, R5 is deferred and unverified, and native acceptance limits remain
+separate from the default test results. No further documentation correction
+was identified in that review.
+
+The initial full KB check found a missing route to the new review document and
+two temporary commit citations, besides the intentional in-flight task state.
+The README now links the review, and its target uses the delivery/upstream PR
+references. The repeat full check reported only the `knowledge-closeout` state
+guard: it is not yet a successful trunk KB check. The scoped task check passed
+with `--allow-in-flight`; the all-task check with that flag passed all 63 records.
+`git diff --check` passed across the complete tracked change. The final full KB
+gate must run without exceptions after the operator approves `done`.
+
+No build, test, Scheduler, GUI, credential, CI or installation operation ran
+during this documentation closeout. The latest integrated code checks remain
+the R4 results: build, lint and test-aware typechecking pass, with 3,193 passed
+and 26 skipped default tests. The earlier Interactive/Limited lifecycle evidence
+does not certify real Password storage/reuse, GUI behavior, cross-session
+operation or preservation of an existing registered Task ACL. R5 was not run.
+
+## Review correction R2: CI author-email documentation
+
+The operator requested correction on 2026-11-12 and supplied the intended Git
+identity. The CI table now explicitly refers to commit author email and states
+that GitHub noreply addresses pass directly; other addresses pass the existing
+format and optional denylist checks. The local hook's different treatment of
+noreply remains accurately documented. CI, hook and email policy are unchanged.
+
+Scoped `git diff --check` passed. Independent read-only review confirmed the
+single corrected row against the actual workflow, local hook and owning
+document. Repository-local Git identity was separately set to the operator's
+specified values; effective author and committer identities were read back and
+matched. No commit was created or rewritten. No tests, build, hooks, Scheduler,
+GUI or installed-service operation was run for this documentation correction.
+
+R2 is resolved. R1-R4 are now resolved; R5 remains deferred and unverified.
+The operator subsequently approved knowledge-closeout with that limitation
+retained; the deferred validation has not been performed.
+
+## Review correction R1: current service documentation
+
+The operator approved correcting the three obsolete current-service descriptions
+on 2026-11-12. The package README, maintenance routing sentence and pending
+feature change note now describe the packaged entry reading its launch command
+and environment from Task Scheduler Data. Historical migration documentation,
+the breaking-change rebuild instructions and production behavior are unchanged.
+
+Scoped `git diff --check` passed. The changefile parses as JSON and retains its
+package, single change entry and minor type. Independent read-only review checked
+all three descriptions against `windows-task.ts`, `windows-entry.ts`, the approved
+revision and breaking change note, and found no issue. No tests, build, Scheduler,
+GUI or installed-service operation was repeated for this documentation-only
+correction. The latest code-gate evidence remains the R4 results below.
+
+R1 is resolved. The subsequent R2 correction and R5 deferral are recorded above.
+
+## Deferred review validation R5
+
+On 2026-11-12 the operator deferred the proposed early-entry stop validation.
+No new experiment was prepared or executed. Entry exit and file release before
+Job assignment remain an explicit coverage gap, not a failed or passed test.
+The previous R4 evidence remains unchanged. The operator subsequently approved
+knowledge-closeout with this deferral retained; it does not establish that the
+deferred case passed.
+
+## Review correction R4: installation handoff result
+
+The operator approved correcting and verifying R4 on 2026-11-12. Windows
+registration now returns the restart handoff fact to installation. A service-owned
+installation reports `started: false, handedOff: true`; daemon install and onboard
+output state that completion has not yet been confirmed. Unix results, no-start,
+dry-run planned-start semantics and the restart control mechanism are unchanged.
+Independent review found no blocker in the return chain, output, or fixture
+lifecycle, and confirmed the two current product/maintenance descriptions.
+
+Eight focused cases passed in 3.22 seconds. They cover no-start installation,
+both dry-run start choices, self-install from a real owned entry/Job, and both
+handoff and normal output through each real yargs command. The self-install
+case passed in 913 ms. Its Scheduler and WMI runner operations are substituted;
+the CLI output cases substitute installation results. These checks establish
+result propagation and wording, not native WMI launch or controller completion.
+The existing control regressions remain in the default suite.
+
+Build passed in 1.74 seconds, lint in 6.89 seconds and all eight test-aware type
+checks in 6.84 seconds. The full default Rush suite passed in 116.4 seconds
+(host 93.6 seconds). Eight unique package summaries total 3,193 passed and
+26 skipped cases; the host reports 1,349 passed and 21 skipped. The complete
+daemon-windows file has 18 passed and one live skip; commands has 11 passed.
+An independent recount confirmed these totals without adding Rush's repeated
+output. Both focused and full-suite outer checks reported exit zero, unchanged
+synthetic account contents, no temporary children and captured-root removal.
+No real Scheduler, GUI, credential or live-model test was enabled.
+
+R4 is resolved. Subsequent findings and operator rulings are recorded in the
+[review](review.md); these results do not certify deferred or native opt-in cases.
+
+## Review correction R3: Windows uninstall path comparison
+
+The operator approved correcting and verifying R3 on 2026-11-12. Windows
+uninstall protection now uses case-insensitive comparison keys for HOME/cwd
+equality and provider-state equality or containment in either direction. Actual
+filesystem targets, reported paths and Unix comparison behavior are unchanged.
+The existing non-file Windows Task ledger behavior is also unchanged.
+
+Eight new Windows cases cover HOME, cwd, and both provider-home variables with
+equal, inside and containing aliases. Each checks preview and actual calls,
+preserved synthetic sentinels, and no service runner call before rejection.
+The focused eight passed in 8.00 seconds; the complete uninstall file then passed
+35 cases with five platform-condition skips in 2.20 seconds. Independent review
+confirmed the delta and both logs. Each outer run reported exit zero, unchanged
+synthetic account contents, no temporary children and captured-root removal.
+
+Integrated build passed in 4.48 seconds, lint in 30.12 seconds and all eight
+test-aware type checks in 9.51 seconds. The default Rush suite passed in 117.3
+seconds (host 94.3 seconds). Its eight unique package summaries total 3,187 passed
+and 26 skipped cases; the host reports 1,343 passed and 21 skipped. The uninstall
+file reports 35 passed and five skipped, including all eight new regressions.
+Independent recount confirmed those totals without adding Rush's repeated
+output. The outer suite again confirmed unchanged sentinels, no temporary
+children and captured-root removal. No real Scheduler, GUI, credential or
+live-model test was enabled for this correction.
+
+R3 is resolved. The other findings received their separate operator rulings as
+recorded in the [review](review.md); the R3 results alone did not close that gate.
+
+## Historical implementation checks: approved published service entry
+
+The operator approved removing the generated Windows launcher and accepting
+the documented one-time old-version service uninstall/reinstall. Implementation
+now stores the installation environment and business command in Task Data and
+uses the registered WorkingDirectory to select the root. The running operator
+installation has not been changed.
+
+Independent review found that embedding the captured PATH in EncodedCommand
+could exceed the Windows command-line limit. Registration now passes its
+installation data through UTF-8 stdin; credentials remain inside PowerShell.
+The first isolated query passed. The expanded run initially passed 26 cases and
+failed two: PowerShell output encoding corrupted Unicode, and the COM XML
+round-trip normalized the SID to an account name. The common PowerShell prefix
+now specifies UTF-8 output, and the test compares the returned identity's actual
+SID with the current account instead of requiring SID-shaped text. The subsequent
+registration/input group passed 28 cases, with five unrelated cases filtered
+out. This includes long Unicode PATH preservation in real in-memory COM XML.
+Scheduler persistence and the native credential prompt remain substituted.
+
+The new entry's three focused cases passed using real Node/CMD children:
+Unicode arguments and paths, append logs, exit status, and a missing executable
+whose error is recorded without an unhandled rejection. Review also caught an
+early rejection when startup throws before awaiting its exit promise; the entry
+now observes that promise immediately without suppressing the awaited error.
+The two-file daemon/privacy group passed 18 cases with the live Scheduler case
+skipped. The initial integrated build passed in 1.72 seconds, and all eight
+test-aware type checks passed in 6.78 seconds.
+
+Three separate control cases passed with real processes, Jobs and admin IPC,
+and a substituted Scheduler. They verify that an observed old wrapper closes
+before Run, an unresolved Stop blocks Run, new admin readiness gates completion,
+a Stop error prevents Run and restores the prior enabled state, and an actual
+standalone server PID outside the Job is rejected. These observations do not
+turn a false membership result into an exit-handle proof; the existing native
+utils tests cover the production held-handle tree waiting primitive.
+
+Each completed focused run preserved synthetic account sentinels, left its
+temporary directory empty, and removed its captured outer root. Review then
+tightened failure cleanup: entry children are joined before directory removal;
+unverified native cleanup retains its root, including in the outer driver.
+The subsequent full Rush run passed in 115.8 seconds: eight packages reported
+3,179 passed and 26 skipped tests. Independent review recomputed those totals
+from the package JSONL logs. Synthetic sentinels were unchanged, the temporary
+directory was empty, and the captured outer root was removed. Lint passed in
+6.89 seconds. A later test-aware type check caught the concrete `reject: false`
+Execa result being stored as the default generic result; the fixture now derives
+its child collection type from the unchanged launch options. All eight
+test-aware checks then passed in 6.77 seconds.
+
+The separately enabled, UUID-scoped native Interactive lifecycle test initially
+failed twice. Its first run completed two external restarts, then failed while
+writing the self-restart notification before reaching the controller. The
+fixture incorrectly placed that marker in its elevated-owned temporary root;
+it now uses the production `restartIntentPath(root)` under the initialized run
+directory. The second run reached the external self controller, where setting
+the Task's `Enabled` property to false returned `E_ACCESSDENIED`, before Job
+acquisition or termination. Neither task definition had an explicit Task DACL.
+This locates the observed rejection but does not establish the original task's
+owner/DACL or explain the operator's earlier restart failure.
+
+Targeted follow-up checks found both UUID Tasks absent and their recorded server
+and child PIDs absent. Both failed roots and copied logs are retained. Automatic
+tool approval rejected deletion of the first captured root with only
+`blocked by policy`; no alternate deletion was attempted.
+
+New Task definitions now specify allow/full-access entries for SYSTEM,
+Administrators and the current account SID through the XML registration security
+descriptor. Existing definition branches do not actively reset their custom
+descriptor. The isolated registration/input group again passed 28 cases in
+9.74 seconds. Its real in-memory COM/XML assertions verify the three new entries
+and preservation of an existing custom descriptor; these are not persisted Task
+ACL assertions. Build passed in 1.73 seconds, lint in 6.86 seconds and all eight
+test-aware type checks in 6.82 seconds.
+
+With the same new-task descriptor, the real UUID Interactive/Limited lifecycle
+case passed in 21.974 seconds (22.71 seconds for the run). It read back a current
+SID allow entry from that registered Task, then completed two external restarts,
+self restart, notification consumption exactly once, self stop, disabled-state
+preservation followed by start, and uninstall. The recorded server and child
+PIDs were unavailable after the relevant stops. This case does not independently
+observe every Job member or every instant of tree-exit ordering. Its outer driver
+reported exit zero, unchanged sentinels, an empty temporary directory and removal
+of the captured root. The two saved logs describe one execution. Independent
+review confirmed these evidence boundaries. The two prior failed roots remain
+retained; successful cleanup of the third run does not supersede their records.
+
+Existing registered Task ACL preservation, real GUI behavior, Password credential
+storage/reuse and cross-session operation remain unverified. The native fixture
+uses Interactive logon and does not claim those capabilities.
+
+The final default Rush suite passed in 115.7 seconds after the Task-access
+correction. Its eight package summaries again total 3,179 passed and 26 skipped
+(3,205 cases); the host reports 1,335 passed and 21 skipped across 110 passed
+and four skipped files. Host wall time is 93.1 seconds. Independent review
+counted each package summary once, without adding Rush's repeated output or the
+separate native lifecycle execution. The outer driver again verified unchanged
+sentinels, no temporary children, successful exit and removal of its captured
+root. Real model cases and the default native service opt-in remain excluded.
+
+The KB check was run with an existing Python 3.13 interpreter selected explicitly
+after the PATH alias returned exit 9009. At that checkpoint its sole remaining
+failure was the task's intentional `implementation` state, which cannot land on
+the trunk. The state was not changed merely to satisfy the check; the operator
+subsequently approved review. No link or current-knowledge check failed then.
+
+## Historical reopened implementation: 2026-11-12
+
+The local branch was backed up and rebased onto the current `next`. The published
+branch and running installation were not changed. Integration retained the
+upstream unified runtime events, thread news and reasoning behavior, workflow
+task reminders, split documentation and package versions. Stale Codex client
+names and test contexts were corrected against those upstream contracts.
+
+The rebased build passed in 8.86 seconds. Test-aware type checking initially
+found obsolete result/activity fields in provider privacy fixtures; after those
+fixtures adopted the upstream event sink, all eight package checks passed in
+9.58 seconds. These are build/type checks, not runtime or full-gate acceptance.
+
+Independent scope review removed two Ubuntu-only release script extractions
+while preserving the inline release gates, restored 106 unrelated historical
+records to the baseline, and moved the shared permission oracle and declarations
+to `common/testing` with direct consumer imports. The one-line permission bridge
+was removed. Repository tooling behavior was subsequently checked as recorded
+below; full integrated gates had not yet run at that checkpoint.
+
+Read-only inspection found the installed service predates this branch and runs
+in Password mode. The observer belongs to that service's Job. Its self-control
+path checks only the WMI creation result; ordinary startup checks only the
+Scheduler command result. Neither establishes a replacement server responding.
+The bounded stderr search found no matching control error. This establishes a
+completion-reporting gap, not the cause of the operator's earlier restart.
+No actual service control, credential prompt or task write was performed.
+
+GUI credential input and lifecycle correction were still in progress at that
+checkpoint. Their later integrated gates and independent review are recorded
+above; intermediate checks did not verify that final revision.
+
+The independent GUI review caught a test command exceeding the Windows command
+line limit. The shadow fixture now runs a captured temporary PowerShell file and
+removes it after child close. Its first execution passed six cases and failed
+two: cancel/error codes were reported as 122 instead of the native return code.
+The unsigned CredUI return selected the wrong PowerShell constructor overload;
+an explicit Int32 conversion selects `Win32Exception(int)`. The unchanged eight
+registration assertions then passed. The fixture replaces the native binding
+class and Scheduler commands. It still executes native credential packing and
+unpacking plus the production PowerShell buffer handling and owner validation,
+but does not compile the production P/Invoke declarations or verify a real
+dialog, credential storage or reuse of stored credentials.
+
+Focused native membership queries passed one case (eleven filtered out), and
+the rebased Codex event/reasoning/privacy group passed 84 cases; Claude privacy
+passed three. Each ran inside a separate synthetic account/application/temp
+root, with unchanged sentinels, empty temporary directories and completed root
+cleanup. The repository tooling run initially passed four cases, including
+actual Git hook behavior, but its KB case failed because Python resolved to an
+unavailable Windows application alias (exit 9009). Selecting the already
+installed Python interpreter through `PYTHON` made all five tooling cases pass;
+sentinels remained unchanged, the temporary directory was empty and the captured
+root was removed. No Python installation or machine configuration was changed.
+The test-aware type check also caught an overly narrow Execa result type in the
+new fixture. Inferring it from the actual options resolved that error; all eight
+package checks passed in 6.79 seconds.
+
+After withdrawing the unverified control draft, the four-file host regression
+group passed 70 tests with one native Scheduler opt-in skipped (8.59 seconds).
+Its synthetic sentinels were unchanged, the temporary directory was empty and
+the captured root was removed. This verifies the retained GUI fixture and
+existing lifecycle/notification coverage, not the proposed native restart.
+
+The complete lint gate passed all nine operations in 13.33 seconds after
+formatting two test files without changing their assertions. The KB checker
+rejected the intentionally reopened `implementation` task state for trunk
+delivery; that stage was not advanced merely to make the checker pass.
+
+The baseline completion-body fixture now retains the exact `mkdtempSync` root
+and removes that root in its existing cleanup, instead of leaving the parent
+of the spill directory behind. All eight focused cases passed (503 ms), with
+unchanged synthetic sentinels, an empty temporary directory and completed outer
+root removal. This verified that fixture cleanup; the full integrated suite
+had not yet been rerun on the final revision at that checkpoint.
+
+An intermediate full-suite run then completed with seven package successes and
+one host failure (Rush 112.0 seconds; host 89.1 seconds). The denied atomic-rename
+case in `team-session-title.test.ts` observed no expected logger call. Source
+review found that the unchanged upstream case rejects only one rename, whereas
+this branch retries transient Windows rename failures. A later successful
+attempt therefore bypasses the terminal-failure logger being asserted. The
+trace itself does not record individual rename attempts. The outer
+synthetic account was unchanged, its temporary directory was empty and the
+captured root was removed. The failure was then under source review; it was not a
+Scheduler or model result. The subsequent incremental build rebuilt the host
+with the original control implementation restored (1.73 seconds; eight operations
+already up to date), and all eight test-aware type checks passed in 6.88 seconds. Final
+acceptance was still pending on the eventual integrated design.
+
+The title persistence fixture now denies only the target record's rename until
+the actual failure is logged, then releases that denial for recovery and
+reenables it for shutdown. All original persistence, runtime and logger
+assertions and the five-second test budget remain. The complete title test file
+passed seven cases (4.24 seconds; the repaired case took 2,117 ms); sentinels
+were unchanged, the temporary directory was empty and its root was removed.
+The subsequent type check caught Vitest inferring only the logger's one-argument
+overload for the observer callback. Explicitly handling both existing logger
+signatures preserved the original calls without casts; all eight test-aware
+checks then passed in 6.82 seconds.
+The full suite with that repair passed all eight packages (Rush 111.8 seconds;
+host 89.0 seconds). The host warnings report intentionally excluded live model
+checks and the dual-output logger fixture. The outer synthetic account remained
+unchanged, its temporary directory was empty and its captured root was removed.
+This verified the rebased retained implementation; native control and the
+packaged service entry were still separate, unimplemented work at that point.
+The subsequent complete lint gate passed all nine operations in 6.91 seconds.
+
+The operator subsequently questioned the generated `daemon.mjs` itself. Further
+control changes around that file were paused while the installed entrypoint and
+necessary launch information were reassessed. The completion-check draft was
+unverified and had not been installed, committed or delivered. The draft was
+saved outside tracked source and withdrawn from the implementation while the
+native restart contract was reassessed; the verified credential changes remained.
+
+The operator then questioned whether Task Scheduler already owns restart.
+Microsoft documents `MultipleInstancesPolicy=StopExisting` as stopping the old
+task instance before starting a new one. The current `IgnoreNew` policy is an
+implementation choice, not a platform restriction. `RestartCount` and
+`RestartInterval` separately configure failure recovery. These contracts do not
+by themselves establish when every member of Dreamux's separate Job has exited.
+An isolated native-task probe was independently reviewed and executed once.
+It registered only a UUID-named S4U/Limited task with StopExisting, no trigger
+and no automatic restart. The first Run reached fixture readiness with three
+fixture processes and two supervised bootstraps. The second Run returned a new
+instance GUID and Running state, but the replacement fixture failed at
+`WindowsJob.create` because the same named Job still existed. No observer Job
+handle was held across Run; the observer did retain query/synchronize handles
+to the original process objects. The trace does not establish the original
+process states at the instant of the creation failure or the cause of the
+Job's continued existence. Self-Run and final Stop acceptance were not reached.
+
+Failure cleanup terminated only the probe-owned Job, removed the exact UUID
+task, observed exit of every retained process object, closed its PowerShell
+helpers and removed the captured temporary root. This result exposes a conflict
+between native replacement and the current same-name startup guard under these
+probe conditions; it neither diagnoses the operator's historical failure nor
+verifies Password credentials or Dreamux readiness. Native control redesign
+and removal of the generated launcher remain unimplemented.
+
+A second, independently reviewed control probe kept the same fixture and task
+policy, but captured PID plus creation FILETIME and closed every observation
+handle before Run. Its second Run again returned a new instance GUID and Running
+state; the replacement root then failed at the same-name Job creation guard.
+Before cleanup mutated anything, all five original identities still matched
+and their process handles were not signaled. This establishes incomplete exit
+at that observation, not CPU activity or continuing application work. Retaining
+observer handles across Run is therefore not required for this observed
+collision. The reason for Scheduler's behavior and the operator's historical
+failure remain unknown; self-Run was again not reached.
+
+The control probe removed its UUID task and waited for the known process
+objects during failure cleanup. It initially retained the captured temporary
+root because the failed replacement had no captured creation identity. A
+separate, query-only OpenProcess call returned error 87 for that exact recorded
+PID, establishing absence at the later query; only then was the captured root
+removed. The original failure evidence was not rewritten. These are isolated
+S4U fixture results, not Password-mode or production-service acceptance.
+
+The next narrow candidate removes the Action root's additional service Job:
+Scheduler owns that root, while its existing SupervisedChild still owns the
+business subtree through an unnamed Job. This is a candidate for isolated
+verification, not a finding that assignment caused the earlier behavior or an
+implemented production change. Merely changing the outer Job's name to unnamed
+would not prove that the old root exits before new business starts.
+
+The Scheduler-owned-root candidate was independently reviewed and executed once.
+It removed the extra root service Job, retained the two existing SupervisedChild
+owners, and explicitly enabled and read back AllowHardTerminate. All three
+generations reached fixture readiness: external replacement, one self-Run and
+final Stop completed; each generation's five captured process identities
+eventually disappeared. The helper was already absent when observed after the
+self replacement. Sentinels remained unchanged, the exact task was deleted and
+the captured root was removed. No failure-path termination was needed.
+
+This candidate proves eventual replacement and cleanup for this S4U fixture,
+but also demonstrates overlap. External replacement reached readiness at
+1,613.535 ms while all five old identities remained unsignaled; their first
+all-gone observation was 2,398.328 ms. Self replacement reached readiness at
+3,024.894 ms with the same condition; its old identities were all gone at
+3,775.616 ms. Final Stop reported Ready state and zero task instances at
+4,138.757 ms, before the last generation was observed gone at 5,130.946 ms.
+These are observation times, not exact exit times. Scheduler state is therefore
+not a process-tree exit barrier in this experiment. The fixture does not run
+serve or contend for its admin lock; this passing probe alone cannot justify
+starting production work before the previous server releases its resources.
+
+## Historical tarball fixture budget follow-up
 
 The Password-default delivery passed [push CI](https://github.com/excitedjs/dreamux/actions/runs/39436934066)
 on all three platforms. Its [PR CI](https://github.com/excitedjs/dreamux/actions/runs/39436943984)
@@ -37,7 +479,7 @@ finally removed its captured root and all leftovers. Real Scheduler and model
 gates remained disabled. Independent review confirmed that only the two
 deadlines changed; hosted CI of the resulting revision is pending.
 
-## Password installation default
+## Historical Password installation default
 
 The operator clarified on 2026-10-20 that installation itself must select
 Password logon. Preserving a manually selected mode was insufficient.
@@ -113,7 +555,7 @@ Hosted results for this delivery are recorded in the follow-up above.
 No operator task, account password,
 real Scheduler fixture or authenticated model has been used for this correction.
 
-## Earlier correction: existing Windows task registration
+## Historical correction: existing Windows task registration
 
 The operator reported a persistent console and manually changed the installed
 task's login mode. Read-only inspection found Password, Limited, Running and a
@@ -220,7 +662,7 @@ logs confirmed eight successful test packages; model gates remained excluded.
 These results belong to the deadline revision, before the Password-default
 correction above.
 
-## Vitest-native test isolation
+## Historical Vitest-native test isolation
 
 The operator requested replacing the custom process launcher with Vitest's
 native configuration and lifecycle, then required small-scope isolation checks
@@ -369,7 +811,7 @@ from Vitest's reported duration. These later results do not determine the
 historical timeout causes. No assertion or timeout was relaxed, and diagnostic
 instrumentation remains outside the PR branch.
 
-## Intermittent Windows CI investigation
+## Historical intermittent Windows CI investigation
 
 The initial Windows attempt in the [push run](https://github.com/excitedjs/dreamux/actions/runs/39223839571)
 reported two Claude failures: a query-mismatched cursor returned
@@ -427,7 +869,7 @@ applied. The diagnostic branch and run preserve the capture procedure for a
 future recurrence; the cursor correction does not claim to fix the unexplained
 skill-publication timeout.
 
-## Lazy native initialization
+## Historical lazy native initialization
 
 The [follow-up comment](https://github.com/excitedjs/dreamux/pull/476#discussion_r4311329746)
 identified eager Koffi addon loading through static Windows-owner imports.
@@ -451,7 +893,7 @@ unchanged. No startup-time benchmark was performed; this verifies addon loading
 behavior, not the reviewer's timing measurements. Runtime lazy loading does not
 remove the installed dependency.
 
-## Native failure-path regressions
+## Historical native failure-path regressions
 
 The follow-up requested in the [PR review](https://github.com/excitedjs/dreamux/pull/476#pullrequestreview-5568105760)
 adds four native Windows cases without changing production code. They interrupt
@@ -479,7 +921,7 @@ remaining blocking issue. It checked that injection-hook assertions cannot be
 mistaken for expected launch errors, that reply waits have a failure deadline,
 and that fixture cleanup joins pending native waits before closing handles.
 
-## Review corrections
+## Historical review corrections
 
 The 2026-10-19 correction run used a limited-token native Windows process and
 the disposable-home test wrapper. Rush build, lint, source typecheck, test
@@ -594,7 +1036,7 @@ lint, test typechecking and ten related CLI tests passed; two file-symlink
 cases require privileges unavailable locally. Both packaged entry points also
 reported the exact alpha version in the separate npm installation layout.
 
-## Initial native Windows checks
+## Historical initial native Windows checks
 
 The initial local run on 2026-10-19 used Node 22.23.3 and Rush 5.140.0.
 
@@ -617,7 +1059,7 @@ the new 800-case native publication regression's execution budget was raised
 from 15 to 60 seconds for its 1,600 native permission-process invocations; its
 workload and assertions are unchanged. The later hosted-runner findings and their production fixes are recorded below.
 
-## Hosted runner follow-up
+## Historical hosted runner follow-up
 
 The elevated Windows runner creates new filesystem objects with the token's
 default Administrators owner, even below a user-owned private directory.
@@ -664,7 +1106,7 @@ again and remained alive across independent process invocations; the admin
 status command reported the same server PID and increasing uptime. The first
 exit was not reproduced, so no speculative production workaround was added.
 
-## Review and finding disposition
+## Historical review and finding disposition
 
 Independent reviews covered the provider transport and home changes, native
 process execution and termination, daemon and IPC lifecycle, permission owners,
@@ -688,7 +1130,7 @@ No accepted blocking finding remains unresolved. Product behavior review is
 recorded in the final design. Knowledge links and task records are checked with
 `.agents/scripts/check.mjs` before submission.
 
-## Authenticated native model checks
+## Historical authenticated native model checks
 
 With usable Codex authentication restored, the explicit model gate passed all
 six cases across the three live-model files on native Windows (102 seconds).
@@ -701,9 +1143,10 @@ configuration were read into private disposable homes, not modified by tests.
 
 ## Coverage boundary
 
-Default installed-Codex checks initialize the real protocol without model auth.
-Model-turn cases remain explicit opt-in; their separate authenticated result is
-recorded above and is not implied by the default suite.
+The final R4 default suite explicitly excluded installed-Codex/live protocol
+and model-turn checks. Earlier installed-protocol and authenticated model results
+above are historical evidence, not certification of this final revision.
+Model-turn cases remain explicit opt-in and are not implied by the default suite.
 Unix-only signal/mode/socket tests remain exercised on the Unix CI matrix;
 Windows runs native ACL, named-pipe and process-tree counterparts. Cross-platform
 CI results and published artifact status are owned by GitHub, not this task record.

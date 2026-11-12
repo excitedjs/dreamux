@@ -17,7 +17,7 @@ import {
   readWindowsPermissions,
   setWindowsFixturePermissions,
   withWindowsRestorePrivilege,
-} from '../../../../common/scripts/test-permissions.mjs';
+} from '../../../../common/testing/test-permissions.mjs';
 import { defaultDispatcherCodexConfig } from '../src/config.js';
 import { createCodexAgentRuntimeProvider } from '../src/provider.js';
 import { CodexProcess } from '../src/supervisor.js';
@@ -101,8 +101,7 @@ describe('provider log permissions', () => {
             runtimeSocketDirs: () => [dir],
           },
           state: { publish: async () => undefined },
-          results: () => undefined,
-          activity: () => undefined,
+          events: () => undefined,
         });
         await expect(runtime.start()).resolves.toEqual({ continuity: 'fresh' });
         expect(JSON.parse(await readFile(observation, 'utf8'))).toEqual([]);

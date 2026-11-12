@@ -51,7 +51,6 @@ import {
 import {
   assertWindowsServiceInstallable,
   registerWindowsService,
-  renderWindowsService,
   unregisterWindowsService,
 } from './windows.js';
 
@@ -83,6 +82,8 @@ export interface ServiceInstallResult {
   unitPath: string;
   registered: boolean;
   started: boolean;
+  /** Windows self-install: control was handed off, not confirmed complete. */
+  handedOff?: boolean;
   /** systemd `--user` only: whether linger enabled so service boots without login. null when not applicable. Non-fatal. */
   lingerEnabled: boolean | null;
   /** Non-fatal operator-facing warnings (e.g. linger could not be enabled). */
@@ -97,7 +98,7 @@ export interface ServiceRemoveOptions {
 export interface ServiceRemoveResult {
   platform: ServicePlatform;
   unitPath: string;
-  /** Whether the unit file existed and was removed. */
+  /** Whether the service unit or registered Windows task existed and was removed. */
   removed: boolean;
 }
 
@@ -174,12 +175,11 @@ export async function runDaemonUninstall(
 export async function installUserService(
   options: ServiceInstallOptions,
 ): Promise<ServiceInstallResult> {
-  const unit = serviceUnitPath(options.host.platform, options.host.homeDir);
   const workingDir = stateRoot();
   const logDir = logsRoot();
   const stdoutLog = join(logDir, 'daemon.stdout.log');
   const stderrLog = join(logDir, 'daemon.stderr.log');
-  if (unit.platform === 'windows') {
+  if (options.host.platform === 'win32') {
     // Preserve a running launcher's ownership definition until it has been
     // stopped from outside the service before changing its Job identity.
     await assertWindowsServiceInstallable(
@@ -205,12 +205,30 @@ export async function installUserService(
     dryRun: options.answers.dryRun,
   });
 
+  if (options.host.platform === 'win32') {
+    // An elevated installer can create Administrators-owned logs. Prepare
+    // their user ownership before the limited task tries to open them.
+    if (!options.answers.dryRun) await prepareLogDirectory(logDir);
+    const registration = await registerWindowsService(
+      options.host.runner,
+      options.answers,
+    );
+    return {
+      platform: 'windows',
+      unitPath: registration.path,
+      registered: true,
+      started: options.answers.startService && !registration.handedOff,
+      handedOff: registration.handedOff,
+      lingerEnabled: null,
+      warnings: [],
+    };
+  }
+
+  const unit = serviceUnitPath(options.host.platform, options.host.homeDir);
   const content =
     unit.platform === 'launchd'
       ? renderLaunchdPlist(options.answers, stdoutLog, stderrLog)
-      : unit.platform === 'windows'
-        ? renderWindowsService(options.answers, stdoutLog, stderrLog)
-        : renderSystemdUnit(options.answers, stdoutLog, stderrLog);
+      : renderSystemdUnit(options.answers, stdoutLog, stderrLog);
   const unitStatus = await writeTextFile(
     unit.path,
     content,
@@ -226,15 +244,6 @@ export async function installUserService(
   const warnings: string[] = [];
   if (unit.platform === 'launchd') {
     await registerLaunchd(unit.path, unitStatus, options);
-  } else if (unit.platform === 'windows') {
-    // An elevated installer can create Administrators-owned logs. Prepare
-    // their user ownership before the limited task tries to open them.
-    if (!options.answers.dryRun) await prepareLogDirectory(logDir);
-    await registerWindowsService(
-      unit.path,
-      options.host.runner,
-      options.answers,
-    );
   } else {
     const systemd = await registerSystemd(unit.path, options);
     lingerEnabled = systemd.lingerEnabled;
@@ -341,17 +350,23 @@ export async function enableSystemdLinger(
 /**
  * Unregister and remove the user-level service unit only. Shared by
  * `dreamux uninstall` (also recursively removes DREAMUX_ROOT) and
- * `daemon uninstall` (removes nothing else). Unit-file removal is authoritative.
+ * `daemon uninstall` (removes nothing else). Native task or unit-file removal
+ * is authoritative.
  */
 export async function removeUserService(
   options: ServiceRemoveOptions,
 ): Promise<ServiceRemoveResult> {
-  const unit = serviceUnitPath(options.host.platform, options.host.homeDir);
   const dryRun = options.dryRun ?? false;
 
-  if (unit.platform === 'windows') {
-    await unregisterWindowsService(options.host.runner, dryRun);
-  } else if (unit.platform === 'launchd') {
+  if (options.host.platform === 'win32') {
+    return {
+      platform: 'windows',
+      ...(await unregisterWindowsService(options.host.runner, dryRun)),
+    };
+  }
+
+  const unit = serviceUnitPath(options.host.platform, options.host.homeDir);
+  if (unit.platform === 'launchd') {
     const serviceTarget = launchdTarget(options.host.uid);
     const loaded = await options.host.runner.check(
       'launchctl',

@@ -114,8 +114,8 @@ export async function isRealPathUnderDreamuxRoot(
   return pathIsAtOrUnder(realRoot, realPath);
 }
 
-export function stateRoot(): string {
-  return join(dreamuxRoot(), 'state');
+export function stateRoot(root = dreamuxRoot()): string {
+  return join(root, 'state');
 }
 
 /**
@@ -123,19 +123,15 @@ export function stateRoot(): string {
  * one-shot control markers. Nothing under it is durable; it is safe to remove
  * while no dreamux server is running. Durable state stays under `stateRoot()`.
  */
-export function runRoot(): string {
-  return join(dreamuxRoot(), 'run');
-}
-
-/** Generated Windows user-service launch definition, owned by daemon install. */
-export function windowsServiceFile(): string {
-  return join(dreamuxRoot(), 'daemon.mjs');
+export function runRoot(root = dreamuxRoot()): string {
+  return join(root, 'run');
 }
 
 /** Same-user service ownership shared by the CLI and non-interactive sessions. */
-export function windowsServiceJobName(): string {
+export function windowsServiceJobName(root = dreamuxRoot()): string {
   const identity = createHash('sha256')
-    .update(resolve(windowsServiceFile()).toLowerCase())
+    // Retain the established Job identity; this spelling is not a file lookup.
+    .update(resolve(root, 'daemon.mjs').toLowerCase())
     .digest('hex');
   return `Global\\Dreamux-service-${identity}`;
 }
@@ -146,12 +142,12 @@ export function windowsServiceJobName(): string {
  * once, deletes it, and injects a "restart completed" notice into the named
  * resumed dispatchers. Volatile run file; safe to delete.
  */
-export function restartIntentPath(): string {
-  return join(runRoot(), 'restart-intent.json');
+export function restartIntentPath(root = dreamuxRoot()): string {
+  return join(runRoot(root), 'restart-intent.json');
 }
 
-export function logsRoot(): string {
-  return join(dreamuxRoot(), 'logs');
+export function logsRoot(root = dreamuxRoot()): string {
+  return join(root, 'logs');
 }
 
 /**
@@ -184,8 +180,8 @@ export function dispatcherCompletionSpillDir(id: string): string {
  * shims resolve it through this builder only — it is a fixed path contract, so
  * an over-budget path (extreme $HOME length) fails loudly instead of moving.
  */
-export function adminSocketPath(): string {
-  const path = join(runRoot(), 'admin.sock');
+export function adminSocketPath(root = dreamuxRoot()): string {
+  const path = join(runRoot(root), 'admin.sock');
   return process.platform === 'win32'
     ? path
     : assertUnixSocketPathBudget(path, 'admin socket path');

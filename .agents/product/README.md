@@ -692,12 +692,27 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   communication and provider children run through shared Node/native capabilities
   without Bash, PowerShell, or WSL. The managed
   user service uses Task Scheduler Password logon without a persistent desktop
-  console. Installation locally prompts for the Windows account password when
-  registering or converting a task; Dreamux does not store it. The initial
-  trigger remains user logon. Reinstallation preserves an existing Password
-  task's settings; other login modes are converted to Password while preserving
-  the rest of their definition. Its stop command terminates the
-  owned process tree; it does not guarantee Unix signal-based graceful draining.
+  console. Installation opens a native Windows credential dialog for the current
+  account password, not a Windows Hello PIN, for a new task, login-mode conversion
+  or changed launch data. Only an existing Password task with ordinal-equal
+  launch data receives a prompt-free action-only update. Cancellation or a native
+  error aborts registration. The password stays in the registering PowerShell
+  process until passed to Task Scheduler; it does
+  not enter JavaScript, arguments, environment or Dreamux configuration. The initial
+  trigger remains user logon. Registration preserves existing triggers, settings,
+  description and run level. The Task Action invokes the published service entry;
+  Task Data owns the captured environment and business command. `DREAMUX_ROOT`
+  comes from the registered WorkingDirectory's parent, not a duplicate Data
+  field or the controlling CLI's environment. The displayed `unitPath` is a native
+  task identifier, not a file. Stop terminates and awaits the owned process tree
+  and validates Task.Stop completion. Restart completes stop before one Run and
+  waits for registered-root `server.status` with a PID belonging to the service
+  Job. A service-owned caller reports handoff to an external controller rather
+  than completed restart; the new server consumes the existing resumed notice.
+  When service installation takes this path, its result reports `started: false`
+  and `handedOff: true`; daemon install and onboard output both state that
+  completion has not yet been confirmed.
+  Windows stop does not guarantee Unix signal-based graceful draining.
   (Task: [native Windows support](/.agents/tasks/architecture/native-windows-support/README.md).)
 - **Uninstall recursively removes the Dreamux root.** `dreamux uninstall`
   removes the managed service and the state/run/cache/log paths, then the

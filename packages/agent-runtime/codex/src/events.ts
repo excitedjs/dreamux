@@ -197,7 +197,7 @@ function rememberTerminal(terminals: Set<string>, turnId: string): boolean {
  * does not have.
  */
 export async function injectThreadItems(
-  client: CodexWsClient,
+  client: CodexRpcClient,
   threadId: string,
   text: string,
 ): Promise<void> {

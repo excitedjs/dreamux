@@ -8,7 +8,7 @@ import { WorkflowJournal } from '../src/service/workflow-service/journal.js';
 import {
   expectOwnerOnlyPermissions,
   makeWorldReadable,
-} from '../../../common/scripts/test-permissions.mjs';
+} from '../../../common/testing/test-permissions.mjs';
 
 describe('WorkflowJournal privacy and ordered JSONL writes', () => {
   let root: string;

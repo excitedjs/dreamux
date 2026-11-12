@@ -15,7 +15,7 @@ import { assertNoLegacyAdminServer } from '../src/admin/socket.js';
 import {
   expectOwnerOnlyPermissions,
   makeWorldReadable,
-} from '../../../common/scripts/test-permissions.mjs';
+} from '../../../common/testing/test-permissions.mjs';
 
 describe('ensureOwnerOnlyDir', () => {
   let root: string;

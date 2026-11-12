@@ -71,11 +71,13 @@ export async function runUninstall(
 
   // Service removal (unit-only) is shared with `dreamux daemon uninstall`.
   const removal = await removeUserService({ host, dryRun });
-  entries.push({
-    path: removal.unitPath,
-    status: removal.removed ? 'removed' : 'missing',
-    reason: `${removal.platform} unit`,
-  });
+  if (removal.platform !== 'windows') {
+    entries.push({
+      path: removal.unitPath,
+      status: removal.removed ? 'removed' : 'missing',
+      reason: `${removal.platform} unit`,
+    });
+  }
 
   await removeOwnedDirectory(
     stateDir,
@@ -172,13 +174,13 @@ function assertSafeOwnedDirectory(
   reason: string,
   protectedRoots: readonly string[],
 ): void {
-  const normalized = normalizePath(path);
-  const home = normalizePath(homedir());
+  const normalized = pathComparisonKey(normalizePath(path));
+  const home = pathComparisonKey(normalizePath(homedir()));
   if (
     normalized === '/' ||
     normalized === home ||
     basename(normalized) === '' ||
-    normalized === normalizePath(process.cwd())
+    normalized === pathComparisonKey(normalizePath(process.cwd()))
   ) {
     throw new Error(`refusing to remove unsafe ${reason}: ${path}`);
   }
@@ -235,5 +237,14 @@ function uniquePaths(paths: Array<string | undefined>): string[] {
 }
 
 function isSameOrInside(path: string, root: string): boolean {
-  return path === root || path.startsWith(`${root}${sep}`);
+  const comparedPath = pathComparisonKey(path);
+  const comparedRoot = pathComparisonKey(root);
+  return (
+    comparedPath === comparedRoot ||
+    comparedPath.startsWith(`${comparedRoot}${sep}`)
+  );
+}
+
+function pathComparisonKey(path: string): string {
+  return process.platform === 'win32' ? path.toLowerCase() : path;
 }

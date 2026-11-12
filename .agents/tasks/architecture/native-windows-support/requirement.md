@@ -14,6 +14,23 @@ should replace platform conditionals when they express the same contract.
 
 ## Scope and invariants
 
+The 2026-11-12 correction requires a native Windows credential dialog, not a
+terminal password prompt. Installation still selects Password logon. Credentials
+remain local to the registration process and are never requested through chat.
+Windows restart must launch a responding replacement instance; acknowledging
+an external controller or a Scheduler command is not that completion evidence.
+When the caller belongs to the old service, it must distinguish handing off the
+operation from observing the new service, including installation results and
+daemon/onboard output. Reassessment also removes unrelated
+release-only abstractions and changes to historical verification records.
+
+The approved service-entry revision replaces generated launcher code with a
+packaged entry. Task Scheduler Data owns the captured environment and business
+command; the registered WorkingDirectory selects the root. A Windows Task path
+is an identifier for display, not a file-ledger or filesystem target. The approved
+old-alpha upgrade requires successful old-version service removal before the
+package is replaced; the exact sequence is in the final design and public docs.
+
 - Support native Windows without requiring Bash or WSL for normal CLI operation.
 - Preserve Linux/macOS behavior and the existing logical admin path and lock.
 - Importing shared utilities or host entry modules must not load the Windows capabilities' Koffi addon; load it only when a native capability is invoked.
@@ -36,8 +53,9 @@ should replace platform conditionals when they express the same contract.
 - Job termination remains safe when a held candidate exits before assignment or termination, and does not wait for or terminate a live candidate outside that Job.
 - Provider log directories and files are current-user-owned before child output starts, including when created by an elevated Windows foreground server.
 - Task Scheduler installation, status, start, stop and removal work for the current user.
-- Windows installation uses Password logon for the current user so the service runs without an interactive desktop console. New installations and conversions from Interactive mode collect the required account credential locally; Dreamux must not persist it in configuration, generated launchers, command-line arguments or environment variables.
-- Reinstalling an already-Password task refreshes its action without resetting its triggers or settings. Converting an existing task changes the login mode deliberately while preserving its other settings. Registration errors propagate without silently falling back to Interactive or S4U.
+- Windows installation uses Password logon for the current user so the service runs without an interactive desktop console. New installations, login-mode conversions and changed launch Data collect the required account credential in the native local dialog; Dreamux must not persist it in configuration, Task Data, command-line arguments or environment variables.
+- Reinstalling an already-Password task with identical launch Data refreshes only its action without resetting its triggers or settings. Changed Data or a login-mode conversion uses the existing definition with credentials while preserving its other settings. Registration errors propagate without silently falling back to Interactive or S4U.
+- Windows uninstall protection rejects case aliases of protected paths before service changes, without changing the filesystem paths used for I/O or Unix comparison behavior.
 - Managed stop and restart retain owned-process termination and waiting across the interactive CLI and non-interactive service sessions.
 - Rush build, lint, test and test typechecking pass, with native Windows included in CI.
 - Fresh-process imports of built utilities, server, daemon, workflow and MCP modules do not load Koffi; concurrent first Windows capability calls initialize successfully.
@@ -48,3 +66,7 @@ should replace platform conditionals when they express the same contract.
 
 Real model completion requires separately opted-in, usable provider authentication.
 Windows forced process termination does not provide Unix signal-based graceful drain.
+Real GUI behavior, Password credential storage/reuse, cross-session operation and
+existing registered Task ACL preservation remain unverified. The operator
+deferred the early-entry stop case before Job assignment and approved closeout
+with that explicit coverage gap; existing ready-state tests do not cover it.

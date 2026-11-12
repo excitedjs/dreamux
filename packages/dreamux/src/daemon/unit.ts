@@ -14,7 +14,7 @@ import {
   type PlistValue,
 } from 'plist';
 
-import { stateRoot, windowsServiceFile } from '../platform/paths.js';
+import { stateRoot } from '../platform/paths.js';
 import {
   managedServiceEnvironment,
   type ServiceInstallAnswers,
@@ -28,7 +28,7 @@ export const SYSTEMD_UNIT = 'dreamux.service';
 export function serviceUnitPath(
   platform: NodeJS.Platform = process.platform,
   homeDir = homedir(),
-): { platform: ServicePlatform; path: string } {
+): { platform: 'launchd' | 'systemd'; path: string } {
   if (platform === 'darwin') {
     return {
       platform: 'launchd',
@@ -41,11 +41,8 @@ export function serviceUnitPath(
       path: join(homeDir, '.config', 'systemd', 'user', SYSTEMD_UNIT),
     };
   }
-  if (platform === 'win32') {
-    return { platform: 'windows', path: windowsServiceFile() };
-  }
   throw new Error(
-    `dreamux user-level services require macOS, Linux, or Windows (got ${platform})`,
+    `dreamux service unit files require macOS or Linux (got ${platform})`,
   );
 }
 

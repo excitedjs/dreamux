@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { WebSocketServer } from 'ws';
-import { expectOwnerOnlyPermissions } from '../../../../../common/scripts/test-permissions.mjs';
+import { expectOwnerOnlyPermissions } from '../../../../../common/testing/test-permissions.mjs';
 
 const paths = JSON.parse(process.env.DREAMUX_TEST_LOG_PATHS);
 const errors = [];

@@ -85,7 +85,7 @@ dreamux status
 ```
 
 The interactive wizard asks for a workspace, runtime, and Feishu credentials.
-It can register and start a user service on Linux or macOS. If you choose
+It can register and start a user service on Linux, macOS or Windows. If you choose
 foreground operation instead, start it with `dreamux serve` before checking
 status.
 

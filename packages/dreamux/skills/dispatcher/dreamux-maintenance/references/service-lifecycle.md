@@ -23,19 +23,26 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   macOS, systemd user services on Linux, and Task Scheduler on Windows. Explain
   before changing units, task registration, linger, environment, or shell startup.
 - Windows installs one `Dreamux-<current-user-SID>` Password, limited task per
-  account, with a user-logon trigger. A new task or conversion to Password asks
-  for the Windows account password in the local terminal using a masked
-  PowerShell prompt; the Windows Hello PIN is not that password. Never request
-  or send the password through chat. Task Scheduler stores the credential;
-  Dreamux does not put it in configuration, launchers, arguments, environment
-  or logs. A non-interactive install fails if it needs a password; dry runs do
-  not prompt. An existing Password task receives an action-only update without
-  another password prompt. Other modes are converted for the current user,
-  preserving triggers, settings, description and run level. An update error
-  propagates without falling back to Interactive or S4U. A different `DREAMUX_ROOT` does
-  not create a second managed task. Use `dreamux daemon status` to inspect it.
-  Installation refuses to change a running or queued task's Job identity;
-  stop it from a terminal outside the service before changing that identity.
+  account, with a user-logon trigger for a new task. A new task, conversion to
+  Password or changed Task Data asks for the Windows account password in a
+  native Windows credential dialog; the Windows Hello PIN is not that password.
+  Never request or send the password through chat. Task Scheduler stores the credential;
+  the registering PowerShell process passes it directly without sending it to
+  JavaScript or putting it in configuration, Task Data, arguments, environment
+  or logs. The dialog does not depend on a TTY branch. Cancellation or a native
+  error aborts registration; dry runs do not open the dialog. Only an existing
+  Password task with ordinal-equal Data receives an action-only update without
+  another password prompt. Otherwise Action and Data are registered together
+  from one COM definition through credentialed XML in that same PowerShell
+  process, preserving existing triggers, settings, description and run level.
+  An update error propagates without falling back to Interactive or S4U.
+  New-task XML sets `RegistrationInfo.SecurityDescriptor` to grant the current
+  SID, SYSTEM and Administrators full access for the Limited self-controller;
+  updates do not explicitly reset an existing task's custom descriptor.
+  A different `DREAMUX_ROOT` does not create a second managed task.
+  Use `dreamux daemon status` to inspect it.
+  Installation reads the registered Task Data and absolute WorkingDirectory;
+  stop a running or queued task from outside the service before changing its root.
   Before registration, installation prepares current-user ownership and private
   ACLs for the log directory and existing logs, including daemon stdout/stderr,
   so logs created by an elevated installer remain usable by the limited task.
@@ -48,9 +55,15 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   files before child output begins, including during elevated foreground runs.
   Existing contents are preserved; provider logs remain private and owned by
   the current user for later limited service startup.
-  `<DREAMUX_ROOT>/daemon.mjs` is generated and owned by `daemon install`; rerun
-  installation to refresh its pinned Node command and captured environment.
-  Do not hand-edit that launcher.
+  The Task Action invokes the selected Node and published
+  `dist/daemon/windows-entry.js` with the task name. TaskDefinition.Data owns
+  `{ environment: Record<string, string>; execStart: string[] }`, including the
+  installation PATH and business command. Its environment excludes
+  `DREAMUX_ROOT`: the parent of the registered `<root>/state` WorkingDirectory
+  supplies the root for startup, status, control, logs and restart notices.
+  Refresh these snapshots through `daemon install`, not manual Data edits.
+  The reported `unitPath` is the native Task.Path, not a file or a file-ledger
+  entry. `daemon uninstall` preserves config, state and logs.
   Password tasks run noninteractively without leaving the service console on
   the desktop. Login mode is separate from the trigger: a logon trigger does
   not become a boot trigger. Task Scheduler's `Hidden` setting only hides the
@@ -78,17 +91,31 @@ A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
 Windows managed `stop` and `restart` forcefully terminate and await the task
-Job owned by its Node launcher, including native runtime descendants. Its
+Job owned by its published entry, including native runtime descendants. Its
 `Global` namespace and current-user-only DACL let the desktop CLI and
 non-interactive service address the same object. They do not guarantee
-graceful draining or completion delivery. Inspect persisted state after restart;
-its normal startup rules determine recovery. Task startup runs at user logon,
-not before a user signs in.
+graceful draining or completion delivery. Stop disables the task and reserves its
+root-hash Job, terminates members and awaits held process handles, then calls
+Task.Stop and requires neither Running nor Queued state and zero instances
+before releasing the reservation. The prior enabled state is restored. New
+tasks use `IgnoreNew`; restart completes stop before one Run, with no Run after
+a stop failure. Start/restart wait for Running and a registered-root
+`server.status` response whose PID belongs to the opened service Job. This
+checks the admin endpoint, not every provider or Dispatcher. Inspect persisted
+state after restart; its normal startup rules determine recovery. The logon
+trigger does not start the task at boot before a user signs in.
 
 A Windows restart issued from inside the service hands control to a short-lived
-process outside the service Job before stopping it. Command handoff is not
-restart completion: for self-upgrade, wait for the existing resumed Dispatcher
-notice. Controller errors are written to `logs/daemon.stderr.log`.
+WMI-created Node process outside the service Job before stopping it. It invokes
+the published entry with the registered task name, control verb and
+WorkingDirectory. The caller reports `handedOff`, not restart completion; the
+controller performs the same stop/start and readiness checks. A service-owned
+installation preserves this result as `started: false, handedOff: true`; daemon
+install and onboard output explicitly leave completion unconfirmed. For self-upgrade,
+wait for the new server's existing one-shot resumed Dispatcher notice at the
+registered root. Controller errors are written to that root's
+`logs/daemon.stderr.log`. Scheduler state queries and registration shadows do
+not prove native credential reuse or cross-session acceptance.
 
 For a delivered SIGTERM or SIGINT, `dreamux serve` exits 0 once shutdown
 completes; if shutdown fails, or has not settled within 15 seconds, it logs the
@@ -339,6 +366,7 @@ bundled skill.
    ```
 
    Use the current Dispatcher id for `<id>`.
+
 4. The caller may be reaped during a restart. Do not depend on the pre-restart
    turn to observe success; continue only from the injected restart notice
    (default `Restart completed.`, overridable with `--announce`) or an

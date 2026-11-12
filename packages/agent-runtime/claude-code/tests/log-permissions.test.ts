@@ -17,7 +17,7 @@ import {
   readWindowsPermissions,
   setWindowsFixturePermissions,
   withWindowsRestorePrivilege,
-} from '../../../../common/scripts/test-permissions.mjs';
+} from '../../../../common/testing/test-permissions.mjs';
 import { defaultDispatcherClaudeCodeConfig } from '../src/config.js';
 import { createClaudeCodeAgentRuntimeProvider } from '../src/provider.js';
 import { createDefaultClaudeCodeSession } from '../src/supervisor.js';
@@ -103,8 +103,7 @@ describe('provider log permissions', () => {
             runtimeSocketDirs: () => [dir],
           },
           state: { publish: async () => undefined },
-          results: () => undefined,
-          activity: () => undefined,
+          events: () => undefined,
         });
         await runtime.start();
         const admission = await runtime.submit({ text: 'permission check' });
@@ -149,7 +148,7 @@ describe('provider log permissions', () => {
         sessionId: 'fixture',
         turnTimeoutMs: 5_000,
         remoteControl: false,
-        results: () => undefined,
+        events: () => undefined,
       });
       try {
         const before = readWindowsPermissions(stderr);

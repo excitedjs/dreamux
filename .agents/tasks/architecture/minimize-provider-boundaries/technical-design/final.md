@@ -1602,7 +1602,7 @@ During implementation run, from the monorepo root:
 node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
-.agents/scripts/check.mjs
+.agents/scripts/check.sh
 git diff --check
 ```
 

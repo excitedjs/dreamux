@@ -121,10 +121,12 @@ should surface in one run.
 
 The same Node-based Rush commands run in native Windows PowerShell. The
 package launcher is an executable Node script; from a Windows source checkout
-use `node packages/dreamux/bin/dreamux <command>`. Repository hooks, content
-scans, cleanup, and release file preparation run directly in Node on every
-platform. Git, ESLint, gitleaks, and the system archive tool remain external
-tools; no Bash entry point is needed. `node common/scripts/install-gitleaks.mjs`
+use `node packages/dreamux/bin/dreamux <command>`. The repository hook retains
+its shell author check and delegates its remaining gates to Node. Content scans
+and cleanup run directly in Node on every platform. Release-only SSH and
+tarball orchestration remains inline in its Ubuntu workflows. Git, ESLint,
+gitleaks and the system archive tool remain external tools.
+`node common/scripts/install-gitleaks.mjs`
 selects the native release archive, verifies its checksum, and installs
 `gitleaks.exe` on Windows. The KB checker retains Python as the task-record
 owner; set `PYTHON` to select an explicit interpreter.
@@ -184,7 +186,7 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 | Job                  | Gate                                                                                                                                                                                                                       |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan                                                                                                                        |
-| `commit-metadata`    | Author email must have a domain and must not be machine-local; an optional private denylist applies to every address, including GitHub noreply addresses, and comes from a repo variable |
+| `commit-metadata`    | Git commit author email: GitHub noreply addresses pass directly; other addresses must have a domain, must not be machine-local, and must pass the optional private denylist from a repo variable |
 | `scripts`            | Linux + macOS + Windows: `node --test common/scripts/tooling.test.mjs` validates Node entry points, normal Git hook execution, content gates, and KB checks |
 | `kb`                 | `.agents/scripts/check.mjs` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
 | `rush`               | Linux + macOS + Windows: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test                                                                                                                |
@@ -366,9 +368,11 @@ private registry URLs, internal hostnames, real Feishu ids, or tokens.
   that installs into `~/.local/bin` by default (`GITLEAKS_INSTALL_DIR` overrides
   it). The hook looks in `$GITLEAKS_INSTALL_DIR` and `~/.local/bin` as well as
   `PATH`, because that default directory is not on every shell's `PATH`.
-- Local commits and CI use `check-author-emails.mjs` for the same author
-  identity policy. The optional `AUTHOR_EMAIL_DENYLIST_REGEX` is a JavaScript
-  regular expression (case-insensitive); the value remains private.
+- Author checks retain their existing POSIX extended-regex policy. The local
+  Git hook checks the optional `AUTHOR_EMAIL_DENYLIST_REGEX` for every accepted
+  address, including GitHub noreply addresses; the Ubuntu CI check exempts
+  noreply addresses. Git for Windows supplies the hook's `sh` and `grep`.
+  The remaining local gates run in Node. The private regex stays out of source.
 - The `gitleaks` CI job scans the full history with the same pinned binary, so a
   secret added and later "fixed" is still caught. The pin lives only in
   `install-gitleaks.mjs`; CI and the release workflow both install through it.
@@ -381,7 +385,7 @@ private registry URLs, internal hostnames, real Feishu ids, or tokens.
   tracked file). Its allowlist is by reviewed placeholder user name and by
   named pattern-definition file, never by directory: the leak that motivated
   the tree scan was in `tests/`, which a directory exclusion would have missed.
-- The prerelease job runs `node common/scripts/verify-tarballs.mjs` to audit
+- The prerelease job's inline tarball gate audits
   every packed tarball before upload —
   `package/package.json` must be present, and
   `check-internal-content.mjs --tarball` scans every packed file with the same
@@ -411,8 +415,7 @@ path exclusion, or bypass flag in only this repo.
 Source: `/.gitleaks.toml`, `/.npmrc`, `/common/git-hooks/pre-commit`,
 `/common/scripts/install-gitleaks.mjs`,
 `/common/scripts/check-internal-content.mjs`,
-`/common/scripts/pre-commit.mjs`, `/common/scripts/check-author-emails.mjs`,
-`/common/scripts/verify-tarballs.mjs`, `/common/scripts/prepare-release-ssh.mjs`,
+`/common/scripts/pre-commit.mjs`,
 `/.github/workflows/ci.yml`, `/.github/workflows/release.yml`,
 `/packages/dreamux/tests/internal-content-scan.test.ts`.
 
@@ -621,7 +624,7 @@ Source: `/packages/dreamux/tsconfig.json`,
 | Pipeline push rejected (GH013 rule violation) or deploy-key auth failed | promote-next push step / release.yml version job logs | Verify the `release-branch-pr-gate` ruleset still lists deploy keys as bypass actors, the `release-pipeline` deploy key still exists with write access, and the `RELEASE_DEPLOY_KEY` secret matches it. Setup steps already fail loudly when the secret is absent.                                                                                                                      |
 | Version job produced the bump commit, but publish failed mid-upload     | release.yml publish job logs                          | Re-run against the same commit via `Actions → release.yml → Run workflow → main`. The version job sees no diff in `packages/` or `common/changes/` and short-circuits with `should_publish=true` on `workflow_dispatch`, so only the publish job re-runs. Do not push a new commit just to re-trigger CI.                                                                               |
 | Version bump was pushed but the next-sync step failed                   | release.yml version job                               | Verify the deploy-key bypass (previous row) is intact for `next`. If `next` moved between the bump and the sync, the step logs "Skipping next sync" intentionally; the next PR merged into next lands on top of the pre-release state, and promote-next still fast-forwards because that branch is a descendant of main.                                                                |
-| Author email fails the commit-metadata gate                             | PR CI, or the pre-commit hook locally                 | Fix with `git config user.email <your-github-email>`. Privacy addresses (`*@users.noreply.github.com`) are explicitly allowed. The local hook mirrors the CI check; run `rush update` to ensure it is wired.                                                                                                                                                                            |
+| Author email fails the commit-metadata gate                             | PR CI, or the pre-commit hook locally                 | Fix with `git config user.email <your-github-email>`. CI allows privacy addresses (`*@users.noreply.github.com`) directly; the local hook still applies its optional denylist to them. Run `rush update` to ensure it is wired.                                                                                                                                                                            |
 | `rush change --verify` fails on a workflow-only PR                      | PR CI `rush-change-status`                            | Generate a `type: none` change file for the package whose workflow or surface is being altered. Workflow-only changes still need a paper trail in the CHANGELOG.                                                                                                                                                                                                                        |
 
 History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md)

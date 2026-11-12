@@ -1,21 +1,42 @@
-#!/usr/bin/env node
-// Rush copies this hook to .git/hooks, so locate its implementation via Git.
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
-const { join } = require('node:path');
-const { pathToFileURL } = require('node:url');
+#!/bin/sh
+# Preserve the local ERE author policy before running the native Node gates.
+repo_root=$(git rev-parse --show-toplevel) || exit 1
 
-(async () => {
-  const { stdout } = await promisify(execFile)(
-    'git',
-    ['rev-parse', '--show-toplevel'],
-    { windowsHide: true },
-  );
-  await import(
-    pathToFileURL(join(stdout.trim(), 'common', 'scripts', 'pre-commit.mjs'))
-      .href
-  );
-})().catch((error) => {
-  console.error(error.message);
-  process.exitCode = 1;
-});
+author_email="${GIT_AUTHOR_EMAIL:-$(git config user.email || true)}"
+
+if [ -z "$author_email" ]; then
+  echo "[author-identity] author email is not set." >&2
+  echo "[author-identity] Run: git config user.email <your-github-email>" >&2
+  exit 1
+fi
+
+case "$author_email" in
+  *@users.noreply.github.com)
+    # Accept the address shape; the local denylist below still applies.
+    ;;
+  *@localhost|*@*.local|*@local)
+    echo "[author-identity] author email is a machine-local identity: $author_email" >&2
+    echo "[author-identity] Set a real email via: git config user.email <your-github-email>" >&2
+    exit 1
+    ;;
+  *@*)
+    # Well-formed address with a domain — fall through to optional denylist.
+    ;;
+  *)
+    echo "[author-identity] author email is invalid (no @-domain): $author_email" >&2
+    echo "[author-identity] Set a real email via: git config user.email <your-github-email>" >&2
+    exit 1
+    ;;
+esac
+
+# Optional private denylist (env var, never committed). Matches the CI-side
+# repository variable name so operators can set-and-forget across both.
+if [ -n "${AUTHOR_EMAIL_DENYLIST_REGEX:-}" ]; then
+  if printf '%s' "$author_email" | grep -qiE "$AUTHOR_EMAIL_DENYLIST_REGEX"; then
+    echo "[author-identity] author email matches AUTHOR_EMAIL_DENYLIST_REGEX: $author_email" >&2
+    echo "[author-identity] Fix with: git config user.email <allowed-github-email>" >&2
+    exit 1
+  fi
+fi
+
+exec node "$repo_root/common/scripts/pre-commit.mjs"
