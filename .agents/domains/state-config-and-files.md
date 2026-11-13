@@ -687,6 +687,11 @@ are also explicitly owned by the current user, so a later limited service can
 reopen them. Linked log entries are rejected without changing their targets;
 synchronous Pino writes retain immediate-exit logs.
 
+Existing Administrators-owned private paths may be adopted through the same
+native setter when the caller has the required Windows owner/DACL write rights.
+This does not require an enabled administrator group. Other owners are refused
+with the affected path, and native access denial still propagates.
+
 Codex and Claude Code prepare their provider-owned log directories and append
 files before passing descriptors to their children. They enforce current-user
 ownership even when the foreground server is elevated; this keeps later limited
@@ -738,8 +743,10 @@ creation in the transparent file ledger without touching the filesystem.
 Windows installs one `Dreamux-<current-user-SID>` Scheduled Task per account,
 independent of `DREAMUX_ROOT`. A new task has a Password, limited principal
 and a user-logon trigger. Registration asks for the current Windows account
-password in a native Windows credential dialog; a Windows Hello PIN is not the
-account password. The registering PowerShell process passes the credential
+password in a native Windows credential dialog. The current account is fixed
+and cannot be edited; no Microsoft-account alias needs to be entered. A Windows
+Hello PIN is not the account password. The registering PowerShell process passes
+the credential
 directly to Task Scheduler, which stores it. The password never enters
 JavaScript, Dreamux configuration, Task Data, arguments, environment
 or logs. The dialog does not depend on a TTY branch. Cancellation or a native
@@ -778,13 +785,24 @@ path or file-ledger entry. `serviceUnitPath` addresses only Unix unit files.
 The published entry creates and joins the root-hash native Job before querying
 Data or starting business children, and appends to the existing daemon logs.
 The Job's `Global` namespace and current-user-only DACL let the CLI and service
-address the same object. Stop disables the task, holds/reserves the Job,
-terminates members and awaits their held process handles. Task.Stop must then
-leave neither Running nor Queued state and report zero instances before the
-reservation is released. The previous enabled state is restored. Restart
-completes stop before a single Run; a failure prevents Run. Start/restart enable
-the task and wait for Running, then a registered-root `server.status` response
-whose PID belongs to the opened service Job within the startup deadline.
+address the same object. Stop disables the task and holds/reserves the Job. A
+registered-root `server.status` query has a one-second timeout; a responding PID
+is retained as an exact member of that Job before receiving
+`server.shutdown { expectedPid }`. The command checks its own PID before
+accepting the request and returns without awaiting the lifecycle it will drain.
+The request and retained-process exit wait share a single 15-second deadline.
+An unavailable endpoint or an older server without this command proceeds to
+forced cleanup; a lost request response still allows the remaining exit wait.
+An unrelated responding process is refused. After that opportunity, Job
+termination removes remaining members and awaits their held process handles.
+Task.Stop must then leave neither Running nor Queued state and report zero
+instances before the reservation is released. The previous enabled state is
+restored. Restart completes stop before a single Run; a failure prevents Run.
+Start/restart enable the task and wait for Running, then a registered-root
+`server.status` response whose PID belongs to the opened service Job within the
+startup deadline.
+Membership observations open the existing Job with QUERY access only; stop's
+control handle and retained-process wait remain separate.
 Scheduler state, command completion or Job-name availability alone proves
 neither tree exit nor server readiness.
 
@@ -795,10 +813,16 @@ service Job and reports completion only after the same checks. The original
 caller reports `handedOff`, not completion; controller failures go to the
 registered root's daemon stderr. The new server's existing restart-intent
 consumer consumes the one-shot notice at that registered root. No additional
-task or persisted control state is created. Windows managed stop is forced and
-does not promise graceful draining of admitted work. `daemon uninstall` removes
-the task, preserving config, state and logs; `dreamux uninstall` additionally
-removes the Dreamux root under its provider-home exclusion rules.
+task or persisted control state is created. Signals and accepted admin shutdown
+requests use the same serving-process exit owner: it bounds startup and shutdown
+by 15 seconds, exits 0 on success and 1 on failure or deadline. The controller's
+deadline starts before its request, so these are not additive grace periods.
+Normal shutdown stops runtime producers and closes Channels; this gives open CoT
+cards their bounded interrupted-terminal cleanup opportunity, not a guarantee
+of remote delivery during network failure or process termination.
+`daemon uninstall` removes the task, preserving config, state and logs;
+`dreamux uninstall` additionally removes the Dreamux root under its provider-home
+exclusion rules.
 
 Source:
 
@@ -807,6 +831,9 @@ Source:
 - `/packages/dreamux/src/daemon/windows.ts`
 - `/packages/dreamux/src/daemon/windows-entry.ts`
 - `/packages/dreamux/src/daemon/windows-task.ts`
+- `/packages/dreamux/src/server/shutdown.ts`
+- `/packages/dreamux/src/server-commands.ts`
+- `/packages/dreamux-utils/src/windows-job.ts`
 - `/packages/dreamux/src/daemon/environment.ts`
 - `/packages/dreamux/src/daemon/host.ts`
 - `/packages/dreamux/src/daemon/control.ts`

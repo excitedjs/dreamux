@@ -41,7 +41,7 @@ function scheduledTaskScriptRunner(
     failSet?: boolean;
     failRegister?: boolean;
     promptError?: number;
-    wrongAccount?: boolean;
+    maximumPassword?: boolean;
   } = {},
 ) {
   const observed = {
@@ -50,8 +50,13 @@ function scheduledTaskScriptRunner(
       count: 0,
       flags: 0,
       message: '',
+      accountMatchesCurrent: false,
+      nameChars: 0,
+      passwordChars: 0,
+      passwordInitiallyEmpty: false,
       errorCode: null as number | null,
     },
+    nativeCompiled: false,
     stored: null as Record<string, unknown> | null,
   };
   const capture = vi.fn<CommandRunner['capture']>(
@@ -64,17 +69,22 @@ function scheduledTaskScriptRunner(
       );
       // Only NewTask(0) and definition properties use real COM, entirely in memory.
       // Connect, folder queries, persistence and CredUI are all replaced below.
-      // Native packing/unpacking is real; the product's P/Invoke class compilation,
-      // actual dialog, stored credentials and cross-session logon are not exercised.
+      // Compile the original P/Invoke declaration to disk without loading it, then
+      // load only the prompt substitute. No dialog or persisted credentials run.
       const shadowed = `
 $ErrorActionPreference = 'Stop'
 $PSModuleAutoLoadingPreference = 'None'
 Import-Module Microsoft.PowerShell.Utility
-Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @'
+function Add-Type {
+  [CmdletBinding()] param($TypeDefinition)
+  $assembly = [IO.Path]::Combine($PSScriptRoot, 'credential-native.dll')
+  Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition $TypeDefinition -OutputAssembly $assembly
+  $script:fixtureNativeCompiled = [IO.File]::Exists($assembly)
+  Microsoft.PowerShell.Utility\\Add-Type -TypeDefinition @'
 using System;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Text;
 public static class DreamuxCredentialNative
 {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -86,40 +96,39 @@ public static class DreamuxCredentialNative
         public string Caption;
         public IntPtr Banner;
     }
-    public static string Password = Guid.NewGuid().ToString() + "-密碼🔑";
+    public static string Password = ${fixture.maximumPassword ? 'new string((char)120, 252) + "密碼🔑"' : 'Guid.NewGuid().ToString() + "-密碼🔑"'};
     public static int PromptCount;
     public static uint PromptError = ${fixture.promptError ?? 0};
     public static uint PromptFlags;
     public static string PromptMessage;
-    [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool CredPackAuthenticationBufferW(uint flags, string user, string password, IntPtr buffer, ref uint size);
-    [DllImport("credui.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool CredUnPackAuthenticationBufferW(uint flags, IntPtr buffer, uint size, IntPtr user, ref uint userChars, IntPtr domain, ref uint domainChars, IntPtr password, ref uint passwordChars);
-    public static uint CredUIPromptForWindowsCredentialsW(ref Info info, uint error, ref uint package, IntPtr input, uint inputSize, out IntPtr output, out uint outputSize, IntPtr save, uint flags)
+    public static bool AccountMatchesCurrent;
+    public static uint NameChars;
+    public static uint PasswordChars;
+    public static bool PasswordInitiallyEmpty;
+    public static uint CredUIPromptForCredentialsW(ref Info info, string target, IntPtr context, uint error, StringBuilder user, uint userChars, IntPtr password, uint passwordChars, ref bool save, uint flags)
     {
         PromptCount++;
         PromptFlags = flags;
         PromptMessage = info.Message;
-        output = IntPtr.Zero;
-        outputSize = 0;
+        AccountMatchesCurrent = user.ToString() == WindowsIdentity.GetCurrent().Name;
+        NameChars = userChars;
+        PasswordChars = passwordChars;
+        PasswordInitiallyEmpty = Marshal.ReadInt16(password) == 0;
         if (PromptError != 0) return PromptError;
-        string account = ${fixture.wrongAccount ? '"NT AUTHORITY\\\\SYSTEM"' : 'WindowsIdentity.GetCurrent().Name'};
-        if (!CredPackAuthenticationBufferW(4, account, Password, IntPtr.Zero, ref outputSize) && Marshal.GetLastWin32Error() != 122)
-            throw new Win32Exception(Marshal.GetLastWin32Error());
-        output = Marshal.AllocCoTaskMem((int)outputSize);
-        if (!CredPackAuthenticationBufferW(4, account, Password, output, ref outputSize))
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+        char[] value = (Password + "\\0").ToCharArray();
+        if (value.Length > passwordChars) throw new ArgumentException("Fixture password exceeds the native buffer");
+        Marshal.Copy(value, 0, password, value.Length);
+        save = false;
         return 0;
     }
 }
 '@
-# Keep the product's P/Invoke declarations from replacing the prompt substitute.
-function Add-Type { [CmdletBinding()] param($TypeDefinition) }
+  $script:fixturePassword = [DreamuxCredentialNative]::Password
+}
 $fixtureCalls = [System.Collections.Generic.List[object]]::new()
 $fixtureTaskName = 'Dreamux-' + [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-$fixturePassword = [DreamuxCredentialNative]::Password
+$fixturePassword = $null
+$fixtureNativeCompiled = $false
 $fixtureErrorCode = $null
 $fixtureResult = ''
 $fixtureFactory = Microsoft.PowerShell.Utility\\New-Object -ComObject 'Schedule.Service'
@@ -150,6 +159,7 @@ $fixtureStoredXml = $initial.XmlText
 function Record-SchedulerCall($command, $parameters) {
   $values = @{} + $parameters
   if ($values.ContainsKey('Password')) { $values.Password = $values.Password -eq $fixturePassword }
+  if ($values.ContainsKey('User')) { $values.User = [string]::Equals($values.User, [Security.Principal.WindowsIdentity]::GetCurrent().Name, [StringComparison]::Ordinal) }
   $fixtureCalls.Add(@{ command = $command; parameters = $values })
 }
 function Test-CurrentAccount($account) {
@@ -267,11 +277,26 @@ ${script}
       }
     }
   }
+  $prompt = if ($fixtureNativeCompiled) {
+    @{
+      count = [DreamuxCredentialNative]::PromptCount
+      flags = [DreamuxCredentialNative]::PromptFlags
+      message = [DreamuxCredentialNative]::PromptMessage
+      accountMatchesCurrent = [DreamuxCredentialNative]::AccountMatchesCurrent
+      nameChars = [DreamuxCredentialNative]::NameChars
+      passwordChars = [DreamuxCredentialNative]::PasswordChars
+      passwordInitiallyEmpty = [DreamuxCredentialNative]::PasswordInitiallyEmpty
+      errorCode = $fixtureErrorCode
+    }
+  } else {
+    @{ count = 0; flags = 0; message = ''; accountMatchesCurrent = $false; nameChars = 0; passwordChars = 0; passwordInitiallyEmpty = $false; errorCode = $fixtureErrorCode }
+  }
   @{
     stdout = [string]$fixtureResult
     calls = @($fixtureCalls.ToArray())
     stored = $stored
-    prompt = @{ count = [DreamuxCredentialNative]::PromptCount; flags = [DreamuxCredentialNative]::PromptFlags; message = [DreamuxCredentialNative]::PromptMessage; errorCode = $fixtureErrorCode }
+    prompt = $prompt
+    nativeCompiled = $fixtureNativeCompiled
   } | ConvertTo-Json -Depth 12 -Compress
 }
 `;
@@ -552,18 +577,23 @@ describe.skipIf(process.platform !== 'win32')(
           Xml: expect.stringContaining('<Data>'),
           TaskName: path.slice(1),
           TaskPath: '\\',
-          User: expect.any(String),
+          User: true,
           Password: true,
           Force: { IsPresent: true },
         });
         expect(observed.prompt).toMatchObject({
           count: 1,
-          flags: 1,
+          flags: 0x140082,
+          accountMatchesCurrent: true,
+          nameChars: 514,
+          passwordChars: 257,
+          passwordInitiallyEmpty: true,
           message: expect.stringContaining(
             'Windows account password (not PIN)',
           ),
           errorCode: null,
         });
+        expect(observed.nativeCompiled).toBe(true);
         expect(JSON.parse(observed.stored?.data as string)).toEqual(
           expectedData(),
         );
@@ -712,24 +742,39 @@ describe.skipIf(process.platform !== 'win32')(
     );
 
     it(
-      'rejects a different account without changing the existing definition',
+      'keeps the current account fixed and preserves a maximum-length UTF-16 password',
       async () => {
         const { runner, observed } = scheduledTaskScriptRunner(
           'Interactive',
           join(root, 'state'),
-          { wrongAccount: true, data: 'old-data' },
+          { maximumPassword: true, data: 'old-data' },
         );
-        await expect(registerWindowsTask(runner, answers)).rejects.toThrow(
-          'must use the current Windows account',
-        );
-        expect(observed.prompt.count).toBe(1);
+        await registerWindowsTask(runner, answers);
+        expect(observed.prompt).toMatchObject({
+          count: 1,
+          flags: 0x140082,
+          accountMatchesCurrent: true,
+          nameChars: 514,
+          passwordChars: 257,
+        });
+        expect(observed.nativeCompiled).toBe(true);
         expect(observed.calls.map((call) => call.command)).toEqual([
           'Connect',
           'GetFolder',
           'GetTasks',
+          'Register-ScheduledTask',
+          'GetTask',
         ]);
-        expect(observed.stored?.data).toBe('old-data');
-        expect(observed.stored?.principal).toMatchObject({ logonType: 3 });
+        expect(
+          observed.calls.find(
+            (call) => call.command === 'Register-ScheduledTask',
+          )?.parameters,
+        ).toMatchObject({ User: true, Password: true });
+        expect(observed.stored?.data).toBe(JSON.stringify(expectedData()));
+        expect(observed.stored?.principal).toMatchObject({
+          currentAccount: true,
+          logonType: 1,
+        });
         expectPreserved(observed.stored);
         expectNoStart(runner);
       },

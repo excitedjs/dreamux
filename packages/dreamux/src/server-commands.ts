@@ -10,6 +10,7 @@ import type { CoreCommandDefinition } from './command/types.js';
 import { commandPayload } from './command/payload.js';
 import type { AnyCoreCommand } from './command/registry.js';
 import {
+  BOOLEAN,
   INTEGER,
   NO_INPUT,
   OBJECT,
@@ -18,6 +19,7 @@ import {
 } from './command/schema.js';
 import type { CoreCommandHost } from './server/command-host.js';
 import type { DispatcherSummary } from './service/dispatcher-service/types.js';
+import { ValidationError } from './platform/errors.js';
 
 interface ServerStatus {
   pid: number;
@@ -51,5 +53,32 @@ export function serverCommands(
       };
     },
   };
-  return [status as AnyCoreCommand];
+  const shutdown: CoreCommandDefinition<
+    'server.shutdown',
+    { expectedPid: number },
+    { accepted: boolean; pid: number }
+  > = {
+    name: 'server.shutdown',
+    version: 1,
+    input: objectSchema({ expectedPid: { type: 'integer', minimum: 1 } }, [
+      'expectedPid',
+    ]),
+    output: objectSchema({ accepted: BOOLEAN, pid: INTEGER }, [
+      'accepted',
+      'pid',
+    ]),
+    parse(payload) {
+      return { expectedPid: commandPayload(payload).expectedPid as number };
+    },
+    async execute(_context, { expectedPid }) {
+      if (expectedPid !== process.pid) {
+        throw new ValidationError(
+          'server process changed before shutdown request',
+        );
+      }
+      host.requestShutdown();
+      return { accepted: true, pid: process.pid };
+    },
+  };
+  return [status as AnyCoreCommand, shutdown as AnyCoreCommand];
 }

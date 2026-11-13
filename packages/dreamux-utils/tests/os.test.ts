@@ -71,6 +71,51 @@ async function getProvablyDeadPid(): Promise<number> {
   return pid;
 }
 
+/** Read-only: the denied-write case must not borrow ownership/restore privileges. */
+async function expectOwnershipPrivilegesDisabled(): Promise<void> {
+  const { default: koffi } = await import('koffi');
+  const kernel = koffi.load('kernel32.dll');
+  const security = koffi.load('advapi32.dll');
+  const currentProcess = kernel.func('void * __stdcall GetCurrentProcess()');
+  const close = kernel.func('int __stdcall CloseHandle(void *)');
+  const openToken = security.func(
+    'int __stdcall OpenProcessToken(void *, uint32_t, _Out_ void **)',
+  );
+  const information = security.func(
+    'int __stdcall GetTokenInformation(void *, int, void *, uint32_t, _Out_ uint32_t *)',
+  );
+  const lookupPrivilege = security.func(
+    'int __stdcall LookupPrivilegeValueW(const char16_t *, const char16_t *, void *)',
+  );
+  const token: Array<bigint | null> = [null];
+  expect(openToken(currentProcess(), 8, token)).not.toBe(0);
+  try {
+    const size = [0];
+    information(token[0], 3, null, 0, size);
+    expect(size[0]).toBeGreaterThan(0);
+    const buffer = Buffer.alloc(size[0]!);
+    expect(information(token[0], 3, buffer, buffer.length, size)).not.toBe(0);
+    const enabled = ['SeTakeOwnershipPrivilege', 'SeRestorePrivilege'].filter(
+      (name) => {
+        const luid = Buffer.alloc(8);
+        expect(lookupPrivilege(null, name, luid)).not.toBe(0);
+        for (let index = 0; index < buffer.readUInt32LE(0); index++) {
+          const offset = 4 + index * 12;
+          if (
+            buffer.subarray(offset, offset + 8).equals(luid) &&
+            (buffer.readUInt32LE(offset + 8) & 2) !== 0
+          )
+            return true;
+        }
+        return false;
+      },
+    );
+    expect(enabled).toEqual([]);
+  } finally {
+    expect(close(token[0])).not.toBe(0);
+  }
+}
+
 describe('isProcessAlive', () => {
   it('is true for the current process (always alive, and we own it)', () => {
     expect(isProcessAlive(process.pid)).toBe(true);
@@ -246,7 +291,7 @@ describe('ensureOwnerOnlyDir', () => {
         const before = readWindowsPermissions(target);
         expect(before.owner).toBe('S-1-5-18');
         await expect(ensureOwnerOnlyDir(target)).rejects.toThrow(
-          'owned by a different Windows user',
+          `refusing to use private Dreamux path ${target}: it is owned by a different Windows user`,
         );
         expect(readWindowsPermissions(target)).toEqual(before);
       } finally {
@@ -260,6 +305,74 @@ describe('ensureOwnerOnlyDir', () => {
     },
   );
 });
+
+describe.skipIf(process.platform !== 'win32')(
+  'Administrators-owned paths: native authorization',
+  () => {
+    for (const { kind, access } of [
+      { kind: 'file', access: 'full' },
+      { kind: 'directory', access: 'full' },
+      { kind: 'file', access: 'read' },
+    ] as const) {
+      it(`uses OS authorization for a ${kind} with ${access} access`, async (context) => {
+        // These exercise the runner's normal token, not Limited/non-admin adoption.
+        // Preparing a BA owner requires the existing elevated fixture prerequisite.
+        if (!isWindowsAdministrator()) context.skip();
+        const fixtureRoot = await mkdtemp(
+          join(tmpdir(), 'dreamux-owner-adoption-'),
+        );
+        const target = join(fixtureRoot, 'legacy');
+        const contentPath =
+          kind === 'file' ? target : join(target, 'retained.log');
+        const sid = currentWindowsUserSid();
+        try {
+          if (kind === 'directory') await mkdir(target);
+          await writeFile(contentPath, 'retained log content');
+          withWindowsRestorePrivilege(() => {
+            setWindowsFixturePermissions(
+              fixtureRoot,
+              `O:${sid}D:P(A;OICI;FA;;;${sid})`,
+            );
+            setWindowsFixturePermissions(
+              target,
+              `O:BAD:P(A;${kind === 'directory' ? 'OICI' : ''};${access === 'full' ? 'FA' : 'FR'};;;${sid})`,
+            );
+          });
+          const before = readWindowsPermissions(target);
+          expect(before.owner).toBe('S-1-5-32-544');
+          if (access === 'full') {
+            if (kind === 'directory') await ensureOwnerOnlyDir(target);
+            else await ensureOwnerOnlyFile(target);
+            await expectOwnerOnlyPermissions(
+              target,
+              kind === 'file' ? 0o600 : 0o700,
+            );
+          } else {
+            await expectOwnershipPrivilegesDisabled();
+            await expect(ensureOwnerOnlyFile(target)).rejects.toThrow(
+              `SetNamedSecurityInfoW failed for ${target} (Windows error 5)`,
+            );
+            expect(readWindowsPermissions(target)).toEqual(before);
+          }
+          expect(await readFile(contentPath, 'utf8')).toBe(
+            'retained log content',
+          );
+        } finally {
+          if (await pathExists(target)) {
+            withWindowsRestorePrivilege(() =>
+              setWindowsFixturePermissions(
+                target,
+                `O:${sid}D:P(A;${kind === 'directory' ? 'OICI' : ''};FA;;;${sid})`,
+              ),
+            );
+          }
+          await rm(fixtureRoot, { recursive: true, force: true });
+          expect(await pathExists(fixtureRoot)).toBe(false);
+        }
+      }, 30_000);
+    }
+  },
+);
 
 describe.skipIf(process.platform !== 'win32')(
   'Windows paths beyond MAX_PATH',

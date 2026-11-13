@@ -33,8 +33,10 @@ directly; operating-system libraries load only when a Windows operation runs.
   Dreamux layout/path contracts. Group probes and signals apply only to POSIX;
   Windows termination requires a launch-owned Job through `SupervisedChild`. Windows
   private paths use a protected current-user ACL instead of POSIX mode bits.
-  Permission tightening rejects symlink leaves and foreign owners; an elevated
-  token may adopt paths owned by Administrators. ACL reads and writes call
+  Permission tightening rejects symlink leaves and foreign owners. Paths owned
+  by Administrators may be adopted when Windows grants the caller the required
+  owner/DACL write permissions; administrator membership is not an extra gate.
+  ACL reads and writes call
   Win32 directly without starting a command interpreter or utility process.
 - **process-command** — async executable resolution (`resolveExecutableOnPath`)
   and launch (`spawnCommand`) with Windows PATH/PATHEXT handling, hidden child
@@ -78,6 +80,8 @@ directly; operating-system libraries load only when a Windows operation runs.
   daemon control can acquire an existing Job or reserve its name before startup.
   Current-process membership is queried against that exact native Job, so service
   control can recognize a caller that its own stop operation would terminate.
+  `WindowsJob.open(name, 'query')` requests only membership-query access;
+  control opens retain the permissions needed to configure and terminate work.
   Termination waits for its nested trees to exit; the caller retains the Job
   until `close()` so a concurrent service launch cannot reuse its name.
 - **activity-scan** — neutral scan mechanism shared by provider-owned Activity

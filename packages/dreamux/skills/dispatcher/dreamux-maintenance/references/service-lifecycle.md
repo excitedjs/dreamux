@@ -26,6 +26,8 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   account, with a user-logon trigger for a new task. A new task, conversion to
   Password or changed Task Data asks for the Windows account password in a
   native Windows credential dialog; the Windows Hello PIN is not that password.
+  The dialog fixes the current account name; enter only its password, without
+  replacing the name with a Microsoft-account email or alias.
   Never request or send the password through chat. Task Scheduler stores the credential;
   the registering PowerShell process passes it directly without sending it to
   JavaScript or putting it in configuration, Task Data, arguments, environment
@@ -55,6 +57,9 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   files before child output begins, including during elevated foreground runs.
   Existing contents are preserved; provider logs remain private and owned by
   the current user for later limited service startup.
+  Existing Administrators-owned logs may be adopted when the installing token
+  has Windows owner/DACL write permissions; other owners remain refused with
+  the affected path. Do not bypass a native access denial.
   The Task Action invokes the selected Node and published
   `dist/daemon/windows-entry.js` with the task name. TaskDefinition.Data owns
   `{ environment: Record<string, string>; execStart: string[] }`, including the
@@ -90,20 +95,28 @@ already-admitted operations, and releases Channels after runtime cleanup.
 A shutdown refusal means no new operation was accepted; it does not establish
 the outcome of work accepted earlier. Inspect that work's state separately.
 
-Windows managed `stop` and `restart` forcefully terminate and await the task
-Job owned by its published entry, including native runtime descendants. Its
-`Global` namespace and current-user-only DACL let the desktop CLI and
-non-interactive service address the same object. They do not guarantee
-graceful draining or completion delivery. Stop disables the task and reserves its
-root-hash Job, terminates members and awaits held process handles, then calls
-Task.Stop and requires neither Running nor Queued state and zero instances
-before releasing the reservation. The prior enabled state is restored. New
-tasks use `IgnoreNew`; restart completes stop before one Run, with no Run after
-a stop failure. Start/restart wait for Running and a registered-root
-`server.status` response whose PID belongs to the opened service Job. This
-checks the admin endpoint, not every provider or Dispatcher. Inspect persisted
-state after restart; its normal startup rules determine recovery. The logon
-trigger does not start the task at boot before a user signs in.
+Windows managed `stop` and `restart` first give the serving process a cooperative
+shutdown opportunity. Stop disables the task and reserves its root-hash Job. A
+registered-root `server.status` query has a one-second timeout; the controller
+retains the responding process as a member of the same Job before requesting
+`server.shutdown` with that `expectedPid`. Acceptance is not process exit. The
+request and retained-process exit wait share 15 seconds, not separate budgets.
+An unavailable endpoint or an older server without the command proceeds to
+forced cleanup; a lost response still grants the remaining wait. A hung server
+cannot prevent forced cleanup after the deadline. Remaining owned processes,
+including native runtime descendants, are terminated and awaited through held
+handles. Task.Stop must report neither Running nor Queued state and zero
+instances before the reservation is released; the prior Enabled state is
+restored. The Job's `Global` name and current-user-only DACL let both processes
+address the same object. An unrelated foreground server is not a shutdown
+target. New tasks use `IgnoreNew`; restart completes stop before one Run, with
+no Run after a failed stop. Start/restart require Running and a registered-root
+`server.status` PID belonging to the service Job. This checks the admin endpoint,
+not every provider or Dispatcher. Application cleanup gives open CoT cards a
+bounded interrupted-terminal drain, without guaranteeing remote delivery during
+network failure or process termination. Inspect persisted state after restart;
+normal startup determines recovery. The logon trigger does not start the task at
+boot before a user signs in.
 
 A Windows restart issued from inside the service hands control to a short-lived
 WMI-created Node process outside the service Job before stopping it. It invokes
@@ -117,9 +130,12 @@ registered root. Controller errors are written to that root's
 `logs/daemon.stderr.log`. Scheduler state queries and registration shadows do
 not prove native credential reuse or cross-session acceptance.
 
-For a delivered SIGTERM or SIGINT, `dreamux serve` exits 0 once shutdown
-completes; if shutdown fails, or has not settled within 15 seconds, it logs the
-reason and exits 1. Under systemd a non-zero exit that was not requested through
+Delivered SIGTERM/SIGINT and accepted admin shutdown requests use the same
+`dreamux serve` process-exit owner. It waits for startup before closing resources,
+then exits 0 once shutdown completes, or logs and exits 1 on failure or its
+15-second deadline. The Windows controller starts its own shared request/wait
+deadline before sending the request, so the two bounds do not add grace time.
+Under systemd a non-zero exit that was not requested through
 `systemctl stop` restarts the service (`Restart=on-failure`). A runtime child
 process can outlive a daemon that was cut off at the 15-second deadline, so
 check for leftover runtime processes after such an exit.

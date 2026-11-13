@@ -10,8 +10,10 @@
  * agree.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { join } from 'node:path';
 
 import { COMMAND_PAYLOAD_BOUNDS } from '../src/command/registry.js';
+import { adminJsonInvoker } from '../src/admin/client.js';
 import {
   adminContext,
   channelContext,
@@ -45,6 +47,64 @@ describe('adapter equivalence — one representative Command per namespace', () 
 
     expect(viaAdmin.ok).toBe(true);
     expect((viaAdmin as { result: unknown }).result).toEqual(viaChannel);
+  });
+
+  it('server.shutdown acknowledges over IPC before draining other admitted work', async () => {
+    let releaseStatus!: () => void;
+    const heldStatus = new Promise<void>((resolve) => {
+      releaseStatus = resolve;
+    });
+    let enteredStatus!: () => void;
+    const statusEntered = new Promise<void>((resolve) => {
+      enteredStatus = resolve;
+    });
+    const { host, root } = await createCommandHarness({
+      summarize: async () => {
+        enteredStatus();
+        await heldStatus;
+        return [];
+      },
+    });
+    // Use the real Server's admitted port and its own admin listener, so its
+    // shutdown must drain these exact requests before closing the listener.
+    const client = adminJsonInvoker({
+      socketPath: join(root, 'owner.sock'),
+      timeoutMs: 2_000,
+    });
+    let closed = false;
+    const closing = host.shutdownRequested
+      .then(() => host.shutdown())
+      .then(() => {
+        closed = true;
+      });
+    void closing.catch(() => {});
+    const status = client.invoke('server.status', {});
+    void status.catch(() => {});
+    try {
+      await Promise.race([
+        statusEntered,
+        status.then(() => {
+          throw new Error('status completed before entering the held work');
+        }),
+      ]);
+      expect(
+        await client.invoke('server.shutdown', { expectedPid: process.pid }),
+      ).toEqual({ accepted: true, pid: process.pid });
+      await host.shutdownRequested;
+      expect(closed).toBe(false);
+      releaseStatus();
+      await expect(status).resolves.toMatchObject({
+        pid: process.pid,
+        dispatchers: [],
+      });
+      await closing;
+      expect(closed).toBe(true);
+    } finally {
+      releaseStatus();
+      host.requestShutdown();
+      await status.catch(() => {});
+      await closing;
+    }
   });
 
   it('dispatcher.status: identical result via both adapters, each addressing the dispatcher its own way', async () => {

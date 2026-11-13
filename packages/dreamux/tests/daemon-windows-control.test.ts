@@ -27,9 +27,10 @@ const socketModule = new URL('../dist/admin/socket.js', import.meta.url).href;
 const loggerModule = new URL('../dist/platform/logger.js', import.meta.url)
   .href;
 const pathsModule = new URL('../dist/platform/paths.js', import.meta.url).href;
+const errorsModule = new URL('../dist/command/errors.js', import.meta.url).href;
 
 type ServiceEvent = {
-  kind: 'ready' | 'status';
+  kind: 'ready' | 'status' | 'shutdown' | 'cleanup';
   generation: number;
   pid: number;
   childPid: number;
@@ -46,6 +47,7 @@ async function nativeServiceFixture() {
   const jobName = windowsServiceJobName(serviceRoot);
   const gatePath = (generation: number) =>
     join(root, `status-${generation}.ready`);
+  const shutdownGate = join(root, 'shutdown.ready');
   const task: WindowsTaskRegistration = {
     name: 'Dreamux-owned-control-fixture',
     path: '\\Dreamux-owned-control-fixture',
@@ -65,7 +67,10 @@ async function nativeServiceFixture() {
     throw error;
   }
 
-  async function start(generation: number) {
+  async function start(
+    generation: number,
+    shutdown: 'legacy' | 'cooperative' | 'hung' | 'no-response' = 'legacy',
+  ) {
     if (cleaning) throw new Error('Fixture is closing');
     const serverScript = `
 import { spawn } from 'node:child_process';
@@ -75,6 +80,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createAdminSocketServer } from ${JSON.stringify(socketModule)};
 import { createLogger } from ${JSON.stringify(loggerModule)};
 import { adminSocketPath } from ${JSON.stringify(pathsModule)};
+import { UnknownCommandError } from ${JSON.stringify(errorsModule)};
 const descendant = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
   windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'],
 });
@@ -82,19 +88,37 @@ await once(descendant, 'spawn');
 const event = kind => console.log(JSON.stringify({
   kind, generation: ${generation}, pid: process.pid, childPid: descendant.pid,
 }));
+async function waitForGate(path) {
+  for (;;) {
+    try { await access(path); return; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    await delay(20);
+  }
+}
 const admin = createAdminSocketServer({
   logger: createLogger({ destination: { write() {} } }),
   commands: {
-    async invoke(_context, method) {
-      if (method !== 'server.status') throw new Error('Unexpected fixture command');
+    async invoke(_context, method, payload) {
+      if (method === 'server.shutdown' && ${JSON.stringify(shutdown)} !== 'legacy') {
+        if (payload.expectedPid !== process.pid) throw new Error('Wrong fixture PID');
+        event('shutdown');
+        if (${JSON.stringify(shutdown)} === 'no-response') return new Promise(() => {});
+        if (${JSON.stringify(shutdown)} === 'cooperative') setImmediate(async () => {
+          await waitForGate(${JSON.stringify(shutdownGate)});
+          event('cleanup');
+          const closed = once(descendant, 'close');
+          descendant.stdin.end();
+          await closed;
+          await admin.close();
+          process.exit(0);
+        });
+        return { accepted: true, pid: process.pid };
+      }
+      if (method !== 'server.status') throw new UnknownCommandError(method);
       event('status');
       // Test-only release of a genuine response; its PID always comes from
       // the process owning this real admin endpoint.
-      for (;;) {
-        try { await access(${JSON.stringify(gatePath(generation))}); break; }
-        catch (error) { if (error.code !== 'ENOENT') throw error; }
-        await delay(20);
-      }
+      await waitForGate(${JSON.stringify(gatePath(generation))});
       return { pid: process.pid };
     },
   },
@@ -224,6 +248,7 @@ await runWindowsService(${JSON.stringify(task.name)}, {
     start,
     waitForEvent,
     releaseStatus,
+    releaseShutdown: () => writeFile(shutdownGate, ''),
     cleanup,
   };
 }
@@ -290,7 +315,7 @@ describe.skipIf(process.platform !== 'win32')(
         let completed = false;
         try {
           await f.releaseStatus(1);
-          const old = await f.start(1);
+          const old = await f.start(1, 'cooperative');
           const oldStatus = await adminJsonInvoker({
             socketPath: adminSocketPath(f.serviceRoot),
           }).invoke('server.status', {});
@@ -329,6 +354,13 @@ describe.skipIf(process.platform !== 'win32')(
               return { error };
             },
           );
+          await f.waitForEvent(1, 'shutdown');
+          expect(scheduler.calls).toEqual(['read', 'disable']);
+          expect(scheduler.enabled()).toBe(false);
+          expect(f.timeline).not.toContain('closed:1');
+          expect(completed).toBe(false);
+          await f.releaseShutdown();
+          await f.waitForEvent(1, 'cleanup');
           await vi.waitFor(() => expect(scheduler.calls).toContain('stop'), {
             timeout: 10_000,
           });
@@ -395,7 +427,11 @@ describe.skipIf(process.platform !== 'win32')(
           releaseStop.resolve();
           try {
             try {
-              await f.releaseStatus(2);
+              try {
+                await f.releaseShutdown();
+              } finally {
+                await f.releaseStatus(2);
+              }
             } finally {
               await result;
             }
@@ -452,9 +488,52 @@ describe.skipIf(process.platform !== 'win32')(
       NATIVE_CONTROL_TIMEOUT_MS,
     );
 
-    it(
-      'rejects a real standalone admin server whose PID is outside the task Job',
-      async () => {
+    it.each(['hung', 'no-response'] as const)(
+      'forces the owned tree within one grace period when shutdown is %s',
+      async (mode) => {
+        const f = await nativeServiceFixture();
+        let stopping: Promise<unknown> | undefined;
+        try {
+          await f.releaseStatus(1);
+          const old = await f.start(1, mode);
+          const scheduler = schedulerRunner(f.task, {
+            async stop() {},
+            async run() {
+              throw new Error('Stop must not Run');
+            },
+          });
+          const started = Date.now();
+          stopping = controlWindowsService('stop', scheduler.runner, false);
+          // Observe rejection immediately while the real fixture deliberately stalls.
+          void stopping.catch(() => {});
+          await f.waitForEvent(1, 'shutdown');
+          expect(scheduler.calls).toEqual(['read', 'disable']);
+          expect(f.timeline).not.toContain('closed:1');
+          await stopping;
+          await old.closed;
+          expect(Date.now() - started).toBeGreaterThanOrEqual(15_000);
+          expect(Date.now() - started).toBeLessThan(25_000);
+          expect(scheduler.calls).toEqual([
+            'read',
+            'disable',
+            'stop',
+            'restore',
+          ]);
+          expect(f.timeline).toContain('closed:1');
+        } finally {
+          try {
+            await stopping;
+          } finally {
+            await f.cleanup();
+          }
+        }
+      },
+      NATIVE_CONTROL_TIMEOUT_MS,
+    );
+
+    it.each(['start', 'restart'] as const)(
+      'rejects %s of a standalone admin server without sending it a shutdown request',
+      async (verb) => {
         const f = await nativeServiceFixture();
         let job: WindowsJob | undefined;
         const admin = createAdminSocketServer(
@@ -475,17 +554,21 @@ describe.skipIf(process.platform !== 'win32')(
           await admin.start();
           expect(await job.containsProcess(process.pid)).toBe(false);
           const scheduler = schedulerRunner(f.task, {
-            async stop() {
-              throw new Error('Start must not Stop');
-            },
+            async stop() {},
             async run() {},
           });
           await expect(
-            controlWindowsService('start', scheduler.runner, false),
+            controlWindowsService(verb, scheduler.runner, false),
           ).rejects.toThrow(
-            'The responding server does not belong to the Windows service Job',
+            verb === 'start'
+              ? 'The responding server does not belong to the Windows service Job'
+              : 'The process does not belong to the Windows Job',
           );
-          expect(scheduler.calls).toEqual(['read', 'run']);
+          expect(scheduler.calls).toEqual(
+            verb === 'start'
+              ? ['read', 'run']
+              : ['read', 'disable', 'stop', 'restore'],
+          );
           expect(
             await adminJsonInvoker({
               socketPath: adminSocketPath(f.serviceRoot),

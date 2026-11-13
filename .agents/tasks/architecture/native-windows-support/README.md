@@ -8,13 +8,25 @@
 - Final solution: [Native process and filesystem boundaries](technical-design/final.md)
 - Verification: [Checks and coverage](verification.md)
 - Review: [Complete-change review and rulings](review.md)
-- Blockers: Fresh delivery CI is pending for the replacement branch. For R6, the operator chose closing the old PR and opening a new one; the workflow was not changed, and the old force-push range failure remains recorded. R1-R4 remain resolved; R5 remains explicitly deferred and unverified, with native acceptance limits recorded.
-- Next action: Verify the replacement PR's final head and normal CI, then publish its branch alpha and update the local installation under the existing authorization. Full KB, mandatory commit hooks and Rush change verification passed for the reviewed implementation; delivery-record changes must pass their applicable checks before pushing. Do not prepare or execute R5. The latest integrated local code gates remain R4's 3,193 passed and 26 skipped tests plus build, lint and test-aware checks. Merge remains paused; GitHub owns CI and delivery status.
+- Blockers: Non-administrator adoption of legacy BA-owned logs remains unverified: the custom restricted-token fixture failed before product code, and this runner has no linked Limited token. Real fixed-account UI and Password registration also remain unverified. The reported Job access-denied call site and cause remain unknown. R5 remains explicitly deferred and unverified; R6's force-push metadata range defect remains unchanged.
+- Next action: Submit the reviewed follow-up to the existing PR targeting `next` after the full KB and mandatory commit gates pass, then verify the resulting CI. The operator confirmed submission readiness after complete implementation review and knowledge closeout. Ordinary non-elevated validation remains deferred by the operator's 2026-11-13 "Verify later" decision; the recorded native acceptance gaps are not waived. Do not prepare or execute R5. Local update and merging remain paused.
 - Coverage limit: The operator's reported restart failure has not been reproduced. WMI process creation and Scheduler command completion do not establish a new responding server. Native credential storage, dialog behavior and cross-session service operation still need independent acceptance; earlier CI results do not cover this revision.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/488); replaces [the closed original PR](https://github.com/excitedjs/dreamux/pull/476).
 - Related tasks: None.
 
 ## Development approval
+
+- On 2026-11-13 at 12:14 (UTC+08:00), the operator selected "Enter delivery", confirming knowledge closeout and `done` as this follow-up's submission readiness. The approved next work is to pass the complete KB and mandatory commit gates, update PR #488 and verify its exact-head CI. The recorded native acceptance gaps remain open; local update and merging remain paused.
+
+- On 2026-11-13 at 12:07 (UTC+08:00), the operator selected "Enter closeout" with the unresolved native acceptance and R5 deferral explicitly retained. This authorizes knowledge-owner reconciliation, historical checkpoint clarification and task-record validation. It does not authorize live service operations, resuming deferred validation, publishing or merging.
+
+- On 2026-11-13 at 11:59 (UTC+08:00), the operator selected "Enter review" after receiving the complete implementation and verification summary. This opens formal independent review of all installation and cooperative-stop follow-up changes relative to the published revision. It does not authorize publishing, changing the running installation, resuming deferred native acceptance, or merging.
+
+- On 2026-11-13 the operator reported that CoT did not become interrupted on restart and suspected Windows stop/restart left Node no cleanup time. Read-only inspection confirmed immediate Job termination bypassed the existing application shutdown path in the installed version and pre-correction source. The operator then selected "Fix and verify" in the cooperative-stop card, approving the [cooperative-stop solution](technical-design/graceful-windows-stop.md) and isolated regressions. This authorizes bounded application shutdown before forced cleanup, not operations on the running service or a claim that the live incident was reproduced. Existing deferred validation boundaries remain unchanged.
+
+- On 2026-11-13 the operator selected "Verify later" when asked to open an ordinary PowerShell terminal for a temporary-directory-only permission check. This defers that non-elevated validation; it does not waive acceptance or certify ordinary-user installation. Existing source changes and verification evidence were retained, and the task remained in implementation at that checkpoint.
+
+- On 2026-11-13 the operator requested: "Installation is not going smoothly; make it smoother." This renews the existing Windows installation correction scope after the local upgrade incident. Implementation addresses legacy Administrators-owned logs with sufficient object permissions, fixed-current-account password input, and unnecessarily broad Job observation access. These are corrective implementation choices, not a claim that the operator selected particular Windows APIs. Verification uses disposable fixtures; the running service, installed package, real credentials and deferred R5 experiment remain untouched. The local incident record distinguishes the failed automated upgrade from later manual recovery; that recovery does not certify the installer.
 
 - On 2026-10-18 the operator selected native Windows source support in the runtime-choice card, then explicitly instructed implementation.
 - Approved boundary: Native CLI, local IPC, provider processes, managed service, and Windows test infrastructure. The operator separately required Windows test failures to be repaired in the test infrastructure.
@@ -43,8 +55,8 @@ remains evidence of that workflow boundary, and fresh delivery checks are
 required; replacing the PR does not turn the old failed run into a pass.
 
 On 2026-11-12 the operator selected "Enter delivery" in the closeout-completion
-card; this approval was recorded at 19:12 (UTC+08:00). The task is now `done`,
-meaning submission readiness after independent review and knowledge closeout.
+card; this approval was recorded at 19:12 (UTC+08:00). At that point the task
+entered `done`, meaning submission readiness after independent review and knowledge closeout.
 The full KB check and mandatory commit gates must pass before submission. The
 existing authorization covers the branch alpha and local update, while R5
 remains deferred, native acceptance limits remain recorded, and merging is
@@ -113,24 +125,25 @@ locally; rewriting the published branch, merging, another release, and changing
 the operator's running installation have not been performed.
 
 - Deliver the approved corrections to the existing PR targeting `next`. GitHub owns delivery status; merging remains paused by the operator.
-- Knowledge closeout: The owner reconciliation below records current facts separately from historical verification evidence.
+- Knowledge closeout: Follow-up owner reconciliation and independent documentation review completed on 2026-11-13; the operator confirmed submission readiness that day. The subsequent full KB check passed without exceptions: 63 task records and 415 reachable files. Current facts remain separate from historical verification evidence.
 
 ## Knowledge owners
 
 | Owner | Disposition and reason |
 | --- | --- |
-| Task requirement, final design, entry revision, review and verification | Updated: approved Task Data/entry migration, install handoff, uninstall case protection, executed evidence, operator rulings and deferred R5 are reconciled. Review references the delivery PR and upstream PR rather than temporary commit identifiers. |
-| [Product catalog](/.agents/product/README.md) | Updated: native Windows behavior, Task service ownership, forced stop, install handoff reporting and uninstall boundaries. |
-| [Current architecture](/.agents/domains/current-architecture.md), [provider runtime](/.agents/domains/provider-runtime.md), [service topology](/.agents/domains/service-topology.md) | Updated: shared native capability ownership, local IPC, provider boundaries and current checker entry. No new service tier or package was introduced for test helpers. |
-| [State/config/files](/.agents/domains/state-config-and-files.md) | Updated: Task Data and WorkingDirectory ownership, Task paths excluded from file operations, native permissions and control completion. |
-| [Repository operations](/.agents/domains/repository-operations-and-release.md), [unit testing](/.agents/domains/unit-testing.md) | Updated: Node tool entries, retained shell email check, CI noreply exemption, inline release gates, Vitest isolation and direct shared permission-oracle imports. |
-| [Maintenance skill](/packages/dreamux/skills/dispatcher/dreamux-maintenance/SKILL.md) and [service lifecycle](/packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md) | Updated: current entry, Task Data, native credential dialog and handoff semantics. Release-specific old-alpha migration remains in public upgrade docs and the change note, not the maintenance contract. |
-| Public development/getting-started/operations and package READMEs | Updated: Windows launch, service operation, native/runtime capability boundaries and the approved upgrade sequence. Unaffected channel/types/bootstrap package descriptions need no service-owner additions. |
-| Root and host `CLAUDE.md` | Updated: current tool entry points and host IPC/module ownership. Other directory invariants are unchanged; no additional local rule is needed. |
-| [KB routing](/.agents/root.md), [contribution guide](/.agents/CONTRIBUTING.md), [domain index](/.agents/domains/README.md) | Updated: current Node checker and existing owner routes; the task README links its complete review. |
+| Task requirement, final design, entry revision, review and verification | Updated: installation corrections, cooperative shutdown, complete follow-up review and executed evidence are reconciled with prior Task Data/entry migration, handoff and uninstall decisions. Native acceptance limits and deferred R5 remain explicit; past checkpoints are identified as historical. Review cites the release run that owns its exact baseline. |
+| [Product catalog](/.agents/product/README.md) | Updated: fixed-account installation, Task ownership, cooperative shutdown followed by forced cleanup, handoff reporting and uninstall boundaries. |
+| [Current architecture](/.agents/domains/current-architecture.md) and [service topology](/.agents/domains/service-topology.md) | Updated: shared signal/admin process-exit owner, server command namespace, command admission and startup/shutdown sequencing. No new service tier or package was introduced. |
+| [Provider runtime](/.agents/domains/provider-runtime.md) | N/A for the follow-up: the runtime stop contract and neutral provider boundaries are unchanged. Existing native capability documentation remains applicable. |
+| [State/config/files](/.agents/domains/state-config-and-files.md) | Updated: fixed-account credentials, BA-owner adoption subject to OS authorization, query/control access, retained member identity and bounded cooperative shutdown. Task Data/root ownership and non-file TaskPath rules remain intact. |
+| [Repository operations](/.agents/domains/repository-operations-and-release.md) and [unit testing](/.agents/domains/unit-testing.md) | N/A for the follow-up: existing Node gates, email policy, Vitest isolation and permission-oracle ownership remain applicable. The failed launcher experiment adds no delivered testing mechanism. |
+| [Maintenance skill](/packages/dreamux/skills/dispatcher/dreamux-maintenance/SKILL.md) and [service lifecycle](/packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md) | Updated owning reference: fixed-account password input, OS authorization, cooperative shutdown and acceptance/handoff versus completion. Skill routing is unchanged. Release-specific old-alpha migration remains in public upgrade docs and the change note. |
+| Public getting-started/operations and utils README | Updated: fixed-account installation, permission failures, query/control separation, cooperative cleanup and real-acceptance limits. Getting-started delegates stop details to operations. Public development and other package READMEs need no follow-up change because their contracts are unchanged. |
+| Root and host `CLAUDE.md` | Host map updated for `server/shutdown.ts`. Root and other directory rules are N/A: no global build, security, layering or persistence invariant changed. |
+| [KB routing](/.agents/root.md), [contribution guide](/.agents/CONTRIBUTING.md), [domain index](/.agents/domains/README.md) | N/A for the follow-up: existing routes and checker guidance cover the changed owners; no new domain or task was introduced. |
 | [Glossary](/.agents/glossary.md) | N/A: no new overloaded Dreamux product term; Job and Task Data are platform concepts documented by their owners. |
 
-Independent native/service and tooling-owner audits confirmed this mapping. The
+Independent follow-up owner reconciliation confirmed this mapping. The
 106 unrelated historical records restored during reassessment remain identical
 to the rebased upstream baseline; current command updates do not rewrite their
 past evidence. The verification document distinguishes code checks, native

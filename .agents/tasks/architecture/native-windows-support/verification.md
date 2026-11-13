@@ -1,5 +1,191 @@
 # Verification
 
+## Knowledge closeout, 2026-11-13
+
+The three independent follow-up reviews covered all 35 implementation-stage
+changed/new files and found no new actionable blocking finding; [review](review.md)
+records their actual coverage and limits. The operator then approved knowledge
+closeout with native acceptance gaps and deferred validation retained.
+
+Owner reconciliation synchronized the shared process-exit owner and command
+admission in current architecture and service topology, and clarified older
+implementation/KB checkpoints in task records. Other affected owners were
+already aligned; the README records updated and N/A dispositions. These are
+documentation-only changes after the executed build, lint, typecheck and test
+gates below. No live service, credentials, deferred experiment or package
+installation was touched.
+Independent review of both architecture owners and the three task records
+found no inconsistency, scope expansion or exaggerated verification claim.
+
+Closeout checks used `init_task.py check-all --repo-root . --allow-in-flight`
+with the available Python interpreter and `git diff HEAD --check`; both passed,
+with 63 task records checked. `node .agents/scripts/check.mjs` was also run with
+that interpreter selected through process-local `PYTHON`. It exited 1 with
+exactly one issue: this task's `knowledge-closeout` state is in flight. This is
+not a no-exception KB pass. After the operator approved `done` at 12:14
+(UTC+08:00), the complete KB gate was rerun and passed without exceptions:
+63 task records and 415 files reachable from root. The stage was changed only
+after that approval, not to bypass the gate.
+The ordinary-permission, real UI/Password, cross-session and R5 limitations
+below remain unchanged.
+
+## Cooperative Windows stop, 2026-11-13
+
+The operator approved this implementation and isolated verification after the
+CoT restart report. Read-only inspection found immediate Job termination in the
+installed alpha and pre-correction source, bypassing application shutdown. The
+running service was not restarted or modified to reproduce that report.
+
+The existing synthetic-home driver kept real Scheduler/model gates disabled,
+joined its test process, checked account sentinels and temporary children, and
+removed only its captured root. Executed focused checks:
+
+- Retained Job-member observation: 1 passed, 12 filtered out, 35 ms case time;
+  309 ms Vitest duration. A real member timed out while alive and signaled after
+  exit, an outsider was refused, and an already-gone PID returned no observation.
+- Application commands and process owner: all 49 cases across three files
+  passed in 4.94 seconds. Real admin IPC acknowledged shutdown while other
+  admitted work was held; shutdown completed after that work was released.
+  Direct process-owner tests intercepted process exit and used fake timers to
+  verify signal/admin convergence, startup sequencing, failure and the deadline.
+- Windows control: all 6 cases passed in 32.09 seconds. Real owned processes,
+  Jobs and IPC verified delayed cooperative cleanup before Stop/Run, failure
+  preventing Run, and refusal to stop unrelated foreground servers. Accepted
+  but stalled shutdown and missing responses each consumed one 15-second
+  request/wait budget before forced cleanup (15.244 / 15.250 seconds case time).
+  Scheduler calls were intercepted; no actual Task operations were performed.
+- CoT application chain: 1 passed, 5 filtered out, 1.565 seconds case time;
+  3.69 seconds Vitest duration. Real Server/Team/channel/session owners produced
+  the interrupted terminal through a fake Feishu transport. A blocked terminal
+  append kept both transport close and Server.shutdown pending; release proved
+  terminal completion, transport close, then shutdown completion. This is not
+  proof that the real Feishu API received an update.
+
+Every focused outer run exited 0 with unchanged sentinels, no temporary children
+and its captured root removed. Unified build passed in 3.80 seconds. The first
+test typecheck found only the new process-owner test's listener overload and
+logger types; those test declarations were corrected without changing assertions.
+Final test typechecking passed all eight applicable packages in 6.74 seconds;
+final lint passed all nine packages in 6.74 seconds.
+
+The full default suite passed **3,215 cases / 26 skipped**, 3,241 total across
+eight packages. Independent recount used exactly one Tests summary per package:
+types 81/0, utils 240/5, host 1,367/21, transport 182/0, channel 822/0,
+Codex 243/0, Claude 269/0 and bootstrap 11/0 (passed/skipped). Host had 111
+passing files and 4 skipped files. The suite completed in 146.3 seconds, with
+the host operation at 123.4 seconds (Vitest 123.12 seconds). Its outer run exited 0,
+preserved all sentinels, found no temporary children and removed the captured
+root. These outer observations were independently checked from the outer log.
+Real model, installed-Codex and Scheduler gates remained excluded.
+
+At the pre-review checkpoint, the in-flight record checker passed all 63 task
+records. The full KB checker reported exactly the task's `implementation`
+state as in flight; that run did not pass the no-exception delivery gate. No
+stage was changed merely to make that check pass. Formal complete-delta review
+was pending then; its subsequent completion and actual coverage are recorded
+in [review](review.md). Ordinary-user installation, real credential UI/Password
+behavior, cross-session operation and R5 retain their previously recorded
+acceptance gaps and deferrals.
+
+## Installation follow-up, 2026-11-13
+
+The published alpha `0.29.0-alpha.ge0477c515e92` came from the reviewed
+[PR #488](https://github.com/excitedjs/dreamux/pull/488) head. Its PR workflow
+[completed successfully](https://github.com/excitedjs/dreamux/actions/runs/43209216220),
+and the branch [release completed](https://github.com/excitedjs/dreamux/actions/runs/43210501365).
+The downloaded host tarball matched npm's SHA512 integrity. Provenance source,
+run and subject payloads matched; the signatures were not cryptographically
+verified. Package publication did not establish local service installation.
+
+The automated local upgrade removed the old service and installed the exact
+package, then `daemon install --no-start` failed in private-path owner checking.
+Doctor and the notification restart were not reached. Subsequent recovery and
+its nested-log ownership and account-alias observations were recorded separately;
+they do not convert that failed automation into a successful upgrade. The later
+Job access-denied report has no failure stack. No claim is made about its exact
+call site, token cause, or relation to the separately deferred R5 test.
+
+The follow-up runs below use the existing outer synthetic-home driver. It
+replaces account/application homes, temporary directories and the Node compile
+cache, excludes model and real Scheduler gates, waits for the test child to
+close, checks four account sentinels and temporary children, and only then
+removes its captured root. Operator files and Tasks are outside these fixtures.
+
+- Job query/control regression: 1 passed, 12 filtered out; 13 ms case time,
+  707 ms Vitest duration. A real UUID Job permits QUERY and denies
+  SET_ATTRIBUTES/TERMINATE. Query observes its real member without stopping it;
+  a control open returns error 5, and the original retained control handle
+  still terminates and waits for the member. Outer exit 0, sentinels unchanged,
+  no temporary children, captured root removed. This verifies the access split,
+  not the historical installation error's cause.
+
+- Credential script suite: 26 passed, 9.69 seconds. The unmodified production
+  P/Invoke declaration compiled to a fixture assembly without loading or calling
+  its UI; the executing prompt and external Scheduler interfaces were replaced.
+  Fixed-account input, maximum-length UTF-16 password handling, cancellation,
+  errors and existing registration branches passed. Outer exit 0, sentinels
+  unchanged, no temporary children, captured root removed.
+- Initial restricted-token fixture runs failed before reaching the owner
+  contract. The first showed absent report files; moving the native exit-code
+  assertion before the read exposed `0xc0000142` in all three child processes.
+  The existing foreign-owner case passed. Both outer runs preserved sentinels,
+  found no temporary children and removed their captured roots. These are
+  fixture startup failures, not expected product-red evidence or passing
+  adoption tests. No existing desktop or window-station permissions were changed.
+- A private UUID window station and desktop did not remove the same three
+  initialization failures. A subsequent single-case diagnostic read only the
+  newly created restricted token and retained child process/thread descriptors:
+  their full-access grants matched the deny-only Administrators SID or SYSTEM,
+  while another enabled group had read/execute access. Both objects were owned
+  by the current SID. This is not absence of all effective grants, and it does
+  not identify the failing DLL operation. The diagnostic still exited before
+  product code; sentinels and cleanup checks passed. It does not count as an
+  ownership regression result.
+- Supplying explicit current-SID full-access descriptors for those two new
+  objects was confirmed by readback but still produced `0xc0000142`. This
+  counterfactual did not establish a working launcher or an initialization
+  diagnosis. A query of the checking Node process's own token reported
+  `TokenElevationTypeDefault`, with no linked Limited-token route. The failed
+  launcher and diagnostic code are retained only as ignored evidence, not as
+  deliverable test infrastructure. The original non-administrator acceptance
+  requirement remains open; direct native authorization tests do not replace it.
+- A pre-build test typecheck found only the host's three new two-argument Job
+  opens against the deliberately retained old utils declarations. Seven other
+  packages passed. The complete check must be repeated after the unified build;
+  this run is not an integrated gate pass.
+- The retained direct ownership checks passed all four selected cases, with
+  24 unrelated cases filtered out (22 ms case total, 263 ms Vitest duration).
+  Explicit BA-owned files/directories with current-user FullControl were adopted
+  with private ACLs and preserved contents. A read-only file was refused by the
+  native setter with error 5 and its path, without changing permissions or
+  contents; the caller's take-ownership/restore privileges were checked disabled.
+  Foreign-owner refusal also passed. These are actual runner-token results,
+  not non-administrator adoption evidence. Outer exit 0, sentinels unchanged,
+  no temporary children, captured root removed.
+- Unified build passed in 4.06 seconds (five rebuilt packages, four up to date).
+  The post-build test typecheck passed all eight applicable packages in
+  6.80 seconds; final lint passed all nine in 6.68 seconds.
+- The complete default suite passed: **3,197 passed / 26 skipped**, eight
+  packages, 3,223 cases total. The independent count used each package's unique
+  Vitest summary, without Rush's repeated warning output. Utils had 240 passed /
+  5 skipped; host had 1,349 passed / 21 skipped. Ownership tests were 25 passed /
+  3 platform skips, Job tests 13 passed, and credential/Task tests 26 passed.
+  Rush took 116.0 seconds, host 93.4 seconds. The executing TeamLeader observed
+  outer exit 0, unchanged sentinels, no temporary children and captured-root
+  removal; the independently counted package logs do not contain those outer
+  observations. Model, installed-Codex and real Scheduler gates stayed excluded.
+- `git diff HEAD --check` passed, and the in-flight task-record check passed
+  for 63 tasks. At that implementation checkpoint the full no-exception
+  KB/closeout gate was not claimed.
+
+Non-administrator ownership acceptance remained pending at this checkpoint,
+as did the formal complete-delta review subsequently recorded in [review](review.md).
+On 2026-11-13 the operator selected "Verify later"
+for the proposed ordinary-terminal, temporary-directory permission check. That
+validation is deferred, not passed or waived. The real credential dialog and
+Password registration are not exercised by intercepted-script tests. The
+running installation is unchanged by this verification.
+
 ## Submission readiness
 
 The operator approved `done` on 2026-11-12 after independent knowledge-closeout

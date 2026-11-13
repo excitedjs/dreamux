@@ -1,6 +1,110 @@
 # Complete-change review
 
-Status: assigned complete-diff reviews received; R1-R4 corrected and verified.
+## Follow-up formal review, 2026-11-13
+
+The operator approved entry into review at 11:59 (UTC+08:00). The frozen target
+was the source published by [the alpha release run](https://github.com/excitedjs/dreamux/actions/runs/43210501365)
+through the complete worktree at review: staged, unstaged and untracked
+deliverable files. It includes
+both installation corrections and cooperative shutdown. The earlier baseline
+review remains recorded below; this review does not silently substitute the
+last small patch for the full follow-up delta.
+
+Independent assignments cover all 35 changed/new deliverable files:
+
+- Service reviewer: six host production files covering CLI shutdown, Windows
+  control, Server and command wiring, plus five command/control/exit tests.
+- Native reviewer: both changed utility owners, their two test files and the
+  utility README. This reviewer did not author those changes.
+- Installation/documentation reviewer: the credential script and Task tests,
+  the host-to-CoT integration test, all twelve remaining documentation files
+  and four Rush notes. This reviewer did not author those changes.
+
+All three independent reports were received and adjudicated at 12:06
+(UTC+08:00). No new actionable correctness or security defect, or new blocking
+coverage gap, was identified in the complete follow-up delta. No accepted
+blocking finding remains unresolved. The implementation stayed frozen; this
+review did not run tests or operate the installed service.
+
+Actual coverage was:
+
+| Review seat | Changed files and supporting checks | Result |
+| --- | --- | --- |
+| Service lifecycle | Host `cli/server.ts`, `daemon/windows.ts`, `server-commands.ts`, `server.ts`, `server/command-host.ts`, `server/shutdown.ts`; tests `core-command-adapters`, `core-command-registry`, `daemon-windows-control`, `daemon-windows` and `server-shutdown`. Cross-checked admin transport, command admission/drain, entry and Job/SupervisedChild contracts. | No new actionable defect or blocker in the 11 assigned files. |
+| Native ownership and permissions | Utils `windows-job.ts`, `windows-security.ts`, `os.test.ts`, `windows-job.test.ts` and README; all changed hunks, query/control access, retained member identity and finite wait, native setter authorization and failure cleanup. | No actionable blocking defect in the five assigned files. The reviewer did not audit every unchanged historical test line. |
+| Credentials, CoT and documentation | Host `windows-credentials.ts`, `windows-task.test.ts` and `feishu-extension-input-delivery.test.ts`; all 12 remaining changed/new documentation files and all four host/utils change notes. Cross-checked credential resource lifetime, test substitutes, the real host-to-CoT producer and documentation claims against their owners. | No new actionable defect or blocking coverage gap in the 19 assigned files. |
+
+The complete-change review covers the follow-up diff and relevant contracts,
+not a new line-by-line audit of every unchanged repository file. Reviewers did
+not certify their own authored implementation. Previously executed verification
+remains recorded separately in [verification](verification.md); no new test
+execution is implied by these static conclusions.
+
+The documentation reviewer noted minor closeout housekeeping: identify older
+implementation/KB statements as facts at their recorded checkpoints, and update
+the knowledge-owner summary from forced stop to cooperative shutdown followed
+by forced cleanup. These are temporal/summary clarifications, not new product
+defects or a rewrite of historical gate outcomes. The operator-approved
+knowledge closeout corrected those checkpoint descriptions and the summary.
+It also updated two architecture owners for the shared exit owner and command
+admission. Independent review of those two additional documentation files and
+the three task records found no blocker or scope change. These five closeout
+document checks are separate from the 35-file implementation review above;
+production and tests remained frozen.
+
+Ordinary-permission adoption, real fixed-account UI and Password behavior,
+cross-session operation, existing registered Task ACL preservation, and R5
+retain their recorded acceptance gaps and deferrals. The historical Job error 5
+cause and R6 workflow defect remain unchanged. Layered isolated tests do not
+establish real Windows-service-to-Feishu terminal delivery. Review completion
+does not waive these boundaries or authorize deployment or merging. The task
+entered `knowledge-closeout` after the operator selected "Enter closeout" at
+12:07 (UTC+08:00), retaining those acceptance limits and deferrals.
+
+## Cooperative-stop implementation checks, 2026-11-13
+
+The operator approved cooperative Windows stop/restart and isolated regression
+verification. Independent static checks covered retained member identity, the
+shared request/wait deadline, force/Task/Enabled cleanup, the process shutdown
+owner, command acceptance without self-drain, startup sequencing, and real
+host-to-CoT close ordering with a fake transport.
+
+Two implementation-review findings were corrected: an already-gone status PID
+must continue cleanup rather than be classified as a live outsider, and test
+gate release must remain inside finally protection for controller join and
+fixture cleanup. The test-only listener/logger type correction and current-state
+documentation corrections also received narrow review. No remaining static
+blocker was identified in those inspected paths. See [verification](verification.md)
+for executed gates. At that checkpoint the formal complete-delta review was
+pending; these scoped checks did not replace it or certify real service/remote-card
+delivery. The completed formal review is recorded above.
+
+## Installation follow-up implementation checks, 2026-11-13
+
+At this checkpoint the task had returned to implementation for the installation
+follow-up. The earlier complete-change review below did not certify that new delta.
+Independent static checks covered owner admission and native setter boundaries,
+the fixed-account credential script and declaration-compiling tests, the three
+Job query callers and retained control path, and the native Job regression.
+Unexpected-success handle leaks in the new Job test were corrected; test-local
+COM account canonicalization was restored without restoring product alias
+input. No remaining static blocker was found in those inspected paths.
+
+The custom restricted-token fixture never reached the product call. Separate
+private-desktop and process/thread-descriptor changes did not remove its
+initialization failure. Review supported removing that unproved mechanism and
+retaining direct native permission/content assertions. This is not a waiver of
+the original non-administrator acceptance requirement, which remains open.
+Credential declaration compilation and intercepted prompt/registration tests
+also do not establish real dialog behavior or Password persistence. The
+historical Job access-denied cause remains unlocated. See [verification](verification.md)
+for executed checks. Formal complete-delta review and its stage decision were
+pending at that checkpoint. No service, live credentials, or deferred R5 operation
+was performed.
+
+## Prior review status
+
+Assigned complete-diff reviews were received; R1-R4 corrected and verified.
 R5 validation was deferred by the operator. On 2026-11-12 the operator approved
 knowledge-closeout with that explicit coverage limitation retained.
 After the operator approved `done`, delivery CI exposed R6. The operator chose
