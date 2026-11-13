@@ -118,6 +118,11 @@ export class Server implements CoreCommandHost {
   readonly commands: CoreCommandPort;
   private admin: AdminSocketServer | null = null;
   private shutdownTask: Promise<void> | null = null;
+  private resolveShutdownRequest!: () => void;
+  /** Notification to the process owner, not completion of Server.shutdown(). */
+  readonly shutdownRequested = new Promise<void>((resolve) => {
+    this.resolveShutdownRequest = resolve;
+  });
   private readonly opts: ServerOptions;
   private readonly log: DreamuxLogger;
   private readonly providerRegistry: ProviderRegistry;
@@ -299,6 +304,11 @@ export class Server implements CoreCommandHost {
           failures.map((message) => `  - ${message}`).join('\n'),
       );
     }
+  }
+
+  requestShutdown(): void {
+    // Let the requesting Command return before its owner starts draining work.
+    setImmediate(() => this.resolveShutdownRequest());
   }
 
   /** Graceful shutdown — drain dispatchers and close the admin socket. */

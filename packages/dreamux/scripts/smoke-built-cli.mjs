@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { dirname, join, parse } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const packageJsonUrl = new URL('../package.json', import.meta.url);
 const packageRoot = dirname(fileURLToPath(packageJsonUrl));
 const bin = join(packageRoot, 'bin', 'dreamux');
+const manifest = JSON.parse(await readFile(packageJsonUrl, 'utf8'));
 
 const serverModule = await import(
   pathToFileURL(join(packageRoot, 'dist', 'server.js')).href
@@ -14,12 +16,14 @@ if (typeof serverModule.Server !== 'function') {
 }
 
 async function runCli(args) {
-  const child = spawn(bin, args, {
+  const child = spawn(process.execPath, [bin, ...args], {
+    cwd: parse(packageRoot).root,
     env: {
       ...process.env,
       DREAMUX_NODE_BIN: process.execPath,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   });
 
   let stdout = '';
@@ -55,9 +59,9 @@ function requireSuccessful(result, label) {
 const versionResult = await runCli(['--version']);
 requireSuccessful(versionResult, 'dreamux --version');
 const version = versionResult.stdout.trim();
-if (version === '') {
+if (version !== manifest.version) {
   throw new Error(
-    `dreamux built CLI produced empty --version output: ${describeResult(versionResult)}`,
+    `dreamux built CLI version does not match package.json (${manifest.version}): ${describeResult(versionResult)}`,
   );
 }
 

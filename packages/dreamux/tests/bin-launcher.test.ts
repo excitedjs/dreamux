@@ -12,13 +12,17 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
   existsSync,
+  copyFileSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, parse, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { dreamuxBinPath } from '../src/platform/package-bin.js';
@@ -49,10 +53,11 @@ function runHelp(
   stdout: string;
   stderr: string;
 } {
-  const res = spawnSync(binPath, ['--help'], {
+  const res = spawnSync(process.execPath, [binPath, '--help'], {
     cwd,
     encoding: 'utf8',
     timeout: 10_000,
+    windowsHide: true,
   });
   return {
     status: res.status,
@@ -86,8 +91,11 @@ describe('runtime dreamux bin resolution', () => {
 });
 
 describe('packages/dreamux/bin/dreamux', () => {
-  it('runs --help from /', () => {
-    const { status, stdout } = runHelp(PKG_BIN_DREAMUX, '/');
+  it('runs --help from the filesystem root', () => {
+    const { status, stdout } = runHelp(
+      PKG_BIN_DREAMUX,
+      parse(PACKAGE_ROOT).root,
+    );
     expect(status).toBe(0);
     expect(stdout).toContain('dreamux <command>');
     expect(stdout).toContain('serve');
@@ -106,12 +114,12 @@ describe('packages/dreamux/bin/dreamux', () => {
     }
   });
 
-  it('runs via absolute symlink', () => {
+  it('runs via absolute symlink', (context) => {
     const tmp = mkdtempSync(join(tmpdir(), 'dreamux-link-'));
     try {
       const link = join(tmp, 'launcher-link');
-      symlinkSync(PKG_BIN_DREAMUX, link);
-      const { status, stdout } = runHelp(link, '/');
+      if (!createSymlink(PKG_BIN_DREAMUX, link)) return context.skip();
+      const { status, stdout } = runHelp(link, parse(PACKAGE_ROOT).root);
       expect(status).toBe(0);
       expect(stdout).toContain('dreamux <command>');
     } finally {
@@ -119,14 +127,14 @@ describe('packages/dreamux/bin/dreamux', () => {
     }
   });
 
-  it('runs via nested symlink', () => {
+  it('runs via nested symlink', (context) => {
     const tmp = mkdtempSync(join(tmpdir(), 'dreamux-link-'));
     try {
       const inner = join(tmp, 'inner');
-      symlinkSync(PKG_BIN_DREAMUX, inner);
+      if (!createSymlink(PKG_BIN_DREAMUX, inner)) return context.skip();
       const outer = join(tmp, 'outer');
       symlinkSync('inner', outer);
-      const { status, stdout } = runHelp(outer, '/');
+      const { status, stdout } = runHelp(outer, parse(PACKAGE_ROOT).root);
       expect(status).toBe(0);
       expect(stdout).toContain('dreamux <command>');
     } finally {
@@ -134,16 +142,62 @@ describe('packages/dreamux/bin/dreamux', () => {
     }
   });
 
-  it('does not depend on tsx being installed', () => {
-    const script = readFileSync(PKG_BIN_DREAMUX, 'utf8');
-    expect(script).not.toMatch(/\btsx\b/);
-  });
-
-  it('execs plain node against the compiled dist target', () => {
-    const script = readFileSync(PKG_BIN_DREAMUX, 'utf8');
-    expect(script).toContain('NODE_BIN="${DREAMUX_NODE_BIN:-node}"');
-    expect(script).toMatch(
-      /exec env DREAMUX_BIN="\$DREAMUX_BIN" "\$NODE_BIN" "\$TARGET"/,
+  it('loads compiled output without dependencies and preserves literal argv from a path with spaces', () => {
+    const tmp = realpathSync.native(
+      mkdtempSync(join(tmpdir(), 'dreamux launcher spaces ')),
     );
+    try {
+      mkdirSync(join(tmp, 'bin'));
+      mkdirSync(join(tmp, 'dist', 'cli'), { recursive: true });
+      const bin = join(tmp, 'bin', 'dreamux');
+      copyFileSync(PKG_BIN_DREAMUX, bin);
+      writeFileSync(join(tmp, 'package.json'), '{"type":"module"}');
+      writeFileSync(
+        join(tmp, 'dist', 'cli', 'dreamux.js'),
+        'console.log(JSON.stringify({ args: process.argv.slice(2), bin: process.env.DREAMUX_BIN })); process.exitCode = 7;',
+      );
+      const args = ['path with spaces', 'x&y', '{"value":"a b"}'];
+      // DREAMUX_BIN names the installed file, including resolved temp-parent symlinks.
+      const expected = { args, bin: realpathSync(bin) };
+      const result = spawnSync(process.execPath, [bin, ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, DREAMUX_NODE_BIN: process.execPath },
+        windowsHide: true,
+      });
+      expect(result.status).toBe(7);
+      expect(JSON.parse(result.stdout)).toEqual(expected);
+
+      const selectedNode = spawnSync(process.execPath, [bin, ...args], {
+        encoding: 'utf8',
+        env: { ...process.env, DREAMUX_NODE_BIN: 'node' },
+        windowsHide: true,
+      });
+      expect(selectedNode.status).toBe(7);
+      expect(JSON.parse(selectedNode.stdout)).toEqual(expected);
+
+      const missingNode = spawnSync(process.execPath, [bin], {
+        encoding: 'utf8',
+        env: { ...process.env, DREAMUX_NODE_BIN: join(tmp, 'missing-node') },
+        windowsHide: true,
+      });
+      expect(missingNode.status).toBe(1);
+      expect(missingNode.stderr).toContain('ENOENT');
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
+
+function createSymlink(target: string, link: string): boolean {
+  try {
+    symlinkSync(target, link);
+    return true;
+  } catch (error) {
+    if (
+      process.platform === 'win32' &&
+      (error as NodeJS.ErrnoException).code === 'EPERM'
+    )
+      return false;
+    throw error;
+  }
+}

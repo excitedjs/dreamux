@@ -35,7 +35,7 @@ export interface DispatcherCodexHomeDoctorContext {
    * A representative socket allocation (issue #182: sockets are random per
    * start, so this is a sample of the policy, not the path a runtime will
    * bind). Doctor checks placement (never shared /tmp) and the path budget. An
-   * empty string skips the socket checks (no host candidate dirs were supplied).
+   * empty string skips the socket checks (for example, Windows uses stdio).
    */
   socketPath: string;
 }
@@ -101,8 +101,7 @@ export async function validateDispatcherCodexHome(
   if (!(await pathExists(context.codexHome))) {
     errors.push(`missing Codex home directory: ${context.codexHome}`);
   }
-  // An empty socketPath means no host candidate dirs were supplied — skip the
-  // placement/budget checks (a real allocation still fails loud at start time).
+  // The caller omits the socket sample when the transport uses no socket.
   if (context.socketPath !== '') {
     if (isTmpPath(context.socketPath)) {
       errors.push(

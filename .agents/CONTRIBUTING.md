@@ -69,7 +69,7 @@ taught the next agent a shipped bug. Copies rot; owners travel.
   writing convention, not a mechanical check; frozen `research/` evidence keeps
   its original language.
 - **Current facts need source links.** Domain pages point at the files that
-  implement the behavior they describe; `check.sh` verifies every cited
+  implement the behavior they describe; `check.mjs` verifies every cited
   `/packages/...` path resolves.
 - **Regression Trap.** When the operator corrects a *class* of error — not
   just an instance — the owning page gains a `## Regression Trap` (or
@@ -97,9 +97,9 @@ taught the next agent a shipped bug. Copies rot; owners travel.
   appended to. The rule and its test are owned by
   [task records](skills/dev-workflow/references/task-records.md).
 
-## Regression Trap: a green check.sh does not mean the facts are right
+## Regression Trap: a green check.mjs does not mean the facts are right
 
-`check.sh` validates structure — links resolve, nothing is orphaned, cited
+`check.mjs` validates structure — links resolve, nothing is orphaned, cited
 source paths exist. It does not read meaning. Two reproduced instances: a KB
 page contradicted a load-bearing removed-surfaces test while CI stayed green,
 and index annotations described fully implemented work as "draft". When you
@@ -110,7 +110,7 @@ change behavior, grep the KB for the facts you changed; nothing else will.
 Before committing KB changes, run:
 
 ```bash
-.agents/scripts/check.sh
+node .agents/scripts/check.mjs
 ```
 
 It validates links, reachability from `root.md`, domains-page source-path

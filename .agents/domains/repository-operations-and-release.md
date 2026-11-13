@@ -119,6 +119,23 @@ bulk commands that fan out to each package's own npm script. `lint` also ignores
 dependency order, because ESLint is source-local and every package's violations
 should surface in one run.
 
+The same Node-based Rush commands run in native Windows PowerShell. The
+package launcher is an executable Node script; from a Windows source checkout
+use `node packages/dreamux/bin/dreamux <command>`. The repository hook retains
+its shell author check and delegates its remaining gates to Node. Content scans
+and cleanup run directly in Node on every platform. Release-only SSH and
+tarball orchestration remains inline in its Ubuntu workflows. Git, ESLint,
+gitleaks and the system archive tool remain external tools.
+`node common/scripts/install-gitleaks.mjs`
+selects the native release archive, verifies its checksum, and installs
+`gitleaks.exe` on Windows. The KB checker retains Python as the task-record
+owner; set `PYTHON` to select an explicit interpreter.
+
+Package test scripts invoke Vitest directly. Packages that resolve user homes
+configure disposable account/application homes through Vitest's native global
+setup and environment configuration. Run focused tests from their package
+directory to load the same configuration; see [unit testing](unit-testing.md).
+
 Source: `/rush.json`, `/common/config/rush/command-line.json`,
 `/common/scripts/install-run-rush.js`, `/packages/dreamux/package.json`.
 
@@ -169,12 +186,12 @@ Source: `/packages/eslint-config/`, `/packages/dreamux/tests/no-sync-io-gate.tes
 | Job                  | Gate                                                                                                                                                                                                                       |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `rush-change-status` | PRs only: `rush change --verify --target-branch origin/<base>`, plus the 0.x major-change-file scan                                                                                                                        |
-| `commit-metadata`    | Author email must have a domain and must not be machine-local; `*@users.noreply.github.com` always passes; an optional private denylist regex comes from a repo variable, never from a committed file                      |
-| `shellcheck`         | Linux + macOS, over `.agents/scripts/check.sh`, `common/git-hooks/pre-commit`, `common/scripts/check-internal-content.sh`, `common/scripts/install-gitleaks.sh`, `packages/dreamux/bin/dreamux`                            |
-| `kb`                 | `.agents/scripts/check.sh` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
-| `rush`               | Linux + macOS: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test                                                                                                                |
+| `commit-metadata`    | Git commit author email: GitHub noreply addresses pass directly; other addresses must have a domain, must not be machine-local, and must pass the optional private denylist from a repo variable |
+| `scripts`            | Linux + macOS + Windows: `node --test common/scripts/tooling.test.mjs` validates Node entry points, normal Git hook execution, content gates, and KB checks |
+| `kb`                 | `.agents/scripts/check.mjs` — knowledge-base links, orphans, and task records; checks out full history and every `refs/pull/*/head`, because the task-record check resolves commit hashes against the local object database |
+| `rush`               | Linux + macOS + Windows: update → build → built-CLI smoke → typecheck → typecheck:tests → lint → install codex → test                                                                                                                |
 | `gitleaks`           | Full-history `gitleaks git .` with the pinned binary and `.gitleaks.toml`                                                                                                                                                  |
-| `internal-content`   | `common/scripts/check-internal-content.sh --tree` over every tracked file                                                                                                                                                  |
+| `internal-content`   | `common/scripts/check-internal-content.mjs --tree` over every tracked file                                                                                                                                                  |
 
 Order inside the `rush` job is load-bearing. Build precedes typecheck because a
 package's `tsc --noEmit` resolves workspace dependencies through their emitted
@@ -344,28 +361,34 @@ private registry URLs, internal hostnames, real Feishu ids, or tokens.
 - `/.npmrc` pins the public npm registry, keeping a private mirror URL out of
   the lockfile.
 - `common/git-hooks/pre-commit` runs `gitleaks git --staged` and
-  `common/scripts/check-internal-content.sh --staged`. The gate is **mandatory**:
+  `common/scripts/check-internal-content.mjs --staged`. The gate is **mandatory**:
   a missing gitleaks binary fails the commit rather than warning and passing,
   and `--no-verify` is not an accepted way past it. Install with
-  `common/scripts/install-gitleaks.sh` — a pinned, checksum-verifying script
+  `node common/scripts/install-gitleaks.mjs` — a pinned, checksum-verifying script
   that installs into `~/.local/bin` by default (`GITLEAKS_INSTALL_DIR` overrides
   it). The hook looks in `$GITLEAKS_INSTALL_DIR` and `~/.local/bin` as well as
   `PATH`, because that default directory is not on every shell's `PATH`.
+- Author checks retain their existing POSIX extended-regex policy. The local
+  Git hook checks the optional `AUTHOR_EMAIL_DENYLIST_REGEX` for every accepted
+  address, including GitHub noreply addresses; the Ubuntu CI check exempts
+  noreply addresses. Git for Windows supplies the hook's `sh` and `grep`.
+  The remaining local gates run in Node. The private regex stays out of source.
 - The `gitleaks` CI job scans the full history with the same pinned binary, so a
   secret added and later "fixed" is still caught. The pin lives only in
-  `install-gitleaks.sh`; CI and the release workflow both install through it.
+  `install-gitleaks.mjs`; CI and the release workflow both install through it.
 - **Internal paths are a separate gate from secrets.** `.gitleaks.toml` is
   shared verbatim with the internal sibling repository, which legitimately
   contains the internal mount and developer home paths this repository must not
   publish — so those patterns cannot live there.
-  `common/scripts/check-internal-content.sh` owns them instead, and runs in the
+  `common/scripts/check-internal-content.mjs` owns them instead, and runs in the
   hook (`--staged`) and in the `internal-content` CI job (`--tree`, every
   tracked file). Its allowlist is by reviewed placeholder user name and by
   named pattern-definition file, never by directory: the leak that motivated
   the tree scan was in `tests/`, which a directory exclusion would have missed.
-- The prerelease job additionally audits every packed tarball before upload —
+- The prerelease job's inline tarball gate audits
+  every packed tarball before upload —
   `package/package.json` must be present, and
-  `check-internal-content.sh --tarball` scans every packed file with the same
+  `check-internal-content.mjs --tarball` scans every packed file with the same
   patterns as the tree scan, allowing only the reviewed public `/home/volta/`
   and `/home/linuxbrew/` install locations compiled into `dist`
   (`ALLOWED_DIST_RE`; the source-tree placeholder users are not allowed in an
@@ -390,8 +413,9 @@ If a guardrail false-positives, stop and ask. Do not edit a local allowlist,
 path exclusion, or bypass flag in only this repo.
 
 Source: `/.gitleaks.toml`, `/.npmrc`, `/common/git-hooks/pre-commit`,
-`/common/scripts/install-gitleaks.sh`,
-`/common/scripts/check-internal-content.sh`,
+`/common/scripts/install-gitleaks.mjs`,
+`/common/scripts/check-internal-content.mjs`,
+`/common/scripts/pre-commit.mjs`,
 `/.github/workflows/ci.yml`, `/.github/workflows/release.yml`,
 `/packages/dreamux/tests/internal-content-scan.test.ts`.
 
@@ -553,14 +577,14 @@ upstream `tar` takes SIGPIPE and exits 141, and pipefail propagates it.
 tarballs now fails hard: "a manifest gate that scans nothing is not a gate"),
 and piping `tar` into a short-circuiting consumer (use a here-string, which has
 no upstream process to signal). Extend the artifact allow-list
-(`ALLOWED_DIST_RE` in `common/scripts/check-internal-content.sh`) only with
+(`ALLOWED_DIST_RE` in `common/scripts/check-internal-content.mjs`) only with
 reviewed, provably-public install locations; the workflow no longer carries a
 pattern of its own, and `/packages/dreamux/tests/internal-content-scan.test.ts`
 exercises the tarball mode against a packed fixture instead of mirroring
 workflow text.
 
 Source: `/.github/workflows/release.yml`,
-`/common/scripts/check-internal-content.sh`,
+`/common/scripts/check-internal-content.mjs`,
 `/packages/dreamux/tests/internal-content-scan.test.ts`.
 
 ### Assuming a green build proves more than it does
@@ -600,7 +624,7 @@ Source: `/packages/dreamux/tsconfig.json`,
 | Pipeline push rejected (GH013 rule violation) or deploy-key auth failed | promote-next push step / release.yml version job logs | Verify the `release-branch-pr-gate` ruleset still lists deploy keys as bypass actors, the `release-pipeline` deploy key still exists with write access, and the `RELEASE_DEPLOY_KEY` secret matches it. Setup steps already fail loudly when the secret is absent.                                                                                                                      |
 | Version job produced the bump commit, but publish failed mid-upload     | release.yml publish job logs                          | Re-run against the same commit via `Actions → release.yml → Run workflow → main`. The version job sees no diff in `packages/` or `common/changes/` and short-circuits with `should_publish=true` on `workflow_dispatch`, so only the publish job re-runs. Do not push a new commit just to re-trigger CI.                                                                               |
 | Version bump was pushed but the next-sync step failed                   | release.yml version job                               | Verify the deploy-key bypass (previous row) is intact for `next`. If `next` moved between the bump and the sync, the step logs "Skipping next sync" intentionally; the next PR merged into next lands on top of the pre-release state, and promote-next still fast-forwards because that branch is a descendant of main.                                                                |
-| Author email fails the commit-metadata gate                             | PR CI, or the pre-commit hook locally                 | Fix with `git config user.email <your-github-email>`. Privacy addresses (`*@users.noreply.github.com`) are explicitly allowed. The local hook mirrors the CI check; run `rush update` to ensure it is wired.                                                                                                                                                                            |
+| Author email fails the commit-metadata gate                             | PR CI, or the pre-commit hook locally                 | Fix with `git config user.email <your-github-email>`. CI allows privacy addresses (`*@users.noreply.github.com`) directly; the local hook still applies its optional denylist to them. Run `rush update` to ensure it is wired.                                                                                                                                                                            |
 | `rush change --verify` fails on a workflow-only PR                      | PR CI `rush-change-status`                            | Generate a `type: none` change file for the package whose workflow or surface is being altered. Workflow-only changes still need a paper trail in the CHANGELOG.                                                                                                                                                                                                                        |
 
 History: [/.agents/tasks/architecture/README.md](/.agents/tasks/architecture/README.md)

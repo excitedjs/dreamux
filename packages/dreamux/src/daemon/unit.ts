@@ -20,7 +20,7 @@ import {
   type ServiceInstallAnswers,
 } from './environment.js';
 
-export type ServicePlatform = 'launchd' | 'systemd';
+export type ServicePlatform = 'launchd' | 'systemd' | 'windows';
 
 export const LAUNCHD_LABEL = 'dev.excited.dreamux';
 export const SYSTEMD_UNIT = 'dreamux.service';
@@ -28,7 +28,7 @@ export const SYSTEMD_UNIT = 'dreamux.service';
 export function serviceUnitPath(
   platform: NodeJS.Platform = process.platform,
   homeDir = homedir(),
-): { platform: ServicePlatform; path: string } {
+): { platform: 'launchd' | 'systemd'; path: string } {
   if (platform === 'darwin') {
     return {
       platform: 'launchd',
@@ -42,7 +42,7 @@ export function serviceUnitPath(
     };
   }
   throw new Error(
-    `dreamux onboard supports user-level services on macOS and Linux only (got ${platform})`,
+    `dreamux service unit files require macOS or Linux (got ${platform})`,
   );
 }
 

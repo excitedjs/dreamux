@@ -374,7 +374,7 @@ async function addManagedServiceLaunchChecks(
     await checkHelpLaunch(
       'managed service dreamux launcher',
       dreamuxBin,
-      ['--help'],
+      [...(service.execStart?.slice(1, -1) ?? []), '--help'],
       serviceEnv,
       runner,
       'ExecStart is missing in the installed service; rerun dreamux onboard',

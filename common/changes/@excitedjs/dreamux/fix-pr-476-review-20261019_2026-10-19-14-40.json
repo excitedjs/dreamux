@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Use native Vitest setup and teardown for disposable test homes, including focused runs and fail-closed watch reruns after setup failure.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "15624809+YourWildDad@users.noreply.github.com"
+}

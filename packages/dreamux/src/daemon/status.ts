@@ -1,6 +1,6 @@
 /**
- * Managed-service status: read the installed unit's on-disk definition plus
- * live service-manager state. Used by `dreamux doctor`.
+ * Managed-service status: read the native task or installed unit definition
+ * plus live service-manager state. Used by `dreamux doctor`.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -19,10 +19,12 @@ import {
   serviceUnitPath,
   SYSTEMD_UNIT,
   systemdDetail,
+  type ServicePlatform,
 } from './unit.js';
+import { windowsServiceStatus } from './windows.js';
 
 export interface ServiceStatus {
-  platform: 'launchd' | 'systemd';
+  platform: ServicePlatform;
   unitPath: string;
   installed: boolean;
   loaded: boolean;
@@ -38,6 +40,9 @@ export async function getServiceStatus(
   options: Partial<ServiceHost> = {},
 ): Promise<ServiceStatus> {
   const host = createServiceHost(options);
+  if (host.platform === 'win32') {
+    return windowsServiceStatus(host.runner);
+  }
   const unit = serviceUnitPath(host.platform, host.homeDir);
   if (unit.platform === 'launchd') {
     return launchdStatus(unit.path, host.runner, host.uid);

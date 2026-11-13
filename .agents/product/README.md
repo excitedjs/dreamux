@@ -234,7 +234,7 @@ the same change that touches it.
 - **A provisioning run that produces no Team answers in place.** When a
   collaboration space cannot provision the Team a message was routed to, the
   Channel replies under that message — `Could not start a Team for this
-  conversation. The reason is in the Dreamux log.` — and delivers nothing to
+conversation. The reason is in the Dreamux log.` — and delivers nothing to
   the Dispatcher Agent. The notice names no reason, because raw failure text
   can carry host paths into a group chat. A settled question-card answer on
   such a topic is dropped with a log line instead, since re-routing an answer
@@ -688,6 +688,39 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
 
 ## Local state and upgrades
 
+- **Windows runs natively.** The CLI, foreground server, local admin/MCP
+  communication and provider children run through shared Node/native capabilities
+  without Bash, PowerShell, or WSL. The managed
+  user service uses Task Scheduler Password logon without a persistent desktop
+  console. Installation opens a native Windows credential dialog for the current
+  account password, not a Windows Hello PIN, for a new task, login-mode conversion
+  or changed launch data. Only an existing Password task with ordinal-equal
+  launch data receives a prompt-free action-only update. Cancellation or a native
+  error aborts registration. The native dialog fixes the current account name
+  and asks only for its password; it does not require choosing an account alias.
+  The password stays in the registering PowerShell
+  process until passed to Task Scheduler; it does
+  not enter JavaScript, arguments, environment or Dreamux configuration. The initial
+  trigger remains user logon. Registration preserves existing triggers, settings,
+  description and run level. The Task Action invokes the published service entry;
+  Task Data owns the captured environment and business command. `DREAMUX_ROOT`
+  comes from the registered WorkingDirectory's parent, not a duplicate Data
+  field or the controlling CLI's environment. The displayed `unitPath` is a native
+  task identifier, not a file. Stop disables the task and reserves its Job, then
+  requests cooperative shutdown from the registered-root server only after
+  retaining that server as an owned Job member. The request and process-exit
+  wait share a 15-second budget. Unavailable, older or hung servers still reach
+  forced cleanup; remaining owned processes are terminated and awaited before
+  Task.Stop completion is validated. Restart completes stop before one Run and
+  waits for registered-root `server.status` with a PID belonging to the service
+  Job. A service-owned caller reports handoff to an external controller rather
+  than completed restart; the new server consumes the existing resumed notice.
+  When service installation takes this path, its result reports `started: false`
+  and `handedOff: true`; daemon install and onboard output both state that
+  completion has not yet been confirmed.
+  Cooperative shutdown gives Channels and open CoT cards a cleanup opportunity;
+  network failure or forced termination can still prevent remote delivery.
+  (Task: [native Windows support](/.agents/tasks/architecture/native-windows-support/README.md).)
 - **Uninstall recursively removes the Dreamux root.** `dreamux uninstall`
   removes the managed service and the state/run/cache/log paths, then the
   root directory, including other files placed inside that root. Operator-state
@@ -705,11 +738,14 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   created when needed. There is no `dispatcher.start` Command or CLI verb to
   reopen a stopped Dispatcher in the same process.
   (R11: [code-organization-refactor rulings](/.agents/tasks/architecture/code-organization-refactor/rulings.md).)
-- **A termination signal ends the serving process.** SIGTERM or SIGINT starts
-  shutdown. Successful shutdown exits 0; a rejected shutdown exits 1. A
-  shutdown still pending after 15 seconds is cut off and exits 1.
-  (Current behavior: [service topology](/.agents/domains/service-topology.md),
-  delivered in [PR #460](https://github.com/excitedjs/dreamux/pull/460).)
+- **Serving-process shutdown is bounded.** SIGTERM, SIGINT and an accepted
+  `server.shutdown` request use one process-exit owner. The command requires the
+  current `expectedPid` and acknowledges acceptance without waiting for shutdown.
+  The owner waits for startup before closing resources, within the same
+  15-second bound. Successful shutdown exits 0; failure or deadline exits 1.
+  Acceptance alone proves neither process exit nor Channel delivery.
+  (Current owner: [process shutdown](/packages/dreamux/src/server/shutdown.ts);
+  original signal handling delivered in [PR #460](https://github.com/excitedjs/dreamux/pull/460).)
 - **Onboard rewrites known configuration wrapper fields.** A non-dry-run
   `dreamux onboard` may discard unknown wrapper fields, including fields on
   untouched entries. Untouched provider-owned `config` contents retain their

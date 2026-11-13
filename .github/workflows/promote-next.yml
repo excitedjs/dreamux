@@ -68,7 +68,7 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # topology check + ff merge need the full graph
+          fetch-depth: 0 # topology check + ff merge need the full graph
           ref: main
 
       - name: ensure local refs exist for both branches

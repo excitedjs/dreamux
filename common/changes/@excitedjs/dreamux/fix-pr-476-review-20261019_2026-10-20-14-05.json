@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "BREAKING: Windows managed services now use a packaged entry and Task Scheduler Data instead of a generated launcher. Rebuild: Before upgrading an existing Windows alpha, use the old version under the original Windows account and DREAMUX_ROOT, from a terminal outside the service, to run dreamux daemon uninstall and confirm success; if it fails, stop the upgrade, and if the old version is unavailable, restore it first. Then upgrade and run dreamux daemon install using the native Windows credential dialog. Configuration, state and logs are retained. Stop waits for owned process exit; external restart confirms the new server responds, while service-owned callers report handoff to an external controller. Password tasks with unchanged launch data retain action-only updates; changed data requires credentialed definition registration.",
+      "type": "minor"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

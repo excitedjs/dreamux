@@ -22,6 +22,7 @@ import {
   type AdminSocketServer,
 } from '../../src/admin/socket.js';
 import type { AdminResponse } from '../../src/admin/protocol.js';
+import { adminSocketAddress } from '../../src/platform/paths.js';
 import { createChannelCorePort } from '../../src/service/channel-service/core-port.js';
 import { McpLeaseRegistry } from '../../src/service/mcp/leases.js';
 import type {
@@ -421,7 +422,7 @@ export async function startHarnessAdminSocket(
   let seq = 0;
   async function sendRaw(line: string): Promise<AdminResponse> {
     return new Promise<AdminResponse>((resolve, reject) => {
-      const socket = createConnection(socketPath);
+      const socket = createConnection(adminSocketAddress(socketPath));
       let buf = '';
       socket.setEncoding('utf8');
       socket.on('connect', () => {
@@ -535,7 +536,7 @@ export async function startRawStubSocket(
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(socketPath, () => resolve());
+    server.listen(adminSocketAddress(socketPath), () => resolve());
   });
   return {
     socketPath,

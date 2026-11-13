@@ -35,10 +35,10 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
-    "lint": "eslint . && prettier --check . '!**/*.md' '!**/dist/**' '!**/CHANGELOG.json' '!**/.rush/**'",
+    "lint": "eslint . && prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\"",
     "test": "vitest run",
     "test:watch": "vitest",
-    "clean": "rm -rf dist",
+    "clean": "node ../../../common/scripts/clean.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "build": "node -e \"\"",
-    "lint": "prettier --check . '!**/*.md' '!**/dist/**' '!**/CHANGELOG.json' '!**/.rush/**'"
+    "lint": "prettier --check . \"!**/*.md\" \"!**/dist/**\" \"!**/CHANGELOG.json\" \"!**/.rush/**\""
   },
   "dependencies": {
     "@eslint-community/eslint-plugin-eslint-comments": "^4.7.2",

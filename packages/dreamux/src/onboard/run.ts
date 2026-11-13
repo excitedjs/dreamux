@@ -132,6 +132,7 @@ export async function runOnboard(
     nodeBin,
     providerBinChecks,
     homeDir: host.homeDir,
+    platform: host.platform,
     env,
     fallbackDirs,
   };

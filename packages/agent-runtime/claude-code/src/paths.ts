@@ -27,9 +27,8 @@ export function claudeSpawnEnv(
  * cwd: an explicit `CLAUDE_CONFIG_DIR` override (resolved against
  * `runtimeCwd` when relative), else `$HOME/.claude` (falling back to the
  * running process's own home directory if the env carries no `HOME`). Pure
- * and non-throwing — it only says what path applies; a caller that needs a
- * missing-`HOME` failure mode (the activity reader) layers its own error
- * semantics on top.
+ * and non-throwing — it only says what path applies; readers validate their
+ * required files separately.
  */
 export function resolveClaudeConfigHomeDir(
   env: DreamuxEnvironment,

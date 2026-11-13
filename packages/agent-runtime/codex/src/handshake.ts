@@ -15,7 +15,7 @@
  * are visible in the source.
  */
 
-import type { CodexWsClient } from './rpc.js';
+import type { CodexRpcClient } from './rpc.js';
 import type {
   ClientInfo,
   InitializeCapabilities,
@@ -77,7 +77,7 @@ const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10_000;
  * pending entries when the WS connection closes.
  */
 export async function performInitializeHandshake(
-  client: CodexWsClient,
+  client: CodexRpcClient,
   options: HandshakeOptions = {},
 ): Promise<InitializeResponse> {
   const params: InitializeParams = {

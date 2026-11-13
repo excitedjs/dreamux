@@ -9,7 +9,7 @@ Dreamux. The default setup uses Codex and Feishu; Claude Code is also built in.
 
 | Requirement | What to prepare |
 | --- | --- |
-| Host | Linux or macOS, with Bash and Node.js **22.7 or newer** |
+| Host | Linux, macOS or Windows, with Node.js **22.7 or newer** |
 | Agent runtime | **Codex 0.137+** or a working **Claude Code** CLI, authenticated as the host user |
 | Workspace | A directory the agent can access; install Git if you will use managed worktrees |
 | Feishu | A bot application you can configure and publish, its App ID and App Secret, and access to its owner or creator for pairing |
@@ -28,9 +28,31 @@ Authenticate and run a small task directly in the selected CLI before setting up
 Dreamux. Dreamux uses that runtime's authentication and model access; installing
 Dreamux does not install or authenticate the runtime for you.
 
-The managed service uses Linux systemd user services or macOS launchd. On a host
-without a working user service manager, use the foreground path below. Native
-Windows service installation is not provided.
+The managed service uses Linux systemd user services, macOS launchd or Windows
+Task Scheduler. Windows installation uses Password logon and requires the
+current account's password, not a Windows Hello PIN, through a native Windows
+credential dialog for a new task, login-mode conversion or changed Task Data.
+The account name is fixed; enter only its password, without guessing an email
+alias or changing the account.
+Only an existing Password task with ordinal-equal Data receives a prompt-free
+action-only update; other updates register Action and Data together through
+credentialed XML in the same PowerShell process. Cancelling the dialog or
+encountering a native error stops registration. Its Action invokes the published
+service entry; Task Data stores the captured environment and business command,
+excluding `DREAMUX_ROOT`, which comes from the registered WorkingDirectory's
+parent. The reported `unitPath` is a task identifier, not a file. On a host
+without a working user service manager, use the foreground path below. See
+[service operations](operations.md#manage-the-service) for platform details.
+
+If upgrading an existing Windows alpha service that generated `daemon.mjs`,
+first use the old version, original Windows account and original `DREAMUX_ROOT`
+from a terminal outside the service tree. Confirm the old version's
+`dreamux daemon uninstall` succeeds before upgrading and running the new
+`dreamux daemon install`. Stop if uninstall fails; if the old version is missing,
+restore it first. Do not delete config, state or logs. This one-time reinstall
+is required for the new task format. Real credential-dialog interaction,
+saved-credential reuse and cross-session behavior remain native acceptance
+boundaries; see [the upgrade procedure](operations.md#existing-windows-alpha-service).
 
 ## 2. Prepare a Feishu bot
 

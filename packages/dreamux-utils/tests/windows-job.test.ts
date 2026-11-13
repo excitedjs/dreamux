@@ -1,0 +1,540 @@
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import koffi, { type KoffiFunc } from 'koffi';
+import { describe, expect, it, vi } from 'vitest';
+
+import { WindowsJob } from '../src/windows-job.js';
+import { launchWindowsChild } from '../src/windows-child.js';
+import { SupervisedChild } from '../src/supervised-child.js';
+import { isProcessAlive, killProcessGroup } from '../src/os.js';
+
+const jobModule = new URL('../dist/windows-job.js', import.meta.url).href;
+const supervisorModule = new URL('../dist/supervised-child.js', import.meta.url)
+  .href;
+
+async function fixtureHost(
+  name?: string,
+  cwd = process.cwd(),
+): Promise<{ host: ChildProcess; pids: number[] }> {
+  const host = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    import { WindowsJob } from ${JSON.stringify(jobModule)};
+    import { SupervisedChild } from ${JSON.stringify(supervisorModule)};
+    ${name === undefined ? '' : `const job = await WindowsJob.create(${JSON.stringify(name)}); await job.assignCurrentProcess();`}
+    const child = new SupervisedChild({ kind: 'spawn', command: process.execPath, args: ['-e', ${JSON.stringify(`
+      const { spawn } = require('node:child_process');
+      const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
+      grandchild.once('spawn', () => console.log(JSON.stringify([process.pid, grandchild.pid])));
+      setInterval(() => {}, 1000);
+    `)}] });
+    const proc = await child.start();
+    proc.stdout.once('data', data => process.stdout.write(data));
+  `,
+    ],
+    { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  let stderr = '';
+  host.stderr!.on('data', (chunk) => {
+    stderr += String(chunk);
+  });
+  const pids = await new Promise<number[]>((resolve, reject) => {
+    host.stdout!.once('data', (data) =>
+      resolve(JSON.parse(String(data)) as number[]),
+    );
+    host.once('error', reject);
+    host.once('exit', (code) =>
+      reject(new Error(`fixture host exited ${code}: ${stderr}`)),
+    );
+  });
+  return { host, pids };
+}
+
+// A PID can already fail kill(0) while its terminating process still holds cwd.
+// Retain each exact native object before shutdown and check its completion signal.
+function retainProcesses(pids: number[]) {
+  const kernel = koffi.load('kernel32.dll');
+  const open = kernel.func(
+    'void * __stdcall OpenProcess(uint32_t, int, uint32_t)',
+  ) as KoffiFunc<
+    (access: number, inherit: number, pid: number) => bigint | null
+  >;
+  const wait = kernel.func(
+    'uint32_t __stdcall WaitForSingleObject(void *, uint32_t)',
+  ) as KoffiFunc<(handle: bigint, timeout: number) => number>;
+  const close = kernel.func('int __stdcall CloseHandle(void *)') as KoffiFunc<
+    (handle: bigint) => number
+  >;
+  const handles: bigint[] = [];
+  try {
+    for (const pid of pids) {
+      const handle = open(0x00100000, 0, pid);
+      if (handle === null)
+        throw new Error('Fixture process handle unavailable');
+      handles.push(handle);
+    }
+  } catch (error) {
+    for (const handle of handles) close(handle);
+    throw error;
+  }
+  return {
+    states: () => handles.map((handle) => wait(handle, 0)),
+    dispose: async () => {
+      try {
+        for (const handle of handles)
+          await promisify(wait.async)(handle, 0xffffffff);
+      } finally {
+        for (const handle of handles) close(handle);
+      }
+    },
+  };
+}
+
+// Only the fixture's UUID Job is changed; its original control handle stays valid.
+function restrictFixtureJobToQueries(name: string): void {
+  const kernel = koffi.load('kernel32.dll');
+  const security = koffi.load('advapi32.dll');
+  const open = kernel.func(
+    'void * __stdcall OpenJobObjectW(uint32_t, int, const char16_t *)',
+  );
+  const close = kernel.func('int __stdcall CloseHandle(void *)');
+  const free = kernel.func('void * __stdcall LocalFree(void *)');
+  const convert = security.func(
+    'int __stdcall ConvertStringSecurityDescriptorToSecurityDescriptorW(const char16_t *, uint32_t, _Out_ void **, void *)',
+  );
+  const getDacl = security.func(
+    'int __stdcall GetSecurityDescriptorDacl(void *, _Out_ int *, _Out_ void **, _Out_ int *)',
+  );
+  const setSecurity = security.func(
+    'uint32_t __stdcall SetSecurityInfo(void *, int, uint32_t, void *, void *, void *, void *)',
+  );
+  const handle = open(0x00040000, 0, name);
+  const descriptor: (bigint | null)[] = [null];
+  try {
+    expect(handle).not.toBeNull();
+    // Deny mutation even to administrators; grant only membership queries.
+    expect(convert('D:(D;;0xA;;;WD)(A;;0x4;;;WD)', 1, descriptor, null)).toBe(
+      1,
+    );
+    const present = [0];
+    const defaulted = [0];
+    const dacl: (bigint | null)[] = [null];
+    expect(getDacl(descriptor[0], present, dacl, defaulted)).toBe(1);
+    expect(present[0]).toBe(1);
+    expect(setSecurity(handle, 6, 4, null, null, dacl[0], null)).toBe(0);
+  } finally {
+    if (descriptor[0] !== null) free(descriptor[0]);
+    if (handle !== null) close(handle);
+  }
+}
+
+describe.skipIf(process.platform !== 'win32')(
+  'native Windows Job ownership',
+  () => {
+    it.each(['alive', 'exited'] as const)(
+      'does not wait on or terminate an unassigned %s candidate',
+      async (state) => {
+        const job = await WindowsJob.create();
+        let candidate: ChildProcess | undefined;
+        let closed: Promise<unknown> | undefined;
+        let held: ReturnType<typeof retainProcesses> | undefined;
+        let terminating: Promise<void> | undefined;
+        let deadline: ReturnType<typeof setTimeout> | undefined;
+        try {
+          candidate = spawn(
+            process.execPath,
+            ['-e', 'process.stdin.resume()'],
+            {
+              windowsHide: true,
+              stdio: ['pipe', 'ignore', 'ignore'],
+            },
+          );
+          // Unlike events.once(), this fence still waits for close after error.
+          closed = new Promise<void>((resolve) => {
+            candidate!.once('close', () => resolve());
+          });
+          await once(candidate, 'spawn');
+          held = retainProcesses([candidate.pid!]);
+          await job.openRoot(candidate.pid!);
+          // openRoot holds a candidate object; only assign grants authority.
+          expect(held.states()).toEqual([258]);
+          if (state === 'exited') {
+            candidate.kill();
+            await closed;
+            expect(held.states()).toEqual([0]);
+          }
+          terminating = job.terminate();
+          const outcome = await Promise.race([
+            terminating.then(() => 'terminated'),
+            new Promise<string>((resolve) => {
+              deadline = setTimeout(
+                () => resolve('waited on candidate'),
+                2_000,
+              );
+            }),
+          ]);
+          expect(outcome).toBe('terminated');
+          job.close();
+          expect(held.states()).toEqual([state === 'alive' ? 258 : 0]);
+        } finally {
+          clearTimeout(deadline);
+          // Even a broken gate must finish its native wait before handles close.
+          if (candidate?.exitCode === null && candidate.signalCode === null)
+            candidate.kill();
+          await closed;
+          try {
+            await terminating;
+          } finally {
+            job.close();
+            await held?.dispose();
+          }
+        }
+      },
+    );
+
+    it('waits for all 256 native members without overflowing the async call queue', async () => {
+      const { child, job } = await launchWindowsChild({
+        kind: 'spawn',
+        command: process.execPath,
+        args: [
+          '--input-type=module',
+          '-e',
+          `
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+const children = [];
+for (let index = 0; index < 254; index++) {
+  const child = spawn(process.env.ComSpec, ['/d', '/c', 'set /p input='], {
+    windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  children.push(child);
+  await once(child, 'spawn');
+}
+console.log(JSON.stringify([process.pid, ...children.map(child => child.pid)]));
+setInterval(() => {}, 1000);
+`,
+        ],
+      });
+      const closed = once(child, 'close');
+      let held: ReturnType<typeof retainProcesses> | undefined;
+      try {
+        const [output] = await once(child.stdout!, 'data', {
+          signal: AbortSignal.timeout(20_000),
+        });
+        const pids = [child.pid!, ...(JSON.parse(String(output)) as number[])];
+        expect(pids).toHaveLength(256);
+        held = retainProcesses(pids);
+        expect(held.states()).toEqual(Array<number>(256).fill(258));
+        await job.terminate();
+        // Check exact retained objects immediately, before any extra event wait.
+        expect(held.states()).toEqual(Array<number>(256).fill(0));
+      } finally {
+        // Closing this isolated Job also kills the tree if readiness or stop fails.
+        job.close();
+        await closed;
+        await held?.dispose();
+      }
+    }, 30_000);
+
+    it('distinguishes the current process from a child assigned to the exact Job', async () => {
+      const name = `Local\\Dreamux-membership-${randomUUID()}`;
+      const job = await WindowsJob.create(name);
+      try {
+        expect(await job.containsCurrentProcess()).toBe(false);
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [
+            '--input-type=module',
+            '-e',
+            `
+import { WindowsJob } from ${JSON.stringify(jobModule)};
+const job = await WindowsJob.acquire(${JSON.stringify(name)});
+await job.assignCurrentProcess();
+console.log(await job.containsCurrentProcess());
+`,
+          ],
+          { windowsHide: true },
+        );
+        expect(stdout.trim()).toBe('true');
+        expect(await job.containsCurrentProcess()).toBe(false);
+      } finally {
+        await job.terminate();
+        job.close();
+      }
+    });
+
+    it('queries a live member and outsider without changing either process', async () => {
+      const job = await WindowsJob.create();
+      const children: ChildProcess[] = [];
+      const closed: Promise<void>[] = [];
+      let held: ReturnType<typeof retainProcesses> | undefined;
+      let observed: Awaited<ReturnType<WindowsJob['retainMember']>> = null;
+      try {
+        for (let index = 0; index < 2; index++) {
+          const child = spawn(
+            process.execPath,
+            ['-e', 'process.stdin.resume()'],
+            {
+              windowsHide: true,
+              stdio: ['pipe', 'ignore', 'ignore'],
+            },
+          );
+          children.push(child);
+          closed.push(
+            new Promise<void>((resolve) => {
+              child.once('close', () => resolve());
+            }),
+          );
+          await once(child, 'spawn');
+        }
+        const member = children[0]!;
+        const outsider = children[1]!;
+        held = retainProcesses([member.pid!, outsider.pid!]);
+        await job.openRoot(member.pid!);
+        await job.assign();
+        expect(await job.containsProcess(member.pid!)).toBe(true);
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+        expect(held.states()).toEqual([258, 258]);
+        observed = await job.retainMember(member.pid!);
+        expect(observed).not.toBeNull();
+        expect(await observed!.waitForExit(10)).toBe(false);
+        await expect(
+          (async () => {
+            const unrelated = await job.retainMember(outsider.pid!);
+            unrelated?.close();
+          })(),
+        ).rejects.toThrow('The process does not belong to the Windows Job');
+
+        member.kill();
+        await closed[0];
+        expect(await observed!.waitForExit(0)).toBe(true);
+        expect(held.states()).toEqual([0, 258]);
+        // Both the fixture and Job still hold the exited member's exact object.
+        expect(await job.containsProcess(member.pid!)).toBe(false);
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+        expect(held.states()).toEqual([0, 258]);
+
+        outsider.kill();
+        await closed[1];
+        expect(held.states()).toEqual([0, 0]);
+        // Keep the exited outsider's exact object alive through these queries.
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+        await expect(
+          (async () => {
+            const unrelated = await job.retainMember(outsider.pid!);
+            unrelated?.close();
+          })(),
+        ).rejects.toThrow('The process does not belong to the Windows Job');
+        await held.dispose();
+        held = undefined;
+        // PID 0 maps OpenProcess ERROR_INVALID_PARAMETER; it does not prove
+        // when an exited process object disappears or its PID becomes reusable.
+        const invalidProcess = await job.retainMember(0);
+        invalidProcess?.close();
+        expect(invalidProcess).toBeNull();
+      } finally {
+        for (const child of children) {
+          if (
+            child.pid !== undefined &&
+            child.exitCode === null &&
+            child.signalCode === null
+          )
+            child.kill();
+        }
+        try {
+          await Promise.all(closed);
+        } finally {
+          observed?.close();
+          job.close();
+          await held?.dispose();
+        }
+      }
+    });
+
+    it('queries a Job whose DACL denies control without terminating its member', async () => {
+      const name = `Local\\Dreamux-test-${randomUUID()}`;
+      const job = await WindowsJob.create(name);
+      let child: ChildProcess | undefined;
+      let closed: Promise<void> | undefined;
+      let held: ReturnType<typeof retainProcesses> | undefined;
+      let observed: WindowsJob | null = null;
+      try {
+        child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], {
+          windowsHide: true,
+          stdio: ['pipe', 'ignore', 'ignore'],
+        });
+        closed = new Promise<void>((resolve) => {
+          child!.once('close', () => resolve());
+        });
+        await once(child, 'spawn');
+        held = retainProcesses([child.pid!]);
+        await job.openRoot(child.pid!);
+        await job.assign();
+        restrictFixtureJobToQueries(name);
+
+        observed = await WindowsJob.open(name, 'query');
+        expect(observed).not.toBeNull();
+        expect(await observed!.containsProcess(child.pid!)).toBe(true);
+        expect(await observed!.containsCurrentProcess()).toBe(false);
+        await expect(
+          WindowsJob.open(name, 'control').then((opened) => opened?.close()),
+        ).rejects.toThrow('OpenJobObjectW failed (Windows error 5)');
+        expect(held.states()).toEqual([258]);
+        await job.terminate();
+        expect(held.states()).toEqual([0]);
+      } finally {
+        observed?.close();
+        try {
+          await job.terminate();
+        } finally {
+          if (child?.exitCode === null && child.signalCode === null)
+            child.kill();
+          await closed;
+          job.close();
+          await held?.dispose();
+        }
+      }
+      const remaining = await WindowsJob.open(name, 'query');
+      try {
+        expect(remaining).toBeNull();
+      } finally {
+        remaining?.close();
+      }
+    });
+
+    it('refuses PID-only Windows tree termination without touching the process', async () => {
+      await expect(killProcessGroup(process.pid, 'SIGKILL')).rejects.toThrow(
+        'launch-owned Job',
+      );
+      expect(isProcessAlive(process.pid)).toBe(true);
+    });
+
+    it('does not attach to or alter an existing named Job', async () => {
+      const name = `Local\\Dreamux-test-${randomUUID()}`;
+      const job = await WindowsJob.create(name);
+      try {
+        await expect(WindowsJob.create(name)).rejects.toThrow('already exists');
+        const opened = await WindowsJob.open(name);
+        expect(opened).not.toBeNull();
+        await opened!.terminate();
+        opened!.close();
+      } finally {
+        job.close();
+      }
+      expect(await WindowsJob.open(name)).toBeNull();
+    });
+
+    it('reserves a missing service Job so a late startup cannot launch target work', async () => {
+      const name = `Local\\Dreamux-test-${randomUUID()}`;
+      const reserved = await WindowsJob.acquire(name);
+      const host = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '-e',
+          `
+      import { WindowsJob } from ${JSON.stringify(jobModule)};
+      const job = await WindowsJob.create(${JSON.stringify(name)});
+      await job.assignCurrentProcess();
+      console.log('target work started');
+    `,
+        ],
+        { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] },
+      );
+      let stdout = '';
+      let stderr = '';
+      host.stdout!.on('data', (chunk) => {
+        stdout += String(chunk);
+      });
+      host.stderr!.on('data', (chunk) => {
+        stderr += String(chunk);
+      });
+      try {
+        const [code] = await once(host, 'close');
+        expect(code).toBe(1);
+        expect(stdout).toBe('');
+        expect(stderr).toContain('Windows Job already exists');
+        await reserved.terminate();
+        reserved.close();
+        expect(await WindowsJob.open(name)).toBeNull();
+      } finally {
+        reserved.close();
+        if (host.exitCode === null && host.signalCode === null) host.kill();
+      }
+    });
+
+    it('kernel cleanup terminates descendants when their owning host dies', async () => {
+      const { host, pids } = await fixtureHost();
+      try {
+        const closed = once(host, 'close');
+        host.kill(); // ChildProcess retains the handle of this exact fixture host.
+        await closed;
+        await vi.waitFor(() =>
+          expect(pids.map(isProcessAlive)).toEqual([false, false]),
+        );
+      } finally {
+        if (host.exitCode === null && host.signalCode === null) host.kill();
+      }
+    });
+
+    it.each(['Local', 'Global'])(
+      'a separately opened %s service Job waits for the entire nested tree to exit',
+      async (namespace) => {
+        const name = `${namespace}\\Dreamux-test-${randomUUID()}`;
+        const root = await mkdtemp(join(tmpdir(), 'dreamux-job-completion-'));
+        const { host, pids } = await fixtureHost(name, root);
+        const job = await WindowsJob.acquire(name);
+        const held = retainProcesses([host.pid!, ...pids]);
+        const closed = once(host, 'close');
+        try {
+          expect(job).not.toBeNull();
+          await job!.terminate();
+          // No extra close event or polling may make an early terminate() pass.
+          expect(held.states()).toEqual([0, 0, 0]);
+          await rm(root, { recursive: true, force: true });
+          expect(pids.map(isProcessAlive)).toEqual([false, false]);
+        } finally {
+          job?.close();
+          if (host.exitCode === null && host.signalCode === null) host.kill();
+          await closed;
+          await held.dispose();
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+    );
+
+    it('supervised stop releases its process objects and cwd before returning', async () => {
+      const root = await mkdtemp(
+        join(tmpdir(), 'dreamux-supervised-completion-'),
+      );
+      const owner = new SupervisedChild({
+        kind: 'spawn',
+        command: process.execPath,
+        args: ['-e', 'console.log(process.pid); process.stdin.resume();'],
+        options: { cwd: root },
+      });
+      const child = await owner.start();
+      const closed = once(child, 'close');
+      const [output] = await once(child.stdout!, 'data');
+      const held = retainProcesses([child.pid!, Number(String(output))]);
+      try {
+        await owner.stop();
+        expect(held.states()).toEqual([0, 0]);
+        await rm(root, { recursive: true, force: true });
+      } finally {
+        await owner.stop();
+        await closed;
+        await held.dispose();
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+  },
+);

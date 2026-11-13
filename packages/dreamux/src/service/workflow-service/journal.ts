@@ -1,8 +1,11 @@
-import { readFile } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open, readFile } from 'node:fs/promises';
 
-import { publishFileExclusive } from '@excitedjs/dreamux-utils';
+import {
+  ensureOwnerOnlyFile,
+  publishFileExclusive,
+} from '@excitedjs/dreamux-utils';
 
-import { appendJsonLine } from '../../platform/jsonl.js';
 import type { WorkflowAgentRecord, WorkflowRunRecord } from './types.js';
 
 export interface WorkflowTerminalJournalEvent {
@@ -76,7 +79,7 @@ export class WorkflowJournal {
   append(
     event: Exclude<WorkflowJournalEvent, { kind: 'result' | 'end' }>,
   ): Promise<void> {
-    return this.enqueue(() => appendJsonLine(this.path, event));
+    return this.enqueue(() => this.appendRow(event));
   }
 
   terminal(): Promise<WorkflowTerminalJournalEvent | null> {
@@ -105,7 +108,7 @@ export class WorkflowJournal {
         return existing;
       }
       try {
-        await appendJsonLine(this.path, expected);
+        await this.appendRow(expected);
       } catch (error) {
         this.facts = null;
         throw error;
@@ -124,7 +127,7 @@ export class WorkflowJournal {
       const existing = facts.terminal;
       if (existing === null) {
         try {
-          await appendJsonLine(this.path, expected);
+          await this.appendRow(expected);
         } catch (error) {
           this.facts = null;
           throw error;
@@ -227,12 +230,30 @@ export class WorkflowJournal {
 
   private async loadFacts(): Promise<WorkflowJournalFacts> {
     if (this.facts === null) {
+      // Adopt an existing journal once at the owning load boundary. A newly
+      // created journal is already private before its first byte is published.
+      await ensureOwnerOnlyFile(this.path);
       this.facts = parseJournalFacts(
         await readFile(this.path, 'utf8'),
         this.path,
       );
     }
     return this.facts;
+  }
+
+  private async appendRow(event: WorkflowJournalEvent): Promise<void> {
+    await this.loadFacts();
+    // The owner has prepared this file. Do not silently create a replacement
+    // with inherited permissions if the journal disappears while it is live.
+    const handle = await open(
+      this.path,
+      constants.O_WRONLY | constants.O_APPEND,
+    );
+    try {
+      await handle.writeFile(`${JSON.stringify(event)}\n`);
+    } finally {
+      await handle.close();
+    }
   }
 
   private enqueue<T>(write: () => Promise<T>): Promise<T> {

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Give the two real tarball subprocess test fixtures explicit time budgets while preserving scanner assertions and cleanup.",
+      "type": "none"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

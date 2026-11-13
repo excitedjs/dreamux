@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Prepare existing log files without redundant temporary publication, clarify Windows service PID diagnostics, and align duplicate SystemRoot environment-key precedence.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

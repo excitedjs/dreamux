@@ -1,5 +1,5 @@
 /**
- * Shared fakes for CodexRuntime / CodexWsClient / CodexProcess behavioral
+ * Shared fakes for CodexRuntime / CodexRpcClient / CodexProcess behavioral
  * tests (coverage cell B, node codex-adapter).
  *
  * These fakes replay ONLY native codex app-server facts: JSON-RPC responses
@@ -29,7 +29,7 @@ export interface RecordedRequest {
   params: unknown;
 }
 
-export interface FakeCodexWsClientOptions {
+export interface FakeCodexRpcClientOptions {
   model?: string;
   reasoningEffort?: string | null;
   configuredEffort?: string | null;
@@ -54,11 +54,11 @@ export interface FakeCodexWsClientOptions {
 }
 
 /**
- * A scriptable fake of `CodexWsClient`'s public surface. Tests construct one
+ * A scriptable fake of `CodexRpcClient`'s public surface. Tests construct one
  * per `codexClientFactory()` call so a restart gets a fresh instance, exactly
  * like the real transport would after teardown.
  */
-export class FakeCodexWsClient {
+export class FakeCodexRpcClient {
   readonly requests: RecordedRequest[] = [];
   readonly methods: string[] = [];
   closeCalls = 0;
@@ -75,7 +75,7 @@ export class FakeCodexWsClient {
   >();
   private readonly blockedMethods = new Set<string>();
 
-  constructor(private readonly options: FakeCodexWsClientOptions = {}) {}
+  constructor(private readonly options: FakeCodexRpcClientOptions = {}) {}
 
   /** Block the next request for `method` until `release()`/`rejectBlocked()` is called. */
   block(method: string): void {
@@ -258,7 +258,7 @@ export class FakeCodexWsClient {
     // Appending to a thread's history opens no turn and settles nothing, so
     // there is no completion to schedule here.
     if (method === 'thread/inject_items') return {} as R;
-    throw new Error(`FakeCodexWsClient: unexpected method ${method}`);
+    throw new Error(`FakeCodexRpcClient: unexpected method ${method}`);
   }
 
   emitTokenUsage(
@@ -381,6 +381,7 @@ export class FakeCodexWsClient {
 
 /** A scriptable fake of `CodexProcess`'s public surface. */
 export class FakeCodexProcess {
+  readonly connectionOptions = { url: 'ws://fake-codex' };
   reapCalls = 0;
   startCalls = 0;
   private exitHandlers: Array<

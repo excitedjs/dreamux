@@ -194,28 +194,50 @@ describe('Team intent follows its own leader session title', () => {
     const f = await fixture();
     const path = join(f.root, 'record.json');
     const before = await readFile(path, 'utf8');
-    const logged = vi.spyOn(f.log, 'error');
+    const failedWrite = deferred<void>();
+    const logError = f.log.error.bind(f.log);
+    const logged = vi
+      .spyOn(f.log, 'error')
+      .mockImplementation(
+        (
+          fieldsOrMessage: Record<string, unknown> | string,
+          message?: string,
+        ) => {
+          if (typeof fieldsOrMessage === 'string') logError(fieldsOrMessage);
+          else logError(fieldsOrMessage, message);
+          if (message === 'failed to persist Team intent from session title')
+            failedWrite.resolve();
+        },
+      );
     const stop = vi.spyOn(f.runtime.runtime, 'stop');
     const failure = Object.assign(
       new Error('permission denied renaming Team record'),
       { code: 'EACCES' },
     );
-    vi.mocked(fs.rename).mockRejectedValueOnce(failure);
+    const { rename } =
+      await vi.importActual<typeof import('node:fs/promises')>(
+        'node:fs/promises',
+      );
+    let denyRecordRename = true;
+    vi.mocked(fs.rename).mockImplementation(async (from, to) => {
+      if (to === path && denyRecordRename) throw failure;
+      await rename(from, to);
+    });
     expect(() =>
       f.runtime.context.events(title('Unwritable topic')),
     ).not.toThrow();
-    await vi.waitFor(() =>
-      expect(logged).toHaveBeenCalledWith(
-        expect.objectContaining({
-          team_id: f.created.team_name,
-          error: failure.message,
-        }),
-        'failed to persist Team intent from session title',
-      ),
+    await failedWrite.promise;
+    expect(logged).toHaveBeenCalledWith(
+      expect.objectContaining({
+        team_id: f.created.team_name,
+        error: failure.message,
+      }),
+      'failed to persist Team intent from session title',
     );
     expect((await f.teams.list())[0]?.intent).toBe('Review the implementation');
     expect(await readFile(path, 'utf8')).toBe(before);
     expect(stop).not.toHaveBeenCalled();
+    denyRecordRename = false;
     await f.team.submitInput({
       source: 'task',
       text: 'Work after persistence failure',
@@ -229,7 +251,7 @@ describe('Team intent follows its own leader session title', () => {
     expect(JSON.parse(await readFile(path, 'utf8')).intent).toBe(
       'Next title succeeds',
     );
-    vi.mocked(fs.rename).mockRejectedValueOnce(failure);
+    denyRecordRename = true;
     f.runtime.context.events(title('Failed write at shutdown'));
     await expect(f.host.close()).resolves.toBeUndefined();
     expect(await readFile(path, 'utf8')).toContain('Next title succeeds');

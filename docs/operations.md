@@ -44,7 +44,8 @@ manual setup step.
 ## Manage the service
 
 On Linux, Dreamux uses a systemd user service. On macOS, it uses a launchd user
-agent. Onboarding normally registers and starts it. To install it later:
+agent. On Windows, it uses a Task Scheduler task for the current account.
+Onboarding normally registers and starts it. To install it later:
 
 ```bash
 dreamux daemon install --dry-run
@@ -59,6 +60,88 @@ the service; use [runtime environment configuration](configuration.md#environmen
 Linux installation attempts to enable user lingering so the service can remain
 available after logout. If that fails, read the warning and the doctor result;
 the host administrator may need to permit it.
+
+Windows installation uses Password logon (run whether the user is logged on or
+not), with limited privileges and a logon trigger for new tasks. A new task,
+login-mode conversion or changed launch data opens a native Windows credential
+dialog for the current account password, not a Windows Hello PIN. Cancellation
+or a native error stops registration. The account is prefilled and cannot be
+edited; enter its password without substituting a Microsoft-account email.
+The registering PowerShell process passes the password directly to Task
+Scheduler; it never enters JavaScript, command arguments, environment,
+Dreamux configuration or Task Data. The dialog does not require a terminal
+TTY, and dry runs do not open it.
+
+Existing Administrators-owned logs can be prepared when the installing user
+has the required Windows owner/DACL write permissions. Other owners are
+rejected with the affected path; an access denial does not trigger elevation
+or a permissions bypass.
+
+Only an existing Password task whose Task Data is ordinal-equal to the new
+snapshot receives an action-only update without another prompt. Other updates
+register Action and Data together through credentialed XML in the same
+PowerShell process. Existing triggers, settings, description and run level are
+retained; errors do not fall back to Interactive or S4U.
+
+The Task Action invokes the published service entry. Task Data stores the
+captured environment and business command (`environment` and `execStart`),
+including the installation PATH. `DREAMUX_ROOT` is excluded from that snapshot:
+the parent of the registered `<root>/state` WorkingDirectory supplies the root
+for startup, status, control, logs and restart notices. Refresh the snapshot
+with `daemon install`. The reported `unitPath` is the native Task.Path, not a
+file to edit or delete.
+
+Windows stop/restart first offer cooperative application shutdown. Stop disables
+the task and reserves its root-hash Job, then queries the registered root's
+server with a one-second timeout. It retains that exact process as a Job member
+before requesting `server.shutdown` with `expectedPid`. An unrelated foreground
+server is not a shutdown target. The command acknowledges acceptance without
+waiting for its own shutdown; acceptance alone is not completion. The request
+and process-exit wait share one 15-second budget. An unavailable or older server
+without this command proceeds to forced cleanup; a lost response still grants
+the remaining wait, and a hung server cannot extend the deadline.
+
+The controller then terminates remaining owned processes, waits for their held
+process handles, and calls Task.Stop. No Running/Queued instance may remain
+before the Job reservation is released and the previous Enabled state restored.
+New tasks use `IgnoreNew`; restart completes stop before one Run, with no Run
+after a failed stop. Start/restart require a registered-root `server.status`
+response whose PID belongs to the service Job. `daemon status` reports Scheduler
+state; `dreamux status` reports server facts, and neither establishes that every
+provider is ready.
+
+The serving process uses the same bounded shutdown owner for signals and admin
+requests: startup finishes before resource teardown, successful shutdown exits 0,
+and failure or a 15-second deadline exits 1. This is not extra grace time after
+the controller's deadline. Normal cleanup stops runtime producers and closes
+Channels, giving open CoT cards a bounded opportunity to finish as interrupted.
+Network failure or forced termination can still prevent remote card delivery.
+
+A restart issued inside the service reports handoff to a WMI-created external
+controller invoking the published entry; that receipt is not a completed
+restart. The controller performs the same checks and writes failures to the
+registered root's `logs/daemon.stderr.log`. Only the new server consumes the
+existing one-shot restart-intent notice at the registered root.
+
+### Existing Windows alpha service
+
+This service-format change requires one approved reinstall when upgrading from
+the alpha service that generated `daemon.mjs`:
+
+1. Keep the old version available. Use the original Windows account and original
+   `DREAMUX_ROOT` from a terminal outside the service tree.
+2. Run the old version's `dreamux daemon uninstall` and confirm success before
+   upgrading. If it fails, stop; do not overwrite that task with a new install.
+   If the old version is unavailable, first restore a usable old version.
+3. Upgrade, then run `dreamux daemon install` and use the native credential dialog.
+
+Do not delete config, state or logs. `daemon uninstall` removes only the service
+installation; `dreamux uninstall` is the separate command that removes the root.
+Native dialog interaction, saved-credential reuse and cross-session operation
+have not been verified end to end in this revision; task queries and shadow
+registration tests do not establish those behaviors.
+
+### Restart notices
 
 For an agent-assisted restart, the CLI can notify selected resumed Dispatchers:
 

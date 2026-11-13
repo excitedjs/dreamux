@@ -7,8 +7,21 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { link, mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  link,
+  mkdir,
+  open,
+  rename,
+  rm,
+  writeFile,
+  type FileHandle,
+} from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { setWindowsOwnerOnlyAccess } from './windows-security.js';
+
+const WINDOWS_RENAME_LOCK_TIMEOUT_MS = 1_000;
+const WINDOWS_RENAME_LOCK_RETRY_MS = 25;
 
 /**
  * Both publish primitives below write to this sibling path with `wx`
@@ -43,8 +56,9 @@ export async function publishFileExclusive(
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
   const tmp = tempSiblingPath(path);
+  let handle: FileHandle | undefined;
   try {
-    await writeFile(tmp, data, { flag: 'wx', mode: options.mode ?? 0o600 });
+    handle = await writeTemporaryFile(tmp, data, options.mode ?? 0o600);
     try {
       await link(tmp, path);
       return true;
@@ -53,7 +67,11 @@ export async function publishFileExclusive(
       throw err;
     }
   } finally {
+    // Keep the Windows file handle alive until its temporary hardlink is
+    // removed. Closing it before link/unlink can leave the published file
+    // refusing subsequent replacement with ERROR_ACCESS_DENIED.
     await rm(tmp, { force: true }).catch(() => undefined);
+    await handle?.close();
   }
 }
 
@@ -74,12 +92,63 @@ export async function writeFileAtomic(
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
   const tmp = tempSiblingPath(path);
+  let handle: FileHandle | undefined;
   try {
-    await writeFile(tmp, data, { flag: 'wx', mode: options.mode ?? 0o600 });
-    await rename(tmp, path);
+    handle = await writeTemporaryFile(tmp, data, options.mode ?? 0o600);
+    await renameReplacingFile(tmp, path);
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => undefined);
     throw err;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function renameReplacingFile(from: string, to: string): Promise<void> {
+  const deadline = performance.now() + WINDOWS_RENAME_LOCK_TIMEOUT_MS;
+  for (;;) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const remaining = deadline - performance.now();
+      if (
+        process.platform !== 'win32' ||
+        !['EPERM', 'EACCES', 'EBUSY'].includes(code ?? '') ||
+        remaining <= 0
+      ) {
+        throw error;
+      }
+      // Windows readers can briefly deny delete sharing. Retry the atomic
+      // rename itself; unlinking the destination would lose the old commit.
+      await delay(Math.min(WINDOWS_RENAME_LOCK_RETRY_MS, remaining));
+    }
+  }
+}
+
+async function writeTemporaryFile(
+  path: string,
+  data: string,
+  mode: number,
+): Promise<FileHandle | undefined> {
+  if (process.platform !== 'win32') {
+    await writeFile(path, data, { flag: 'wx', mode });
+    return;
+  }
+  // Set the new file's owner and DACL before putting private data in it.
+  // Elevated tokens can create files owned by Administrators with explicit
+  // default grants, which removing inherited entries alone does not remove.
+  const handle = await open(path, 'wx', mode);
+  try {
+    if ((mode & 0o077) === 0) {
+      await setWindowsOwnerOnlyAccess(path, 'file');
+    }
+    await handle.writeFile(data, 'utf8');
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
 }
 

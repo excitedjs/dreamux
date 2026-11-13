@@ -9,7 +9,7 @@ import { configCommands } from '../src/config/commands.js';
  * the catalog under test is the one every adapter actually shares, not a
  * description of it.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { CoreCommandDefinition } from '../src/command/types.js';
 
@@ -38,6 +38,7 @@ import {
  */
 const FROZEN_NAMESPACE_TABLE = [
   'server.status',
+  'server.shutdown',
   'dispatcher.list',
   'dispatcher.status',
   'config.agents.get',
@@ -138,6 +139,23 @@ describe('createCoreCommandRegistry — the catalog', () => {
       );
       expect(owningPrefix, `unexpected namespace for ${name}`).toBeDefined();
     }
+  });
+});
+
+describe('server.shutdown PID guard', () => {
+  it.each<Record<string, number | string>>([
+    {},
+    { expectedPid: 0 },
+    { expectedPid: 1.5 },
+    { expectedPid: '1' },
+    { expectedPid: process.pid + 1 },
+  ])('rejects %j without requesting process shutdown', async (payload) => {
+    const { host, registry } = await createCommandHarness();
+    const request = vi.spyOn(host, 'requestShutdown');
+    await expect(
+      registry.invoke({ source: 'admin_socket' }, 'server.shutdown', payload),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(request).not.toHaveBeenCalled();
   });
 });
 
