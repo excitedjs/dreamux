@@ -61,6 +61,39 @@ does not waive these boundaries or authorize deployment or merging. The task
 entered `knowledge-closeout` after the operator selected "Enter closeout" at
 12:07 (UTC+08:00), retaining those acceptance limits and deferrals.
 
+## Delivery finding R7, 2026-11-13
+
+The [follow-up PR CI run](https://github.com/excitedjs/dreamux/actions/runs/43364709673)
+failed in the Windows utils test, after the operator-approved submission.
+Independent source/log review identified an invalid test precondition at
+`packages/dreamux-utils/tests/windows-job.test.ts:331`: after killing and
+joining an outsider and releasing its own handles, the test required a new
+lookup of that numeric PID to return no process object.
+
+The error proves `OpenProcess` succeeded and `IsProcessInJob` reported a
+nonmember. It does not distinguish a retained exited object from a reused PID.
+Process exit and release of this fixture's handles do not guarantee that all
+handles in the system are gone; see the [Windows process-lifetime contract](https://learn.microsoft.com/en-us/windows/win32/procthread/terminating-a-process).
+The production rejection is consistent with its contract; this evidence does
+not justify treating every nonmember as an absent process.
+
+The operator approved R7 as a test correction at 12:33 (UTC+08:00), selecting
+"Correct and continue". The correction holds the outsider object through the
+post-exit signaled, nonmembership and rejection assertions, then releases it
+without another PID lookup. The live-member finite wait, exit confirmation
+and cleanup are preserved. `ERROR_INVALID_PARAMETER` to null is checked
+separately with the documented `OpenProcess(0)` result, without representing
+it as real object-deletion timing. Unexpected successful observations are
+closed before their assertions fail.
+
+R7 is resolved by that test-only correction. Independent static review found
+no blocking issue. The exact isolated case passed, followed by build, lint,
+test typechecking and the full default suite (3,215 passed / 26 skipped), with
+clean outer isolation checks. See [verification](verification.md) for results.
+Production behavior is unchanged; no sleep, retry or skipped case was added.
+The failed CI run remains recorded separately and does not certify the next
+submission, which requires fresh exact-head CI.
+
 ## Cooperative-stop implementation checks, 2026-11-13
 
 The operator approved cooperative Windows stop/restart and isolated regression

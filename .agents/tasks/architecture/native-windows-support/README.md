@@ -9,12 +9,14 @@
 - Verification: [Checks and coverage](verification.md)
 - Review: [Complete-change review and rulings](review.md)
 - Blockers: Non-administrator adoption of legacy BA-owned logs remains unverified: the custom restricted-token fixture failed before product code, and this runner has no linked Limited token. Real fixed-account UI and Password registration also remain unverified. The reported Job access-denied call site and cause remain unknown. R5 remains explicitly deferred and unverified; R6's force-push metadata range defect remains unchanged.
-- Next action: Submit the reviewed follow-up to the existing PR targeting `next` after the full KB and mandatory commit gates pass, then verify the resulting CI. The operator confirmed submission readiness after complete implementation review and knowledge closeout. Ordinary non-elevated validation remains deferred by the operator's 2026-11-13 "Verify later" decision; the recorded native acceptance gaps are not waived. Do not prepare or execute R5. Local update and merging remain paused.
+- Next action: Continue the operator-approved PR delivery after R7's test correction, isolated verification and independent review. The corrected assertion and complete local gates pass; fresh exact-head CI is still required and the earlier failed run remains evidence. Ordinary non-elevated validation remains deferred, native acceptance gaps are not waived, and R5 must not be prepared or executed. Local update and merging remain paused.
 - Coverage limit: The operator's reported restart failure has not been reproduced. WMI process creation and Scheduler command completion do not establish a new responding server. Native credential storage, dialog behavior and cross-session service operation still need independent acceptance; earlier CI results do not cover this revision.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/488); replaces [the closed original PR](https://github.com/excitedjs/dreamux/pull/476).
 - Related tasks: None.
 
 ## Development approval
+
+- On 2026-11-13 at 12:33 (UTC+08:00), the operator selected "Correct and continue" for R7. Approval covers the Job test's held-object post-exit assertions, a separate native error-87 mapping assertion, evidence updates, isolated verification, independent review and continued PR/CI delivery. Production behavior, live services, deferred validation and merging remain outside this correction.
 
 - On 2026-11-13 at 12:14 (UTC+08:00), the operator selected "Enter delivery", confirming knowledge closeout and `done` as this follow-up's submission readiness. The approved next work is to pass the complete KB and mandatory commit gates, update PR #488 and verify its exact-head CI. The recorded native acceptance gaps remain open; local update and merging remain paused.
 

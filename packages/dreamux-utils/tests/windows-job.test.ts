@@ -325,10 +325,21 @@ console.log(await job.containsCurrentProcess());
         outsider.kill();
         await closed[1];
         expect(held.states()).toEqual([0, 0]);
+        // Keep the exited outsider's exact object alive through these queries.
+        expect(await job.containsProcess(outsider.pid!)).toBe(false);
+        await expect(
+          (async () => {
+            const unrelated = await job.retainMember(outsider.pid!);
+            unrelated?.close();
+          })(),
+        ).rejects.toThrow('The process does not belong to the Windows Job');
         await held.dispose();
         held = undefined;
-        expect(await job.containsProcess(outsider.pid!)).toBe(false);
-        expect(await job.retainMember(outsider.pid!)).toBeNull();
+        // PID 0 maps OpenProcess ERROR_INVALID_PARAMETER; it does not prove
+        // when an exited process object disappears or its PID becomes reusable.
+        const invalidProcess = await job.retainMember(0);
+        invalidProcess?.close();
+        expect(invalidProcess).toBeNull();
       } finally {
         for (const child of children) {
           if (

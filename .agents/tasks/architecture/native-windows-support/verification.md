@@ -1,5 +1,57 @@
 # Verification
 
+## R7 test correction, 2026-11-13
+
+After the operator selected "Correct and continue", the test retained the
+exited outsider's exact object through its nonmembership assertions. It no
+longer assumes that releasing this fixture's handles makes the numeric PID
+unresolvable. A separate PID 0 assertion covers native error 87 to null, not
+actual process deletion timing. Production code is unchanged. Independent
+static review confirmed the preserved live-member wait, outsider rejection
+and normal/error cleanup contracts.
+
+The exact focused case passed: 1 passed, 12 filtered out, 38 ms case time and
+316 ms Vitest duration. Unified build passed in 3.84 seconds, lint in 17.04
+seconds and test typechecking in 6.84 seconds. The full suite passed **3,215
+cases / 26 skipped**, 3,241 total, in 146.3 seconds; host took 123.8 seconds
+(Vitest 123.55 seconds). Independent recount found one Tests summary in each
+of the eight package logs: types 81/0, utils 240/5, host 1,367/21, transport
+182/0, channel 822/0, Codex 243/0, Claude 269/0 and bootstrap 11/0. The complete
+Job file ran all 13 cases without skips; its full-suite duration was 1.474
+seconds. The focused filtered cases are not included in the suite's skips.
+
+All five synthetic outer runs exited 0 with null signal, unchanged sentinels,
+no temporary children and captured-root removal. Independent verification of
+the full-suite outer log confirmed those observations. Scheduler/model gates
+remained excluded. Ordinary-permission, real credential and cross-session
+acceptance, R5 and actual Feishu terminal delivery are not established by this
+correction. Fresh delivery CI must be evaluated separately from these local
+results and the failed prior run below.
+
+## Follow-up delivery CI, 2026-11-13
+
+The [PR CI run](https://github.com/excitedjs/dreamux/actions/runs/43364709673),
+attempt 1, finished with 10 successful jobs and one failed Windows Rush job.
+The run's head, branch and pull-request event were checked; its checkout was
+the PR merge with `next`, not an unrelated revision. All three full platform
+logs were retained. No rerun was performed.
+
+Windows passed update, build, CLI smoke, source/test typechecking and lint.
+Its test operation failed in utils at the final post-release outsider lookup
+in `windows-job.test.ts:331`. Types, transport and bootstrap passed; Codex,
+Claude, host and Feishu channel were blocked by the utils failure, not passed
+or skipped. The repeated Rush error output is the same single failing case.
+macOS and Ubuntu passed all eight test packages, with the host's model-gate
+warning. Their test operations took 138.1 and 131.6 seconds; Windows took
+13.63 seconds before failure. These logs do not print complete Vitest numeric
+summaries, so the local 3,215/26 count is not attributed to CI. Push CI is N/A
+under the unchanged `fix/*` trigger exclusion.
+
+The independent adjudication and approved test-only correction are recorded
+as R7 in [review](review.md). Local success and prior review did not establish
+the test's assumed global process-object deletion timing. This failed run
+remains distinct from the subsequent corrected-test verification above.
+
 ## Knowledge closeout, 2026-11-13
 
 The three independent follow-up reviews covered all 35 implementation-stage
