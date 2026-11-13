@@ -289,7 +289,7 @@ export class FeishuCardActions {
       // session stopped before anything was sent, and this settlement is
       // `void`-detached, so it is exactly the shape a teardown produces. It is
       // reported through the same classification as every other path, which
-      // puts it at `debug` and names what happened.
+      // puts it at `info` and names what happened.
       const report = describeSubmitOutcome(outcome);
       this.opts.log[report.level](
         {

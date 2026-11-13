@@ -430,7 +430,7 @@ describe('document comment delivery', () => {
     expect(line?.fields['team_name']).toBe('team-a');
   });
 
-  it('a subscriber delivery the teardown stopped is not reported as either outcome', async () => {
+  it('a subscriber delivery the teardown stopped is reported at info, not as a failure', async () => {
     const h = await harness();
     await h.comments.subscribe({
       document: 'doc_tok',

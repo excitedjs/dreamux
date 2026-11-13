@@ -280,18 +280,14 @@ describe('createFeishuTransport — self-identity recovery', () => {
     expect(transport.selfId).toBeUndefined();
   });
 
-  test('the whole lookup leaves room inside the host shutdown deadline', async () => {
+  test('the whole lookup gives up on its own ceiling, not on a retry', async () => {
     vi.useFakeTimers();
-    // The host gives a signal-initiated shutdown fifteen seconds before it
-    // exits (packages/dreamux/src/cli/server.ts), and the channel session
-    // spends up to five of them draining its card writer before it reaches this
-    // work. A lookup that outlasts the remainder turns a converging teardown
-    // into a failed one. Asserting against the full fifteen would pass a
-    // fourteen-second ceiling that leaves nothing for the closes after it, so
-    // this asserts against what is actually left.
-    const HOST_SHUTDOWN_DEADLINE_MS = 15_000;
-    const COT_DRAIN_BEFORE_THIS_MS = 5_000;
-    const available = HOST_SHUTDOWN_DEADLINE_MS - COT_DRAIN_BEFORE_THIS_MS;
+    // The ceiling has to leave headroom for an orderly process shutdown, so it
+    // is asserted against this package's own numbers rather than against an
+    // upstream budget it does not own. The retry sequence alone would run for
+    // 6.5 s; the deadline is what a caller can actually rely on, and it fires
+    // first — which is the property, since the caller may be draining this
+    // while a host is on its way down.
     const request = vi.fn().mockReturnValue(new Promise(() => undefined));
     const { transport } = await startTransport(request);
 
@@ -299,7 +295,10 @@ describe('createFeishuTransport — self-identity recovery', () => {
     const lookup = transport.ensureSelfIdentity().then(() => {
       settled = true;
     });
-    await vi.advanceTimersByTimeAsync(available - 1);
+    await vi.advanceTimersByTimeAsync(5_000 - 1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBe(true);
 
     await vi.advanceTimersByTimeAsync(60_000);

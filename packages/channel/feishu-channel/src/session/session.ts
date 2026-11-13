@@ -431,9 +431,10 @@ export class FeishuChannelSession {
    *
    * There is no abort branch here: an abort caused by this session's own
    * teardown never arrives. The chat path swallows it in its own delivery
-   * (`inbound/pipeline.ts`), the document-comment path reports no outcome at
-   * all for a stopped session, and identity resolution reports rather than
-   * rejects. Filtering it here would be a branch no path can reach.
+   * (`inbound/pipeline.ts`), the document-comment path turns a stop into a
+   * `not_attempted` outcome reported at `info` rather than rejecting with an
+   * abort, and identity resolution reports rather than rejects. Filtering it
+   * here would be a branch no path can reach.
    */
   private runDetachedInbound(
     work: Promise<void>,

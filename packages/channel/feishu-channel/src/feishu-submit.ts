@@ -188,9 +188,9 @@ export type FeishuSubmitOutcome =
    * This is a distinct fact from `error`, and the difference is what a caller
    * owes it: an `error` is a delivery that was tried and failed and is worth a
    * failure record, while this one is work that was stopped before it started
-   * and deserves silence. Keeping it in the union is what lets every delivery
-   * path answer that question from the outcome itself instead of asking a
-   * lifecycle it does not otherwise own.
+   * and is worth a plain record of what was lost. Keeping it in the union is
+   * what lets every delivery path answer that question from the outcome itself
+   * instead of asking a lifecycle it does not otherwise own.
    */
   | FeishuNotAttempted;
 
@@ -201,7 +201,7 @@ export type FeishuSubmitOutcome =
  * shape, and so a caller can say which of the closed-session answers it
  * produces.
  */
-export interface FeishuNotAttempted {
+interface FeishuNotAttempted {
   readonly status: 'not_attempted';
   readonly reason: 'closed';
 }
@@ -236,7 +236,8 @@ export type FeishuBoundTeamSubmitOutcome =
  * `submissionProvesNoAdmission` excludes it — so reporting it as a failed
  * delivery is exactly as false as reporting it as a delivered one.
  * `not_attempted` never left this process, so it is neither a delivery nor a
- * failure and is reported at `debug`.
+ * failure — but it is still a record, at `info`, because the message it
+ * happened to is gone.
  *
  * The counts are deliberately not written here: they went stale twice. What a
  * maintainer needs is the rule, and the rule is that a new status either joins
@@ -266,7 +267,7 @@ export interface SubmitOutcomeReport {
      * which is worse than the failure line this kind replaced.
      */
     | 'not_attempted';
-  readonly level: 'info' | 'warn' | 'error' | 'debug';
+  readonly level: 'info' | 'warn' | 'error';
   readonly fields: Readonly<Record<string, unknown>>;
 }
 

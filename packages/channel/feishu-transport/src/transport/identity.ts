@@ -59,11 +59,10 @@ const LOOKUP_REQUEST_TIMEOUT_MS = 2_000;
  * A per-request timeout alone cannot bound this: the SDK may make more than one
  * HTTP call per request (the token exchange precedes the call itself), and it
  * owns those calls, not us. This deadline is what a caller can actually rely
- * on, and it is chosen against a budget this package does not own: the host
- * gives a signal-initiated shutdown fifteen seconds before it exits, and the
- * channel session spends up to five of those draining its card writer before it
- * reaches the work this lookup runs in. Ten seconds would consume the rest with
- * nothing left for the closes that follow, so the ceiling is half of that.
+ * on. It is sized to leave headroom for an orderly process shutdown: a caller
+ * may be draining this work while a host is on its way down, and a lookup that
+ * occupies the whole of that window turns a converging shutdown into a forced
+ * one.
  */
 const LOOKUP_DEADLINE_MS = 5_000;
 

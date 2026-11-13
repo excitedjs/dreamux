@@ -64,7 +64,7 @@ type RecordingLog = DreamuxLogger & {
 function recordingLog(): RecordingLog {
   const errors: Array<Record<string, unknown>> = [];
   // Every level, not only `error`. A path that honours the classification
-  // reports a stopped delivery at `debug`; a test that captured only `error`
+  // reports a stopped delivery at `info`; a test that captured only `error`
   // would pass whether the path suppressed it or reclassified it, which is the
   // difference these cases exist to pin.
   const lines: Array<{ level: string; fields: Record<string, unknown> }> = [];
@@ -317,7 +317,7 @@ describe('Feishu inbound acknowledgement', () => {
     await session.close();
   });
 
-  it('reports nothing for a document comment the teardown stopped mid-delivery', async () => {
+  it('reports a stopped document comment at info, not as a failure', async () => {
     const bot = createFakeFeishuBot();
     const log = recordingLog();
     const session = await startedSession(bot, log);
