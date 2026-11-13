@@ -28,7 +28,7 @@ import type {
   ChannelEventSubscription,
   DreamuxLogger,
 } from '@excitedjs/dreamux-types';
-import { TransactionalStore } from '@excitedjs/dreamux-utils';
+import { errorInfo, TransactionalStore } from '@excitedjs/dreamux-utils';
 import { FeishuAccess } from '../access/index.js';
 import {
   createAskUserRegistry,
@@ -364,8 +364,14 @@ export class FeishuChannelSession {
   /**
    * The inbound route table this session hands its bot.
    *
-   * Every route checks the lifecycle first and runs its work tracked, so
-   * closing the session refuses new events and waits for the ones in flight.
+   * Every route checks the lifecycle first, so closing the session refuses new
+   * events. What each route then does with its work depends on whether the
+   * platform is waiting for an answer: a card action answers its own callback
+   * and must do it quickly, while a message and a document comment are long
+   * unbounded submissions that Feishu would otherwise hold the acknowledgement
+   * for. Those two hand their work to the lifecycle and return, so the platform
+   * sees the event handled within its window instead of re-pushing it; the
+   * lifecycle still owns the work, and `close` drains it.
    */
   private inboundRoutes(): FeishuInboundRoutes {
     return {
@@ -375,19 +381,76 @@ export class FeishuChannelSession {
           recordBotAdded(this._chatBotsStore, added.chatId, added.eventId),
         );
       },
-      onMessage: async (event) => {
+      onMessage: (event) => {
         if (!this.lifecycle.isLive()) return;
-        await this.lifecycle.track(onMessage(this.inboundHandle(), event));
+        this.runDetachedInbound(
+          this.resolveIdentityThen(() =>
+            onMessage(this.inboundHandle(), event),
+          ),
+          { chat_id: event.chatId, message_id: event.messageId },
+        );
       },
       onCardAction: async (event) => {
         if (!this.lifecycle.isLive()) return {};
         return this.lifecycle.track(this.cardActions.handle(event));
       },
-      onDocComment: async (event) => {
+      onDocComment: (event) => {
         if (!this.lifecycle.isLive()) return;
-        await this.lifecycle.track(this.docComments.deliver(event));
+        this.runDetachedInbound(this.docComments.deliver(event), {
+          file_token: event.fileToken,
+          comment_id: event.commentId,
+          reply_id: event.replyId,
+        });
       },
     };
+  }
+
+  /**
+   * Retry this bot's identity, then run the message that arrived.
+   *
+   * `start` resolves identity before the socket opens, so this is a no-op on
+   * the ordinary path. It matters for the start whose lookup failed: without an
+   * open_id every mention-gated group message is dropped, so the first inbound
+   * afterwards retries — and a success applies to that same message, before its
+   * gate reads `botOpenId`. It runs inside the message's own work, never on the
+   * acknowledgement path, because the lookup can outlast the platform's window.
+   */
+  private async resolveIdentityThen(work: () => Promise<void>): Promise<void> {
+    await this.bot.ensureSelfIdentity();
+    await work();
+  }
+
+  /**
+   * Own one inbound's work after the platform has been answered.
+   *
+   * Nothing awaits this promise any more, so its rejection has to land
+   * somewhere: this Dispatcher failing to handle an event it already told
+   * Feishu it had. The platform's acknowledgement is not a retry contract for
+   * our own failures, so this log line is the whole of the record — which is
+   * why it carries the ids that address the event.
+   *
+   * There is no abort branch here: an abort caused by this session's own
+   * teardown never arrives. The chat path swallows it in its own delivery
+   * (`inbound/pipeline.ts`), the document-comment path turns a stop into a
+   * `not_attempted` outcome reported at `info` rather than rejecting with an
+   * abort, and identity resolution reports rather than rejects. Filtering it
+   * here would be a branch no path can reach.
+   */
+  private runDetachedInbound(
+    work: Promise<void>,
+    scope: Record<string, unknown>,
+  ): void {
+    void this.lifecycle.track(work).catch((error: unknown) => {
+      this.opts.log.error(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          channel_id: this.opts.channelId,
+          ...scope,
+          err: errorInfo(error),
+        },
+        'feishu inbound failed after the event was acknowledged',
+      );
+    });
   }
 
   /**

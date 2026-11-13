@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The inbound message route no longer waits for the bot's own identity before running, because that wait sat inside the platform's three-second acknowledgement window. Identity is still resolved once before the socket opens, and `ensureSelfIdentity()` exposes the retry a caller now runs inside its own work instead. The bot-added event decoder reads the event id from the top level of the dispatched payload, where the SDK puts it after flattening the v2 envelope.\n\nBoth bot-info and app-owner lookups are now bounded end to end at five seconds. A per-request timeout would not have been enough: the SDK fetches a tenant access token before each call, with no timeout of its own, so a host that accepts the connection and never answers could previously hold a lookup open indefinitely. The visible consequence is that a lookup slower than five seconds now gives up and reports a diagnostic where it used to keep waiting.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "dyzhu@bytedance.com"
+}

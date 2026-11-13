@@ -114,6 +114,7 @@ describe('real Codex #63 inbound gate', () => {
         appId: 'app-live',
         botOpenId: 'fake-bot',
         botDisplayName: 'Dispatcher',
+        async ensureSelfIdentity() {},
         async start(next) {
           routes = next;
         },
@@ -339,7 +340,19 @@ describe('real Codex #63 inbound gate', () => {
         await routes!.onMessage(
           inbound(`Please handle this folded marker: ${marker}`, 'marker-live'),
         );
-        expect(turns()).toHaveLength(2);
+        // The route returns once the platform is answered, which is no longer
+        // the same instant as the submission: the session takes the work over
+        // and drains it on close. So the gate waits for the fact it is about —
+        // the second turn/start being answered by the runtime — instead of
+        // counting requests the moment the route resolves. The row is pushed
+        // before the request is sent and its `ack` is set after the answer, so
+        // the predicate has to include the ack; `turns().length` alone would
+        // go true a round trip early. Everything asserted about that request
+        // is unchanged.
+        await waitFor(
+          () => turns().length === 2 && turns()[1]!.ack !== undefined,
+          'folded turn/start acknowledged',
+        );
         expect(turns()[1]!.ack).toBeDefined();
         expect(blockingEnd()).toBeUndefined();
         expect(notifications('turn/completed')).toHaveLength(0);

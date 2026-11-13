@@ -410,10 +410,12 @@ describe('document comment delivery', () => {
       type: 'docx',
       teamName: 'team-a',
     });
-    // What a submission after the session's fence closed answers with.
+    // A real failure — Core reached and refused — which is reported as one.
+    // A session that closed answers `not_attempted` instead; the case below
+    // covers that.
     h.outcomeFor.set('team-a', {
       status: 'error',
-      message: 'Feishu session is not live',
+      message: 'core is unavailable',
     });
 
     await h.comments.deliver(commentEvent());
@@ -423,9 +425,36 @@ describe('document comment delivery', () => {
     expect(line?.level).toBe('error');
     expect(line?.message).toBe('failed to deliver a feishu document comment');
     expect(line?.fields['err']).toEqual({
-      message: 'Feishu session is not live',
+      message: 'core is unavailable',
     });
     expect(line?.fields['team_name']).toBe('team-a');
+  });
+
+  it('a subscriber delivery the teardown stopped is reported at info, not as a failure', async () => {
+    const h = await harness();
+    await h.comments.subscribe({
+      document: 'doc_tok',
+      type: 'docx',
+      teamName: 'team-a',
+    });
+    // The submitter answers this when the session began closing before it could
+    // send anything. This is the subscriber path specifically: the cold-open
+    // case is covered in the acknowledgement suite, and neither covers the
+    // other.
+    h.outcomeFor.set('team-a', { status: 'not_attempted', reason: 'closed' });
+
+    await h.comments.deliver(commentEvent());
+
+    // Nothing was attempted, so this is not a failure — and not silence
+    // either: the comment is gone, so the line has to exist and name it. What
+    // the classification decides is the level.
+    expect(h.logged.filter((line) => line.level === 'error')).toEqual([]);
+    const stopped = h.logged.filter((line) =>
+      line.message.includes('not attempted'),
+    );
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0]!.level).toBe('info');
+    expect(stopped[0]!.fields['team_name']).toBe('team-a');
   });
 
   it('an ambiguous admission is not reported as a failed delivery', async () => {

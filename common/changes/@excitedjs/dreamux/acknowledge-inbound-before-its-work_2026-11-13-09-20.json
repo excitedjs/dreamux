@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "The live #63 inbound gate waits for the folded turn to be acknowledged instead of counting turn/start requests the moment the route returns. A chat message and a document comment are now acknowledged as soon as the session owns the work, so the route resolving is no longer the same instant as the submission; the gate proves the same two facts through a wait on the fact rather than on the function.",
+      "type": "none",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "dyzhu@bytedance.com"
+}

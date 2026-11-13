@@ -55,16 +55,22 @@ Source:
 `FeishuBot.start` takes a `FeishuInboundRoutes` object — one handler per Feishu
 event type — instead of a single message handler, and builds the transport
 route table from it. `im.message.receive_v1` is always registered;
-`im.chat.member.bot.added_v1` and `card.action.trigger` are registered when
-their optional handlers are supplied. Each route awaits its handler before the
-SDK acks, preserving the queue-before-ACK invariant, and each one short-circuits
-when the session's lifecycle fence is no longer current. The seam is still one
-optional field per event type rather than a generic `eventType -> handler` map.
-No other Feishu event type is routed; there is no `doc_comment` handling.
+`im.chat.member.bot.added_v1`, `card.action.trigger` and
+`drive.notice.comment_add_v1` are registered when their optional handlers are
+supplied. Each route awaits its handler, and that await is the platform's
+acknowledgement: the message and document-comment routes hand their work to the
+session lifecycle and return, so Feishu's three-second window is not spent on a
+submission, and each route short-circuits when the session's lifecycle fence is
+no longer current. The seam is still one optional field per event type rather
+than a generic `eventType -> handler` map.
+No other Feishu event type is routed.
 
 `im.chat.member.bot.added_v1` is recorded idempotently per chat by Feishu event
 id (a bounded seen-id list) and flags the chat for a future baseline injection;
-it emits no model notification.
+it emits no model notification. The event id is read from the top level of the
+dispatched payload, not from `header`: the Lark SDK flattens a v2 envelope
+before dispatching, so `header` is gone by the time a route handler runs and a
+`header.event_id` read yields nothing.
 
 ### Raw inbound classification
 

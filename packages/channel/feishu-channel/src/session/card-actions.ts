@@ -65,6 +65,8 @@ const EXTENSION_FORWARD_MESSAGES: SubmitOutcomeMessages = {
   rejected: '[extension] card forward was rejected before admission',
   ambiguous: '[extension] card forward admission was ambiguous',
   failed: '[extension] failed to deliver card forward',
+  not_attempted:
+    '[extension] card forward was not attempted; the session closed',
 };
 
 function openIdLogFields(
@@ -282,15 +284,24 @@ export class FeishuCardActions {
       // would risk a second turn for one answer, and the human can send it again
       // as an ordinary message. `failed`, `ambiguous`, and `error` settle on the
       // same terms.
-      this.opts.log.info(
+      //
+      // `not_attempted` is the one outcome this must not call delivered: the
+      // session stopped before anything was sent, and this settlement is
+      // `void`-detached, so it is exactly the shape a teardown produces. It is
+      // reported through the same classification as every other path, which
+      // puts it at `info` and names what happened.
+      const report = describeSubmitOutcome(outcome);
+      this.opts.log[report.level](
         {
           dispatcher_id: this.opts.dispatcherId,
           chat_id: target.chatId,
           ask_user_request_id: settlement.requestId,
           ask_user_outcome: settlement.outcome,
-          status: outcome.status,
+          ...report.fields,
         },
-        '[ask-user] answer delivered',
+        report.kind === 'not_attempted'
+          ? '[ask-user] answer was not attempted; the session closed'
+          : '[ask-user] answer delivered',
       );
     } catch (err) {
       this.opts.log.error(

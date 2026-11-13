@@ -26,6 +26,25 @@ describe('normalizeBotMemberAddedEvent', () => {
     });
   });
 
+  test('reads the event id from the flattened envelope a live route receives', () => {
+    // What the SDK actually hands a route handler: `RequestHandle.parse`
+    // destructures `header` and `event` away and spreads both onto the top
+    // level, so the id is there and `header` is gone. Reading only
+    // `header.event_id` yielded '' on every real event.
+    expect(
+      normalizeBotMemberAddedEvent({
+        schema: '2.0',
+        event_id: 'evt_flat',
+        event_type: BOT_MEMBER_ADDED_EVENT_TYPE,
+        token: 't',
+        create_time: '1',
+        app_id: 'cli_x',
+        tenant_key: 'k',
+        chat_id: 'oc_flat',
+      }),
+    ).toEqual({ chatId: 'oc_flat', eventId: 'evt_flat' });
+  });
+
   test('accepts a bare event body and leaves event id empty', () => {
     expect(normalizeBotMemberAddedEvent({ chat_id: 'oc_2' })).toEqual({
       chatId: 'oc_2',

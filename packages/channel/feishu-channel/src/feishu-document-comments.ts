@@ -69,11 +69,14 @@ import type { FeishuDocSubscriptionRecord } from './routing/document.js';
 import type { FeishuRouting } from './routing/index.js';
 
 /**
- * The budget both inbound enrichment reads share. The route awaits delivery
- * before the SDK acks the event, so a slow lookup costs an event Feishu will
- * consider unhandled — and neither the commenter's name nor the comment's own
- * text is worth that. They run together under one deadline, which leaves the
- * route's worst case where it already was.
+ * The budget both inbound enrichment reads share.
+ *
+ * The route no longer holds the platform's acknowledgement for this work, so a
+ * slow lookup no longer risks a re-push. It still has a deadline: an operator
+ * waiting on a comment that will never arrive is worth less than delivering it
+ * with the ids alone. The deadline bounds these two reads only — the
+ * submissions that follow are unbounded by design, each able to start a
+ * runtime. They run together under the one deadline.
  */
 const ENRICHMENT_TIMEOUT_MS = 2_000;
 
@@ -232,10 +235,9 @@ export class FeishuDocumentComments {
   /**
    * Deliver one comment event to every recipient following that document.
    *
-   * Submissions run concurrently: one subscriber's failure must not hold up
-   * the others, and the route awaits this whole call before the SDK acks, so N
-   * submissions in sequence — each of which may start a runtime — would be an
-   * avoidable ACK timeout.
+   * Submissions run concurrently so one subscriber's failure cannot hold up the
+   * others, and so the last subscriber's delivery does not wait behind every
+   * earlier one — each may start a runtime.
    */
   async deliver(event: FeishuCommentEvent): Promise<void> {
     const subscribers = this.opts.routing.subscribersFor(event.fileToken);
@@ -321,6 +323,12 @@ export class FeishuDocumentComments {
       null,
     );
     if (outcome.status !== 'rejected') {
+      // The submitter answers `not_attempted` when the session began tearing
+      // down before it could send anything. The report is still made — the
+      // comment is gone and its ids are how an operator finds it — but
+      // `describeSubmitOutcome` files it at `info` rather than as a failure.
+      // A rejection still has a subscription row to repair below, whatever the
+      // lifecycle is doing.
       this.reportDelivery(scope, outcome);
       return;
     }
@@ -451,6 +459,8 @@ const DOC_COMMENT_DELIVERY_MESSAGES: SubmitOutcomeMessages = {
   rejected: 'feishu document comment was rejected before admission',
   ambiguous: 'feishu document comment admission was ambiguous; not replaying',
   failed: 'failed to deliver a feishu document comment',
+  not_attempted:
+    'feishu document comment was not attempted; the session closed',
 };
 
 /**

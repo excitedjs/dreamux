@@ -116,8 +116,8 @@ async function deliver(
     createTime: '1',
     raw: {},
   });
-  expect(delivered).toHaveBeenCalledOnce();
   await session.lifecycle.drain();
+  expect(delivered).toHaveBeenCalledOnce();
   return delivered.mock.results[0]!.value;
 }
 

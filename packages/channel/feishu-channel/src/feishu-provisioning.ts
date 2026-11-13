@@ -179,11 +179,27 @@ export class FeishuProvisioning {
       agentRuntime: created.leader_agent_runtime,
       runtimeCwd: created.runtime_cwd,
     });
-    return this.opts.submitter.submit(
+    const outcome = await this.opts.submitter.submit(
       created.team_name,
       input.submission,
       input.target,
     );
+    // Everything above is durable: the Team exists, the route is committed and
+    // its card is announced. If the session stopped before the submit, saying
+    // only "nothing was attempted" would be true of the submit and false of
+    // this run, so the run reports its own half.
+    if (outcome.status === 'not_attempted') {
+      this.opts.log.warn(
+        {
+          dispatcher_id: this.opts.dispatcherId,
+          team_name: created.team_name,
+          reason: outcome.reason,
+        },
+        'provisioned a Team and committed its route, then the session closed ' +
+          'before the triggering message could be submitted',
+      );
+    }
+    return outcome;
   }
 
   /** A message that arrived while a run was live, delivered once it is done. */

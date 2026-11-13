@@ -200,8 +200,11 @@ async function deliverThroughInbound(
     createTime: '1',
     raw: {},
   });
-  expect(delivered).toHaveBeenCalledOnce();
+  // The route acknowledges the event and hands its work to the session, so
+  // nothing here has run yet when `inject` resolves. Draining is the session's
+  // own "this inbound is finished" signal — the same one `close` waits on.
   await session.lifecycle.drain();
+  expect(delivered).toHaveBeenCalledOnce();
   return delivered.mock.results[0]!.value;
 }
 
@@ -645,6 +648,9 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
       mentionedBot: true,
       timestamp: 1757894400000,
     });
+    // A document comment is acknowledged before it is delivered, so the work
+    // is still in flight here; draining is the session's own completion signal.
+    await session.lifecycle.drain();
 
     expect(bot.commentTextReads).toEqual([
       { fileToken: 'doc_tok', commentId: 'cmt_1', replyId: 'rpl_1' },
@@ -694,6 +700,7 @@ describe('FeishuChannelSession — a document comment reaches Core', () => {
       mentionedBot: true,
       timestamp: 1757894400000,
     });
+    await session.lifecycle.drain();
 
     expect(port.calls).toHaveLength(1);
     expect(port.calls[0]!.command).toBe('dispatcher.submit');
@@ -748,8 +755,17 @@ async function provisioningSession(
   return { bot, session, port };
 }
 
+/**
+ * Send one topic message through the real inbound route.
+ *
+ * `session` is required because the route acknowledges the event and hands its
+ * work to the session; the caller drains afterwards to observe the effect. It
+ * is passed explicitly rather than looked up so a test cannot drain the wrong
+ * session.
+ */
 async function injectTopicMessage(
   bot: FakeFeishuBot,
+  session: FeishuChannelSession,
   messageId: string,
 ): Promise<void> {
   await bot.inject({
@@ -774,6 +790,7 @@ async function injectTopicMessage(
     createTime: '1',
     raw: {},
   });
+  await session.lifecycle.drain();
 }
 
 describe('FeishuChannelSession.deliver — a provisioning failure answers in place', () => {
@@ -791,7 +808,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
       },
     );
 
-    await injectTopicMessage(bot, 'om_provision_throw');
+    await injectTopicMessage(bot, session, 'om_provision_throw');
 
     expect(port.calls.map((call) => call.command)).toEqual(['team.create']);
     expect(bot.sentMessages).toEqual([
@@ -824,6 +841,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
 
       await injectTopicMessage(
         bot,
+        session,
         `om_provision_${createResult.team_name === '' ? 'empty' : 'closed'}`,
       );
 
@@ -848,7 +866,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
       },
     );
 
-    await injectTopicMessage(bot, 'om_provision_rejected');
+    await injectTopicMessage(bot, session, 'om_provision_rejected');
 
     expect(port.calls.map((call) => call.command)).toEqual([
       'team.create',
@@ -890,11 +908,11 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
     // hanging the test.
     const delivered = vi.spyOn(FeishuInboundRouter.prototype, 'deliver');
 
-    const first = injectTopicMessage(bot, 'om_provision_first');
+    const first = injectTopicMessage(bot, session, 'om_provision_first');
     await waitFor(() =>
       port.calls.some((call) => call.command === 'team.create'),
     );
-    const second = injectTopicMessage(bot, 'om_provision_second');
+    const second = injectTopicMessage(bot, session, 'om_provision_second');
     await waitFor(
       () =>
         delivered.mock.calls.length === 2 &&
@@ -941,7 +959,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
         },
       );
 
-      await injectTopicMessage(bot, `om_provision_${_label}`);
+      await injectTopicMessage(bot, session, `om_provision_${_label}`);
 
       expect(port.calls.map((call) => call.command)).toEqual([
         'team.create',
@@ -966,7 +984,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
       },
     );
 
-    await injectTopicMessage(bot, 'om_provision_error');
+    await injectTopicMessage(bot, session, 'om_provision_error');
 
     expect(port.calls.map((call) => call.command)).toEqual([
       'team.create',
@@ -1018,6 +1036,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
       createTime: '1',
       raw: {},
     });
+    await session.lifecycle.drain();
 
     expect(port.calls.map((call) => call.command)).toEqual([
       'dispatcher.submit',
@@ -1035,6 +1054,7 @@ describe('FeishuChannelSession.deliver — a provisioning failure answers in pla
  */
 async function injectMessage(
   bot: FakeFeishuBot,
+  session: FeishuChannelSession,
   input: {
     messageId: string;
     chatId: string;
@@ -1063,6 +1083,7 @@ async function injectMessage(
     createTime: '1',
     raw: {},
   });
+  await session.lifecycle.drain();
 }
 
 /** Submissions observed at Core, and the Teams `team.create` produced. */
@@ -1123,7 +1144,7 @@ describe('FeishuChannelSession — group message format switches', () => {
     await session.start();
 
     // Thread message format: an accepted message in an unbound topic provisions.
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_a1',
       chatId: 'oc_space',
       threadId: 'omt_old',
@@ -1141,17 +1162,20 @@ describe('FeishuChannelSession — group message format switches', () => {
 
     // The operator switches the group to chat message format.
     bot.setChatMode('oc_space', 'group');
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_a2',
       chatId: 'oc_space',
       threadId: 'omt_old',
     });
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_a3',
       chatId: 'oc_space',
       threadId: 'omt_fresh',
     });
-    await injectMessage(bot, { messageId: 'om_a4', chatId: 'oc_space' });
+    await injectMessage(bot, session, {
+      messageId: 'om_a4',
+      chatId: 'oc_space',
+    });
     await waitFor(() => submissions.length >= 4);
 
     // The bound topic keeps its Team; the unbound thread and the top-level
@@ -1167,7 +1191,7 @@ describe('FeishuChannelSession — group message format switches', () => {
     // Switching back restores provisioning without re-registration, and the
     // existing topic Teams remain in place.
     bot.setChatMode('oc_space', 'topic');
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_a5',
       chatId: 'oc_space',
       threadId: 'omt_fresh',
@@ -1221,12 +1245,12 @@ describe('FeishuChannelSession — group message format switches', () => {
     });
     await session.start();
 
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_m1',
       chatId: 'oc_manual',
       threadId: 'omt_manual',
     });
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_m2',
       chatId: 'oc_space',
       threadId: 'omt_rebound',
@@ -1259,7 +1283,7 @@ describe('FeishuChannelSession — group message format switches', () => {
       repo: null,
     });
     await session.start();
-    await injectMessage(first, {
+    await injectMessage(first, session, {
       messageId: 'om_r1',
       chatId: 'oc_space',
       threadId: 'omt_old',
@@ -1279,12 +1303,12 @@ describe('FeishuChannelSession — group message format switches', () => {
     const restarted = await newSession(second, channelId);
     await restarted.initialize(secondPort.fake.port);
     await restarted.start();
-    await injectMessage(second, {
+    await injectMessage(second, restarted, {
       messageId: 'om_r2',
       chatId: 'oc_space',
       threadId: 'omt_old',
     });
-    await injectMessage(second, {
+    await injectMessage(second, restarted, {
       messageId: 'om_r3',
       chatId: 'oc_space',
       threadId: 'omt_fresh',
@@ -1300,7 +1324,7 @@ describe('FeishuChannelSession — group message format switches', () => {
     // Back in thread message format the removed policy is still decisive:
     // eligibility alone never recreates a space that was unregistered.
     second.setChatMode('oc_space', 'topic');
-    await injectMessage(second, {
+    await injectMessage(second, restarted, {
       messageId: 'om_r4',
       chatId: 'oc_space',
       threadId: 'omt_new',
@@ -1340,14 +1364,17 @@ describe('FeishuChannelSession — group message format switches', () => {
     });
     await session.start();
 
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_f1',
       chatId: 'oc_plain',
       threadId: 'omt_any',
     });
     // A registered space's top-level message never enters per-topic
     // provisioning, least of all in chat message format.
-    await injectMessage(bot, { messageId: 'om_f2', chatId: 'oc_space' });
+    await injectMessage(bot, session, {
+      messageId: 'om_f2',
+      chatId: 'oc_space',
+    });
     await waitFor(() => submissions.length >= 2);
 
     expect(created).toEqual([]);
@@ -1378,7 +1405,7 @@ describe('FeishuChannelSession — group message format switches', () => {
 
     // No bot mention in a chat that requires one: the gate drops the message
     // before any projection runs.
-    await injectMessage(bot, {
+    await injectMessage(bot, session, {
       messageId: 'om_g1',
       chatId: 'oc_space',
       threadId: 'omt_x',
@@ -1452,17 +1479,17 @@ describe('FeishuChannelSession — unverifiable group message format', () => {
       });
       await session.start();
 
-      await injectMessage(bot, {
+      await injectMessage(bot, session, {
         messageId: 'om_meta1',
         chatId: 'oc_meta',
         threadId: 'omt_exact',
       });
-      await injectMessage(bot, {
+      await injectMessage(bot, session, {
         messageId: 'om_meta2',
         chatId: 'oc_meta',
         threadId: 'omt_unbound',
       });
-      await injectMessage(bot, {
+      await injectMessage(bot, session, {
         messageId: 'om_meta3',
         chatId: 'oc_space',
         threadId: 'omt_fresh',

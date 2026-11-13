@@ -939,6 +939,8 @@ describe('Feishu COT adapter — default-show, without a source whitelist', () =
       expect(cot.cards).toHaveLength(0);
       await session.start();
       await bot.inject({ ...inbound, messageId: 'om_2' });
+      // The route acknowledges the event and hands the work to the session.
+      await session.lifecycle.drain();
       await settle();
       expect(cot.cards).toHaveLength(1);
       expect(cot.cards[0]!.originMessageId).toBe('om_2');
