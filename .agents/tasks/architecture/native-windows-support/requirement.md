@@ -14,6 +14,16 @@ should replace platform conditionals when they express the same contract.
 
 ## Scope and invariants
 
+The 2026-11-13 follow-up asks for smoother installation after a real local
+upgrade. A user who has the required Windows object permissions must not need
+an extra administrator-membership condition to adopt Administrators-owned
+Dreamux logs. The current-account password dialog must not require guessing
+Microsoft-account aliases. Observing a service Job must request only the rights
+used for that observation. These corrections must not bypass native access
+checks, accept another user's private files, weaken stop's exit guarantee, or
+turn unlocated historical Job error 5 into a claimed diagnosis. Validation in
+this slice does not modify the running installation or reopen deferred R5.
+
 The 2026-11-12 correction requires a native Windows credential dialog, not a
 terminal password prompt. Installation still selects Password logon. Credentials
 remain local to the registration process and are never requested through chat.
@@ -57,6 +67,7 @@ package is replaced; the exact sequence is in the final design and public docs.
 - Reinstalling an already-Password task with identical launch Data refreshes only its action without resetting its triggers or settings. Changed Data or a login-mode conversion uses the existing definition with credentials while preserving its other settings. Registration errors propagate without silently falling back to Interactive or S4U.
 - Windows uninstall protection rejects case aliases of protected paths before service changes, without changing the filesystem paths used for I/O or Unix comparison behavior.
 - Managed stop and restart retain owned-process termination and waiting across the interactive CLI and non-interactive service sessions.
+- Windows managed stop/restart first requests application shutdown over the registered root's admin endpoint after verifying the server belongs to the service Job. Request acceptance is separate from completion; request and exit observation share a 15-second grace period before forced cleanup of remaining owned processes. Restart still waits for the old tree to exit before its single Run and new-server readiness check.
 - Rush build, lint, test and test typechecking pass, with native Windows included in CI.
 - Fresh-process imports of built utilities, server, daemon, workflow and MCP modules do not load Koffi; concurrent first Windows capability calls initialize successfully.
 - Test homes are disposable; explicit live model runs may copy authentication into a fixture, never modify the original home.
@@ -65,7 +76,9 @@ package is replaced; the exact sequence is in the final design and public docs.
 ## Coverage limits
 
 Real model completion requires separately opted-in, usable provider authentication.
-Windows forced process termination does not provide Unix signal-based graceful drain.
+Windows native forced termination cannot run application cleanup. The approved
+cooperative stop path gives the host and CoT a bounded cleanup opportunity,
+but cannot guarantee remote terminal delivery during network failure or a crash.
 Real GUI behavior, Password credential storage/reuse, cross-session operation and
 existing registered Task ACL preservation remain unverified. The operator
 deferred the early-entry stop case before Job assignment and approved closeout

@@ -21,6 +21,7 @@
 import { mkdir } from 'node:fs/promises';
 
 import { Server } from '../server.js';
+import { installServerShutdown } from '../server/shutdown.js';
 import { ConfigService } from '../config/service.js';
 import { ProviderRegistry } from '../registry/registry.js';
 import { startPlugins } from '../plugin/host.js';
@@ -29,7 +30,7 @@ import {
   prepareLogDirectory,
   prepareLogFile,
 } from '../platform/logger.js';
-import { ensureOwnerOnlyDir, errorInfo } from '@excitedjs/dreamux-utils';
+import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
 import {
   adminSocketLockPath,
   adminSocketPath,
@@ -43,16 +44,6 @@ import {
   workflowLogPath,
 } from '../platform/paths.js';
 import { sweepRuntimeSocketDirs } from '../platform/runtime-sockets.js';
-
-/**
- * Upper bound on a signal-initiated shutdown. A healthy shutdown reaps each
- * runtime child within a couple of seconds (SIGTERM, then SIGKILL, one second
- * each), so this only fires for a shutdown that is stuck. It stays below both
- * service managers' default stop timeouts (launchd's ExitTimeOut is 20s,
- * systemd's TimeoutStopSec is 90s; the installed units set neither), so the
- * daemon reports its own hang before the manager kills it.
- */
-const SHUTDOWN_DEADLINE_MS = 15_000;
 
 export async function runServe(): Promise<void> {
   // Hand an empty registry to ConfigService.open, which loads plugins first —
@@ -108,35 +99,8 @@ export async function runServe(): Promise<void> {
     runtimeSocketSweep: () => sweepRuntimeSocketDirs(),
     legacyAdminLockPath: adminSocketLockPath(legacyAdminSocketPath()),
   });
-  await server.start();
+  const startup = server.start();
+  installServerShutdown(server, startup, logger);
+  await startup;
   logger.info({ admin_socket: adminSocketPath() }, 'server up');
-
-  // A termination signal always ends the process, whatever shutdown does: a
-  // rejected shutdown exits non-zero, and a shutdown that never settles (it
-  // drains admitted work, and a runtime start has no timeout of its own) is cut
-  // off by the deadline, which does not depend on the shutdown promise. A
-  // dispatcher's own close retry serves a daemon that keeps running after a
-  // failed start; it is not a reason for the process to outlive a signal.
-  const requestShutdown = (signal: string): void => {
-    logger.info({ signal }, 'received signal');
-    setTimeout(() => {
-      logger.error(
-        { signal, deadline_ms: SHUTDOWN_DEADLINE_MS },
-        'server shutdown did not settle before its deadline; exiting',
-      );
-      process.exit(1);
-    }, SHUTDOWN_DEADLINE_MS);
-    server.shutdown().then(
-      () => process.exit(0),
-      (error: unknown) => {
-        logger.error(
-          { signal, err: errorInfo(error) },
-          'server shutdown failed; exiting',
-        );
-        process.exit(1);
-      },
-    );
-  };
-  process.on('SIGTERM', () => requestShutdown('SIGTERM'));
-  process.on('SIGINT', () => requestShutdown('SIGINT'));
 }

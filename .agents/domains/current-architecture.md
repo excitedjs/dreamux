@@ -14,9 +14,13 @@ Dispatcher-only concerns — channel sessions, restart-notice injection, role MC
 assembly, completion routing, the neutral conversation projection — stay on
 `DispatcherService`.
 
+The serving process's signal and accepted admin shutdown requests share one
+bounded process-exit owner in `server/shutdown.ts`.
+
 Key source:
 
 - `/packages/dreamux/src/server.ts`
+- `/packages/dreamux/src/server/shutdown.ts`
 - `/packages/dreamux/src/service/dispatchers/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
@@ -94,7 +98,7 @@ Key source: `/packages/dreamux/src/registry/`,
 One `CoreCommandRegistry` holds every Command definition; the owner-only local
 `admin.sock` and a Channel's in-process `invoke` port are transport adapters
 over the same registry — no per-adapter table, allowlist, or exposure flag.
-Namespaces: `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
+Namespaces include `server.*`, `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
 `scheduler.cron.*`, plus the transport Commands `mcp.describe` / `mcp.toolcall`.
 Admin callers may pass validated `skill_sources` on `teammate.spawn` /
 `team.create`; bundled role skills cannot be shadowed. The remaining
@@ -103,7 +107,8 @@ are the one [active proposal](../proposals/admin-control-plane-surface.md).
 
 Key source: `/packages/dreamux/src/command/` (registry, schema/validation,
 `mustDispatcherId`), `/packages/dreamux/src/server/` (catalog composition,
-`CoreCommandHost`), `/packages/dreamux/src/admin/socket.ts`.
+`CoreCommandHost`), `/packages/dreamux/src/server-commands.ts` (process commands),
+`/packages/dreamux/src/admin/socket.ts`.
 
 The actual Server implements the command-host view; domain factories receive
 narrow structural views of it, not resolver closure bags. Its addressed lookup

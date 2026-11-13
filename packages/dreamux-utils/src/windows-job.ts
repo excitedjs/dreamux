@@ -181,9 +181,16 @@ export class WindowsJob {
     });
   }
 
-  static async open(name: string): Promise<WindowsJob | null> {
+  static async open(
+    name: string,
+    access: 'query' | 'control' = 'control',
+  ): Promise<WindowsJob | null> {
     const api = await native();
-    const handle = api.openJob(0x0002 | 0x0004 | 0x0008, 0, name);
+    const handle = api.openJob(
+      access === 'query' ? 0x0004 : 0x0002 | 0x0004 | 0x0008,
+      0,
+      name,
+    );
     const code = api.lastError();
     if (handle === null && code === 2) return null;
     checked(handle, 'OpenJobObjectW', code);
@@ -240,6 +247,49 @@ export class WindowsJob {
     } finally {
       this.api.closeHandle(handle!);
     }
+  }
+
+  /** Retain a verified member, or null if gone. Await each wait before close(). */
+  async retainMember(pid: number): Promise<{
+    waitForExit(timeoutMs: number): Promise<boolean>;
+    close(): void;
+  } | null> {
+    if (this.job === null) throw new Error('Windows Job is closed');
+    let handle = this.api.openProcess(0x1000 | 0x00100000, 0, pid);
+    const code = this.api.lastError();
+    if (handle === null && code === 87) return null;
+    checked(handle, 'OpenProcess', code);
+    try {
+      const member = [0];
+      checked(
+        await promisify(this.api.isProcessInJob.async)(
+          handle!,
+          this.job,
+          member,
+        ),
+        'IsProcessInJob',
+      );
+      if (member[0] === 0) {
+        throw new Error('The process does not belong to the Windows Job');
+      }
+    } catch (error) {
+      this.api.closeHandle(handle!);
+      throw error;
+    }
+    return {
+      waitForExit: async (timeoutMs) => {
+        if (handle === null)
+          throw new Error('Windows process observation is closed');
+        const result = await promisify(this.api.wait.async)(handle, timeoutMs);
+        if (result === 0) return true;
+        if (result === 258) return false;
+        throw new Error(`WaitForSingleObject failed (${result})`);
+      },
+      close: () => {
+        if (handle !== null) this.api.closeHandle(handle);
+        handle = null;
+      },
+    };
   }
 
   /** Hold the candidate object; the caller must prove identity over its child IPC before assign(). */

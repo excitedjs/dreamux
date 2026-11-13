@@ -56,7 +56,10 @@ import { parseProviderRef } from '../src/registry/provider-ref.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
 import { Server } from '../src/server.js';
 import { capturingLogger } from './helpers/command-harness.js';
-import { ControlledRuntimeProvider } from './helpers/controlled-runtime-provider.js';
+import {
+  ControlledRuntimeProvider,
+  deferred,
+} from './helpers/controlled-runtime-provider.js';
 import { teamRequest } from './helpers/real-dispatcher.js';
 
 const DISPATCHER = 'delivery-arm';
@@ -126,7 +129,12 @@ interface Arm {
 }
 
 /** A Feishu platform stand-in: nothing this arm does leaves the process. */
-function fakeFeishuBot(): {
+function fakeFeishuBot(
+  options: {
+    readonly cot?: FeishuBot['cot'];
+    readonly onClose?: () => void;
+  } = {},
+): {
   bot: FeishuBot;
   routes: () => FeishuInboundRoutes;
 } {
@@ -137,10 +145,12 @@ function fakeFeishuBot(): {
     appId: 'app-live',
     botOpenId: 'fake-bot',
     botDisplayName: 'Delivery Arm',
+    ...(options.cot === undefined ? {} : { cot: options.cot }),
     async start(next) {
       routes = next;
     },
     async close() {
+      options.onClose?.();
       routes = undefined;
     },
     async getChatMode() {
@@ -205,7 +215,11 @@ function fakeFeishuBot(): {
 }
 
 async function startArm(
-  options: { readonly timer?: TimerPlan } = {},
+  options: {
+    readonly timer?: TimerPlan;
+    readonly cot?: FeishuBot['cot'];
+    readonly onClose?: () => void;
+  } = {},
 ): Promise<Arm> {
   const root = await mkdtemp(join(tmpdir(), 'dreamux-feishu-delivery-'));
   vi.stubEnv('DREAMUX_ROOT', join(root, 'state'));
@@ -268,7 +282,7 @@ async function startArm(
   // and contributes the provider the config above addresses.
   const config = await ConfigService.open({ providerRegistry: registry });
 
-  const primaryBot = fakeFeishuBot();
+  const primaryBot = fakeFeishuBot(options);
   const secondBot = fakeFeishuBot();
   const bot = primaryBot.bot;
   // One bot per session, in creation order: the configured channel first, any
@@ -543,6 +557,87 @@ describe('an extension delivers through a real Feishu session and real Core', ()
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(arm.timerDeliveries).toHaveLength(fired);
     expect(delivered()).toBe(1);
+  });
+
+  it('drains the interrupted CoT terminal through Server shutdown before closing the Feishu transport', async () => {
+    const releaseTerminal = deferred<void>();
+    const order: string[] = [];
+    const terminalStatuses: unknown[] = [];
+    let transportClosed = false;
+    let shutdownFinished = false;
+    let closing: Promise<void> | undefined;
+    const cot: NonNullable<FeishuBot['cot']> = {
+      createCot: vi.fn(async () => ({
+        cotId: 'cot-shutdown',
+        messageId: 'om-cot-shutdown',
+      })),
+      appendCot: vi.fn<NonNullable<FeishuBot['cot']>['appendCot']>(
+        async ({ events }) => {
+          for (const event of events) {
+            if (event.eventType !== 'RUN_FINISHED') continue;
+            terminalStatuses.push(event.content['status']);
+            order.push('terminal:started');
+            await releaseTerminal.promise;
+            order.push('terminal:finished');
+          }
+        },
+      ),
+      completeCot: vi.fn(async () => {}),
+    };
+    try {
+      const arm = await startArm({
+        cot,
+        onClose: () => {
+          transportClosed = true;
+          order.push('transport:closed');
+        },
+      });
+      const teamName = await arm.startTeam();
+      const api = arm.apis.get(CHANNEL)!;
+      await api.bindTeam({ target: GROUP, teamName, display: '' });
+      // Binding queues its announcement; the in-process receipt then offers the
+      // real TeamLeader anchor before the first input reaches Core.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await expect(
+        api.submitToBoundTeam({
+          target: GROUP,
+          expectedTeamName: teamName,
+          text: 'keep this work open until application shutdown',
+          sourceId: 'cot-shutdown-input',
+        }),
+      ).resolves.toMatchObject({ status: 'submitted' });
+      await vi.waitFor(() => {
+        expect(cot.createCot).toHaveBeenCalledOnce();
+        expect(cot.appendCot).toHaveBeenCalled();
+      });
+      expect(terminalStatuses).toEqual([]);
+
+      // Keep the real Channel's terminal append in flight while the host closes.
+      closing = arm.server.shutdown().then(() => {
+        shutdownFinished = true;
+        order.push('shutdown:finished');
+      });
+      // The original promise is always joined below, including an early failure.
+      void closing.catch(() => {});
+      await vi.waitFor(
+        () => expect(terminalStatuses).toEqual(['interrupted']),
+        { timeout: 2_000 },
+      );
+      expect(transportClosed).toBe(false);
+      expect(shutdownFinished).toBe(false);
+      expect(order).toEqual(['terminal:started']);
+    } finally {
+      releaseTerminal.resolve();
+      await closing;
+    }
+    expect(terminalStatuses).toEqual(['interrupted']);
+    expect(cot.completeCot).not.toHaveBeenCalled();
+    expect(order).toEqual([
+      'terminal:started',
+      'terminal:finished',
+      'transport:closed',
+      'shutdown:finished',
+    ]);
   });
 
   it('counts one submission per source id across two Feishu instances that reach one Team', async () => {

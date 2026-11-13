@@ -65,10 +65,18 @@ Windows installation uses Password logon (run whether the user is logged on or
 not), with limited privileges and a logon trigger for new tasks. A new task,
 login-mode conversion or changed launch data opens a native Windows credential
 dialog for the current account password, not a Windows Hello PIN. Cancellation
-or a native error stops registration. The registering PowerShell process passes
-the password directly to Task Scheduler; it never enters JavaScript, command arguments, environment,
+or a native error stops registration. The account is prefilled and cannot be
+edited; enter its password without substituting a Microsoft-account email.
+The registering PowerShell process passes the password directly to Task
+Scheduler; it never enters JavaScript, command arguments, environment,
 Dreamux configuration or Task Data. The dialog does not require a terminal
 TTY, and dry runs do not open it.
+
+Existing Administrators-owned logs can be prepared when the installing user
+has the required Windows owner/DACL write permissions. Other owners are
+rejected with the affected path; an access denial does not trigger elevation
+or a permissions bypass.
+
 Only an existing Password task whose Task Data is ordinal-equal to the new
 snapshot receives an action-only update without another prompt. Other updates
 register Action and Data together through credentialed XML in the same
@@ -83,15 +91,31 @@ for startup, status, control, logs and restart notices. Refresh the snapshot
 with `daemon install`. The reported `unitPath` is the native Task.Path, not a
 file to edit or delete.
 
-Windows stop/restart forcibly terminate owned work rather than drain active
-turns. Stop disables the task, reserves its root-hash Job, terminates members
-and waits for their held process handles. It then calls Task.Stop and validates
-that no Running/Queued instance remains before releasing the reservation and
-restoring the previous enabled state. New tasks use `IgnoreNew`; restart
-completes stop before one Run. Start/restart then require a registered-root
-`server.status` response whose PID belongs to the service Job. `daemon status`
-reports Scheduler state; `dreamux status` reports server facts, and neither
-establishes that every provider is ready.
+Windows stop/restart first offer cooperative application shutdown. Stop disables
+the task and reserves its root-hash Job, then queries the registered root's
+server with a one-second timeout. It retains that exact process as a Job member
+before requesting `server.shutdown` with `expectedPid`. An unrelated foreground
+server is not a shutdown target. The command acknowledges acceptance without
+waiting for its own shutdown; acceptance alone is not completion. The request
+and process-exit wait share one 15-second budget. An unavailable or older server
+without this command proceeds to forced cleanup; a lost response still grants
+the remaining wait, and a hung server cannot extend the deadline.
+
+The controller then terminates remaining owned processes, waits for their held
+process handles, and calls Task.Stop. No Running/Queued instance may remain
+before the Job reservation is released and the previous Enabled state restored.
+New tasks use `IgnoreNew`; restart completes stop before one Run, with no Run
+after a failed stop. Start/restart require a registered-root `server.status`
+response whose PID belongs to the service Job. `daemon status` reports Scheduler
+state; `dreamux status` reports server facts, and neither establishes that every
+provider is ready.
+
+The serving process uses the same bounded shutdown owner for signals and admin
+requests: startup finishes before resource teardown, successful shutdown exits 0,
+and failure or a 15-second deadline exits 1. This is not extra grace time after
+the controller's deadline. Normal cleanup stops runtime producers and closes
+Channels, giving open CoT cards a bounded opportunity to finish as interrupted.
+Network failure or forced termination can still prevent remote card delivery.
 
 A restart issued inside the service reports handoff to a WMI-created external
 controller invoking the published entry; that receipt is not a completed

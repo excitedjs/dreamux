@@ -1,5 +1,63 @@
 # Native process and filesystem boundaries
 
+## Cooperative stop follow-up, 2026-11-13
+
+The operator approved the [cooperative Windows stop solution](graceful-windows-stop.md)
+and isolated verification after reporting missing CoT interruption on restart.
+The earlier immediate Job termination bypassed application shutdown entirely.
+The controller now requests shutdown from the registered root's verified service
+process, retaining that member object across the request and bounded exit wait.
+The request carries the expected PID and only acknowledges acceptance. The
+serving process owns the same shutdown and 15-second exit deadline for admin
+requests and signals; it does not await shutdown inside the requesting command.
+The controller's request and wait share one grace period, then the existing Job
+termination, held-process exit checks and Scheduler instance checks still run.
+Self handoff, startup reservation, Enabled restoration, failed-stop/no-Run and
+new-server Job membership remain required. This supersedes immediate forced
+termination as the normal Windows stop behavior, not the native force primitive.
+The installed service and deferred native acceptance work remain untouched.
+
+## Installation follow-up, 2026-11-13
+
+The local upgrade exposed separate boundaries. The automated attempt removed
+the old service and installed the new package, then failed while preparing log
+ownership before the credential dialog. Later retries identified nested
+Administrators-owned logs despite a current-user FullControl grant, and then
+an editable Microsoft-account alias whose resolved SID differed from the local
+task owner. A subsequent Job access-denied error lacks a call stack; later
+service responsiveness does not establish that the installation command passed.
+
+The corrections remain in their existing owners:
+
+- The native permission setter admits the current SID or Administrators as the
+  existing owner, then lets the unchanged Windows setter enforce WRITE_OWNER
+  and WRITE_DAC. Other owners remain refused, with the path in the error. The
+  additional administrator-group membership probe is removed.
+- The credential prompt uses `CredUIPromptForCredentialsW` with KEEP_USERNAME,
+  GENERIC_CREDENTIALS, DO_NOT_PERSIST and ALWAYS_SHOW_UI. It fixes the existing
+  current-account name and requests only its password. This deliberately uses
+  the older native dialog's explicit username-lock contract. Pack/unpack and
+  returned-account alias translation are removed; Task principal and credential
+  account still come from the original Windows identity. Passwords stay within
+  the registration PowerShell process.
+- Job observation explicitly opens QUERY handles. Control opens keep
+  SET_ATTRIBUTES / QUERY / TERMINATE, and acquire/create retain their existing
+  behavior. Self detection, readiness membership and uninstall's self check
+  use query access. Stop's reservation and held-process exit wait are unchanged.
+
+Regressions exercise disposable BA-owned paths with the test runner's actual
+token, credential script execution with the prompt and Scheduler boundaries
+intercepted, and a disposable real Job whose DACL permits queries but denies
+control. The attempted custom restricted-token launcher could not initialize
+Node and is removed rather than retained as an unproved test mechanism.
+Non-administrator ownership adoption remains an open acceptance requirement;
+normal-token tests cannot distinguish the removed administrator gate. Neither
+these tests nor intercepted registration prove the real Password task's
+cross-session lifecycle. The Job correction
+removes demonstrably unnecessary rights; it is not a diagnosis of the historical
+error. No live upgrade, service operation or deferred early-stop experiment is
+part of this follow-up's local verification.
+
 ## CLI and processes
 
 The published executable is a plain Node ESM launcher that resolves its own
@@ -107,8 +165,11 @@ the registered task data and WorkingDirectory establish the existing root;
 an active or queued task at a different root must first be stopped from outside
 its service tree.
 
-External stop disables the task, acquires/reserves its named Job, terminates
-members and awaits their held process handles. It then calls Task.Stop and
+External stop disables the task and acquires/reserves its named Job. It queries
+the registered-root server, retains its verified Job-member process object,
+requests application shutdown with the expected PID and waits within one
+15-second request/exit budget. It then terminates remaining members and awaits
+their held process handles before calling Task.Stop. It
 validates that the task is neither Running nor Queued and has zero instances,
 retaining the Job reservation throughout. Finally it releases the Job and
 restores the prior enabled state. Neither Job-name availability nor Scheduler
@@ -117,7 +178,8 @@ COM Run; a failure does not fall through to Run. Start/restart enable the task,
 require the returned running instance to leave Queued and enter Running, then
 await `server.status` at the registered root within a 30-second startup deadline.
 The responding PID must belong to the opened service Job. Observation opens an
-existing Job without reserving its name. This proves an answering admin endpoint,
+existing Job with QUERY access only, without reserving its name. This proves an
+answering admin endpoint,
 not readiness of every provider or Dispatcher. Unix service managers are unchanged.
 
 A caller inside the service hands stop/restart to a short-lived WMI-created Node
@@ -207,8 +269,9 @@ first, then dispatches the existing alpha workflow on that branch.
 
 ## Product behavior review
 
-The product catalog adds native Windows execution and qualifies managed stop:
-Windows task termination cannot promise Unix signal-based draining. Existing
+The product catalog adds native Windows execution and bounded cooperative managed
+stop before forced cleanup. CoT receives its existing shutdown opportunity;
+remote delivery remains subject to its drain deadline and network errors. Existing
 Unix shutdown behavior, local state ownership, uninstall containment, channel
 routing and provider-neutral orchestration remain in force. The Windows service
 definition changes to task-owned launch data and a published entry, with the

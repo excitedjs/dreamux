@@ -3,10 +3,11 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WindowsJob } from '@excitedjs/dreamux-utils';
 
-import { adminJsonInvoker } from '../admin/client.js';
+import { AdminClientError, adminJsonInvoker } from '../admin/client.js';
 import type { CommandRunner } from '../platform/command-runner.js';
 import { TransportError } from '../platform/errors.js';
 import { adminSocketPath, windowsServiceJobName } from '../platform/paths.js';
+import { SERVER_SHUTDOWN_DEADLINE_MS } from '../server/shutdown.js';
 import type { ServiceInstallAnswers } from './environment.js';
 import {
   psString,
@@ -83,7 +84,7 @@ export async function controlWindowsService(
   windowsTaskData(task);
   const root = windowsTaskRoot(task);
   if (verb !== 'start') {
-    const job = await WindowsJob.open(windowsServiceJobName(root));
+    const job = await WindowsJob.open(windowsServiceJobName(root), 'query');
     let self = false;
     try {
       self = (await job?.containsCurrentProcess()) ?? false;
@@ -131,7 +132,7 @@ async function waitForWindowsService(
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   while (Date.now() < deadline) {
     // Observation must not reserve the name that the new entry needs to create.
-    const job = await WindowsJob.open(windowsServiceJobName(root));
+    const job = await WindowsJob.open(windowsServiceJobName(root), 'query');
     try {
       if (job !== null) {
         try {
@@ -184,6 +185,48 @@ if ($created.ReturnValue -ne 0) { throw "Windows service controller creation fai
     env: windowsPowerShellEnvironment(),
   });
   return command;
+}
+
+async function requestWindowsServiceShutdown(
+  task: WindowsTaskRegistration,
+  job: WindowsJob,
+): Promise<void> {
+  const socketPath = adminSocketPath(windowsTaskRoot(task));
+  let response: { pid?: number };
+  try {
+    response = (await adminJsonInvoker({ socketPath, timeoutMs: 1000 }).invoke(
+      'server.status',
+      {},
+    )) as { pid?: number };
+  } catch (error) {
+    if (error instanceof TransportError) return;
+    throw error;
+  }
+  if (typeof response.pid !== 'number') {
+    throw new Error(
+      'The responding server does not belong to the Windows service Job',
+    );
+  }
+  const member = await job.retainMember(response.pid);
+  if (member === null) return; // It exited after replying to status.
+  try {
+    const deadline = Date.now() + SERVER_SHUTDOWN_DEADLINE_MS;
+    try {
+      await adminJsonInvoker({
+        socketPath,
+        timeoutMs: SERVER_SHUTDOWN_DEADLINE_MS,
+      }).invoke('server.shutdown', { expectedPid: response.pid });
+    } catch (error) {
+      // An older installed server cannot cooperate. A lost response, however,
+      // may follow an accepted request, so still grant the remaining time.
+      if (error instanceof AdminClientError && error.code === 'UNKNOWN_METHOD')
+        return;
+      if (!(error instanceof TransportError)) throw error;
+    }
+    await member.waitForExit(Math.max(0, deadline - Date.now()));
+  } finally {
+    member.close();
+  }
 }
 
 async function stopWindowsService(
@@ -247,7 +290,12 @@ $scheduler.GetFolder('\\').GetTask($taskName).Enabled = $${enabled ? 'true' : 'f
       windowsServiceJobName(windowsTaskRoot(task)),
     );
     try {
-      await job.terminate();
+      try {
+        await requestWindowsServiceShutdown(task, job);
+      } finally {
+        // Cooperative exit does not prove that every provider child is gone.
+        await job.terminate();
+      }
     } finally {
       await runner.run(stop.command, stop.args, {
         env: windowsPowerShellEnvironment(),
@@ -274,6 +322,7 @@ export async function unregisterWindowsService(
   windowsTaskData(task);
   const job = await WindowsJob.open(
     windowsServiceJobName(windowsTaskRoot(task)),
+    'query',
   );
   try {
     if (await job?.containsCurrentProcess()) {

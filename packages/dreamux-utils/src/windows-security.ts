@@ -22,12 +22,6 @@ async function loadSecurityApi() {
     sidString: security.func(
       'int __stdcall ConvertSidToStringSidW(void *sid, _Out_ void **text)',
     ),
-    stringSid: security.func(
-      'int __stdcall ConvertStringSidToSidW(const char16_t *text, _Out_ void **sid)',
-    ),
-    membership: security.func(
-      'int __stdcall CheckTokenMembership(void *token, void *sid, _Out_ int *member)',
-    ),
     descriptor: security.func(
       'int __stdcall ConvertStringSecurityDescriptorToSecurityDescriptorW(const char16_t *text, uint32_t revision, _Out_ void **descriptor, void *size)',
     ),
@@ -61,7 +55,7 @@ async function loadSecurityApi() {
 }
 
 let api: ReturnType<typeof loadSecurityApi> | undefined;
-let identity: { sid: string; administrator: boolean } | undefined;
+let identity: { sid: string } | undefined;
 
 function securityApi() {
   return (api ??= loadSecurityApi());
@@ -84,22 +78,8 @@ function currentIdentity(native: Awaited<ReturnType<typeof loadSecurityApi>>) {
     );
     const user = native.decode(buffer, 'void *') as Pointer;
     const sid = sidText(native, user);
-    const administrators: Pointer[] = [null];
-    check(
-      native.stringSid('S-1-5-32-544', administrators),
-      'ConvertStringSidToSidW',
-    );
-    try {
-      const member = [0];
-      check(
-        native.membership(null, administrators[0], member),
-        'CheckTokenMembership',
-      );
-      identity = { sid, administrator: member[0] !== 0 };
-      return identity;
-    } finally {
-      native.free(administrators[0]);
-    }
+    identity = { sid };
+    return identity;
   } finally {
     native.close(token[0]);
   }
@@ -169,7 +149,7 @@ export async function withWindowsOwnerOnlySecurityDescriptor<T>(
   }
 }
 
-/** Adopt current-user paths, including Administrators-owned paths under an elevated token. */
+/** Adopt current-user or Administrators-owned paths when Windows grants the required access. */
 export async function setWindowsOwnerOnlyAccess(
   path: string,
   kind: 'file' | 'directory',
@@ -195,9 +175,9 @@ export async function setWindowsOwnerOnlyAccess(
   );
   try {
     const sid = sidText(native, owner[0]!);
-    if (sid !== user.sid && !(sid === 'S-1-5-32-544' && user.administrator)) {
+    if (sid !== user.sid && sid !== 'S-1-5-32-544') {
       throw new Error(
-        'refusing to use private Dreamux path: it is owned by a different Windows user',
+        `refusing to use private Dreamux path ${path}: it is owned by a different Windows user`,
       );
     }
   } finally {

@@ -32,6 +32,8 @@ The managed service uses Linux systemd user services, macOS launchd or Windows
 Task Scheduler. Windows installation uses Password logon and requires the
 current account's password, not a Windows Hello PIN, through a native Windows
 credential dialog for a new task, login-mode conversion or changed Task Data.
+The account name is fixed; enter only its password, without guessing an email
+alias or changing the account.
 Only an existing Password task with ordinal-equal Data receives a prompt-free
 action-only update; other updates register Action and Data together through
 credentialed XML in the same PowerShell process. Cancelling the dialog or

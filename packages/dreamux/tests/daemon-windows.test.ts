@@ -615,6 +615,7 @@ await runWindowsService(${JSON.stringify(task.name)}, {
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rm } from 'node:fs/promises';
 import { createAdminSocketServer } from ${JSON.stringify(new URL('../dist/admin/socket.js', import.meta.url).href)};
+import { UnknownCommandError } from ${JSON.stringify(new URL('../dist/command/errors.js', import.meta.url).href)};
 import { createLogger } from ${JSON.stringify(new URL('../dist/platform/logger.js', import.meta.url).href)};
 import { adminSocketPath } from ${JSON.stringify(new URL('../dist/platform/paths.js', import.meta.url).href)};
 import { controlWindowsService } from ${JSON.stringify(new URL('../dist/daemon/windows.js', import.meta.url).href)};
@@ -625,7 +626,7 @@ const admin = createAdminSocketServer({
   logger: createLogger({ destination: { write() {} } }),
   commands: {
     async invoke(_context, method) {
-      if (method !== 'server.status') throw new Error('Unexpected fixture command');
+      if (method !== 'server.status') throw new UnknownCommandError(method);
       return { pid: process.pid };
     },
   },
