@@ -201,6 +201,8 @@ it('creates a public transport that sends and resolves the platform owner', asyn
       method: 'GET',
       url: '/open-apis/application/v6/applications/app',
       params: { lang: 'zh_cn', user_id_type: 'open_id' },
+      // Bounded: the SDK's client is a bare axios with no timeout of its own.
+      timeout: 2_000,
     });
   } finally {
     await transport.close();

@@ -157,7 +157,16 @@ export type FeishuCommandSubmitOutcome =
    * whether a turn exists, and this Channel does not deliver a message a
    * second time on a guess.
    */
-  | { readonly status: 'error'; readonly message: string };
+  | {
+      readonly status: 'error';
+      readonly message: string;
+      /**
+       * The Command error's own code, when it carried one. A caller that has to
+       * tell a shutdown refusal from a real failure needs this: the message is
+       * prose, and `SERVER_SHUTTING_DOWN` is a fact Core states.
+       */
+      readonly code?: string;
+    };
 
 export type FeishuSubmitOutcome =
   | FeishuCommandSubmitOutcome
@@ -171,7 +180,31 @@ export type FeishuSubmitOutcome =
    * the notice honest, not the failure: it exists only while no Command has
    * been sent.
    */
-  | { readonly status: 'unsubmitted'; readonly message: string };
+  | { readonly status: 'unsubmitted'; readonly message: string }
+  /**
+   * The session had already begun tearing down, so no Command was sent and
+   * nothing was attempted.
+   *
+   * This is a distinct fact from `error`, and the difference is what a caller
+   * owes it: an `error` is a delivery that was tried and failed and is worth a
+   * failure record, while this one is work that was stopped before it started
+   * and deserves silence. Keeping it in the union is what lets every delivery
+   * path answer that question from the outcome itself instead of asking a
+   * lifecycle it does not otherwise own.
+   */
+  | FeishuNotAttempted;
+
+/**
+ * The one outcome that means "nothing left this process".
+ *
+ * Named so a narrower union can widen to include it without restating the
+ * shape, and so a caller can say which of the closed-session answers it
+ * produces.
+ */
+export interface FeishuNotAttempted {
+  readonly status: 'not_attempted';
+  readonly reason: 'closed';
+}
 
 /**
  * What one extension's expected-Team delivery answers.
@@ -193,15 +226,21 @@ export type FeishuBoundTeamSubmitOutcome =
 /**
  * What one outcome is, once the question is what a log line owes it.
  *
- * Five kinds and not seven statuses, because three pairs answer the same
- * question: `duplicate` and `stopped` are both Core declining to open a turn,
- * and `failed` / `unsubmitted` / `error` are all a submission that did not
- * happen, carrying its reason under two different field names. The two that
- * stay alone are the two a reader would otherwise get wrong. `rejected` is a
- * decision Core made before admitting anything, not a fault of this delivery.
- * `ambiguous` proves nothing about whether a turn exists — which is why
+ * Fewer kinds than statuses, because several statuses answer the same question:
+ * `duplicate` and `stopped` are both Core declining to open a turn, and
+ * `failed` / `unsubmitted` / `error` are all a submission that did not happen,
+ * carrying its reason under different field names. The rest stay alone because
+ * a reader would otherwise get each one wrong. `rejected` is a decision Core
+ * made before admitting anything, not a fault of this delivery. `ambiguous`
+ * proves nothing about whether a turn exists — which is why
  * `submissionProvesNoAdmission` excludes it — so reporting it as a failed
  * delivery is exactly as false as reporting it as a delivered one.
+ * `not_attempted` never left this process, so it is neither a delivery nor a
+ * failure and is reported at `debug`.
+ *
+ * The counts are deliberately not written here: they went stale twice. What a
+ * maintainer needs is the rule, and the rule is that a new status either joins
+ * a kind whose question it answers or earns its own.
  *
  * It lives beside the union because the classification is one fact about the
  * union, and the two delivery paths that render it had already drifted: the
@@ -216,8 +255,18 @@ export interface SubmitOutcomeReport {
     | 'not_admitted'
     | 'rejected'
     | 'ambiguous'
-    | 'failed';
-  readonly level: 'info' | 'warn' | 'error';
+    | 'failed'
+    /**
+     * Nothing was sent: the session was already closing.
+     *
+     * Not a failure, and not silence either. A message this happened to is
+     * gone — the platform will not deliver it again — so the one thing an
+     * operator must be able to do is find it by id. `info` is what a stock
+     * install keeps; `debug` would drop the only record of a lost message,
+     * which is worse than the failure line this kind replaced.
+     */
+    | 'not_attempted';
+  readonly level: 'info' | 'warn' | 'error' | 'debug';
   readonly fields: Readonly<Record<string, unknown>>;
 }
 
@@ -267,12 +316,27 @@ export function describeSubmitOutcome(
           err: { message: outcome.error?.message ?? 'unknown' },
         },
       };
-    default:
+    case 'not_attempted':
+      return {
+        kind: 'not_attempted',
+        level: 'info',
+        fields: { status: outcome.status, reason: outcome.reason },
+      };
+    case 'error':
+    case 'unsubmitted':
       return {
         kind: 'failed',
         level: 'error',
         fields: { status: outcome.status, err: { message: outcome.message } },
       };
+    default: {
+      // A status this classification has never seen is a compile error, not a
+      // silent `failed`. Without this, a future status carrying a `message`
+      // would fall through and be filed at `error` level — the false record
+      // `not_attempted` exists to prevent, reintroduced by omission.
+      const unclassified: never = outcome;
+      return unclassified;
+    }
   }
 }
 

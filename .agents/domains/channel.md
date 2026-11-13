@@ -535,8 +535,30 @@ Source:
 ### Feishu event routes
 
 `FeishuBot.start` takes one typed handler per Feishu event type rather than one
-message handler, and each route awaits its handler before the SDK acks
-(queue-before-ACK). Four are registered:
+message handler. Each route awaits its handler, and that await *is* the
+platform's acknowledgement — Feishu allows three seconds and re-pushes an event
+it considers unhandled, at 15 s, 5 min, 1 h and 6 h, up to four times. So a
+route returns as soon as it has done what that window affords and takes
+ownership of anything longer through the session lifecycle, which tracks the
+work and drains it on close. A chat message and a document comment are both
+long unbounded submissions and return immediately; a bot-added event is one
+bounded store write and is awaited. A card action is awaited in full — its gate
+decision and any platform read behind it — because the platform is waiting for
+the callback's own answer; the submissions it can start are the part it detaches
+(`deliverExtensionForward`, the ask-user settlement).
+
+That retry schedule is only one of the two ways an event can arrive twice.
+Feishu also documents delivery as at-least-once, so a duplicate can arrive for
+an event that was handled and acknowledged successfully; returning inside the
+window removes the timeout class and nothing else. Delivery is therefore
+at-least-once end to end, not exactly-once: a residual duplicate re-runs the
+whole inbound path — gate decision, target projection, routing, the sender
+lookup, the parent-message probe and attachment resolution — and may reopen a
+conversation card. What it does not do is produce a second turn or a second
+answer: Core's admission ledger refuses the repeat by the Channel-supplied
+source id.
+
+Four are registered:
 
 - `im.message.receive_v1` — a chat message;
 - `im.chat.member.bot.added_v1` — the bot was added to a chat;
@@ -652,11 +674,14 @@ agent-facing body format is outside its boundary.
 That is what the chat path renders for a message with no text, and it is also
 required: both submit Commands validate `text` as a non-empty string, so omitting the
 body would turn a comment Feishu answered nothing for into a failed delivery. The
-read shares one bounded deadline with the commenter's name lookup, so the inbound
-route's worst case is what it already was, and it never costs the event: a failed
-or empty read logs and delivers `<content />`, with the envelope's ids still
-addressing the thread. No title is carried and no thread history is: that is what
-lark-cli is for.
+read shares one bounded deadline with the commenter's name lookup, and the
+deadline exists for the reader rather than for the acknowledgement: an operator
+waiting on a comment that will never arrive is worth less than delivering it with
+the ids alone. It never costs the event — a failed or empty read logs and delivers
+`<content />`, with the envelope's ids still addressing the thread. The deadline
+bounds those two reads only; the submissions that follow are unbounded by design,
+each able to start a runtime. No title is carried and no thread history is: that
+is what lark-cli is for.
 
 Its reminder is the Channel's second one, and it carries one fact and no
 procedure. Everything else about the comment is already on the envelope, so the
@@ -827,6 +852,32 @@ Source:
 - `/packages/channel/feishu-channel/src/cards/running-teams.ts`
 - `/packages/channel/feishu-channel/src/inbound/pipeline.ts`
 - `/packages/channel/feishu-channel/src/introduce.ts`
+
+### A stopped submission is not a failed one
+
+`FeishuSubmitOutcome` answers one question for every delivery path: what does
+this outcome owe a log line? Most statuses carry their own answer. The one that
+exists for teardown is `not_attempted` — nothing left this process — and it is
+reported at `info`, not at `error` and not at `debug`. Not `error`, because a
+shutdown is not a delivery failure. Not `debug`, because the message or comment
+it happened to is gone and the platform will not send it again, so this line is
+the only thing an operator can find it by; a stock install logs at `info`.
+
+Two different fences close during a dispatcher shutdown, seconds apart, and the
+submitter has to answer for both:
+
+- Core publishes its Command admission fence at the very start of a close
+  (`DispatcherLifecycle.closeAdmission`). A submit that reaches Core after that
+  is refused with `SERVER_SHUTTING_DOWN`.
+- This session's own lifecycle is not aborted until `channels.closeAll()` runs,
+  after the runtime sweeps — so `lifecycle.isLive()` is still true throughout
+  that window.
+
+Deriving "was this stopped?" from liveness alone therefore misses the longer
+half of the window. The submitter answers `not_attempted` for either: the
+lifecycle is dead, or Core said `SERVER_SHUTTING_DOWN`. A `rejected` outcome is
+never rewritten — that is a decision Core made before admitting anything, and it
+holds whatever the session is doing.
 
 ### Inbound content fidelity
 

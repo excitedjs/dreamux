@@ -30,6 +30,7 @@ class FakeTransport implements FeishuTransport {
   readonly appId = 'app-test';
   readonly selfId = 'bot-open-id';
   readonly selfName = 'App Test Bot';
+  async ensureSelfIdentity(): Promise<void> {}
   routes: InboundRoutes | null = null;
   readonly sent: Array<{ target: OutboundTarget; text: string }> = [];
   readonly sentCards: Array<{ target: OutboundTarget; card: unknown }> = [];

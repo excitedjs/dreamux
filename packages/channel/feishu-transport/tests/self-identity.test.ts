@@ -2,9 +2,10 @@
  * Self-identity recovery for `createFeishuTransport`.
  *
  * A failed or empty `/open-apis/bot/v3/info` lookup is not an identity: it is
- * never cached, and the next inbound chat message retries it before the route
- * handler runs, so a successful retry applies to that same message. Concurrent
- * messages share one in-flight lookup.
+ * never cached, and the transport exposes `ensureSelfIdentity` so a caller can
+ * retry it at a moment of its own choosing — inside work it owns, never on a
+ * platform acknowledgement path. Concurrent retries share one in-flight
+ * lookup.
  *
  * Everything here goes through the real route seam — the routes the transport
  * registers on the SDK event dispatcher, dispatched the way the SDK would —
@@ -119,7 +120,7 @@ afterEach(() => {
 });
 
 describe('createFeishuTransport — self-identity recovery', () => {
-  test('a failed startup lookup is retried by the next message, before its handler runs', async () => {
+  test('a failed startup lookup is retried by an explicit call, before the caller runs its work', async () => {
     vi.useFakeTimers();
     const request = vi
       .fn()
@@ -137,9 +138,11 @@ describe('createFeishuTransport — self-identity recovery', () => {
     expect(transport.selfName).toBeUndefined();
     expect(request).toHaveBeenCalledTimes(3);
 
+    // The caller runs the retry inside its own work, so a success applies to
+    // the same message before that message's gate reads `selfId`.
+    await transport.ensureSelfIdentity();
     await dispatchMessage();
 
-    // The retry landed before the handler ran, so the same message sees it.
     expect(seenSelfIds).toEqual(['ou_self']);
     expect(handled).toHaveLength(1);
     expect(transport.selfId).toBe('ou_self');
@@ -148,6 +151,8 @@ describe('createFeishuTransport — self-identity recovery', () => {
     expect(request).toHaveBeenLastCalledWith({
       method: 'GET',
       url: '/open-apis/bot/v3/info',
+      // Bounded: this lookup runs inside work the session drains on close.
+      timeout: 2_000,
     });
   });
 
@@ -165,11 +170,13 @@ describe('createFeishuTransport — self-identity recovery', () => {
 
     // A failed retry still delivers the message — the caller stays fail-closed
     // for it — and leaves identity unresolved rather than caching the failure.
+    await transport.ensureSelfIdentity();
     await dispatchMessage();
     expect(seenSelfIds).toEqual([undefined]);
     expect(transport.selfId).toBeUndefined();
     expect(request).toHaveBeenCalledTimes(2);
 
+    await transport.ensureSelfIdentity();
     await dispatchMessage();
     expect(seenSelfIds).toEqual([undefined, 'ou_self']);
     expect(request).toHaveBeenCalledTimes(3);
@@ -190,7 +197,7 @@ describe('createFeishuTransport — self-identity recovery', () => {
     expect(request).toHaveBeenCalledTimes(1);
   });
 
-  test('concurrent messages share one in-flight lookup', async () => {
+  test('concurrent retries share one in-flight lookup', async () => {
     let releaseLookup: (() => void) | undefined;
     const request = vi
       .fn()
@@ -206,20 +213,37 @@ describe('createFeishuTransport — self-identity recovery', () => {
     await started;
     expect(request).toHaveBeenCalledTimes(1);
 
-    const first = dispatchMessage();
-    const second = dispatchMessage();
+    const first = transport.ensureSelfIdentity();
+    const second = transport.ensureSelfIdentity();
     await vi.waitFor(() => expect(releaseLookup).toBeDefined());
 
-    // Both messages are parked on the same lookup, not on two of them.
+    // Both callers are parked on the same lookup, not on two of them.
     expect(request).toHaveBeenCalledTimes(2);
     expect(handled).toHaveLength(0);
 
     releaseLookup?.();
     await Promise.all([first, second]);
+    await dispatchMessage();
+    await dispatchMessage();
 
     expect(seenSelfIds).toEqual(['ou_self', 'ou_self']);
     expect(transport.selfId).toBe('ou_self');
     expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  test('dispatching a message no longer performs the lookup itself', async () => {
+    const request = vi.fn().mockResolvedValue(NO_OPEN_ID as never);
+    const { transport, started, seenSelfIds } = await startTransport(request);
+    await started;
+    expect(request).toHaveBeenCalledTimes(1);
+
+    // The transport no longer wraps the message route: the caller owns the
+    // retry, so a raw dispatch must not spend a lookup on the acknowledgement
+    // path.
+    await dispatchMessage();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(seenSelfIds).toEqual([undefined]);
+    expect(transport.selfId).toBeUndefined();
   });
 
   test('other inbound event types do not trigger the lookup', async () => {
@@ -236,5 +260,49 @@ describe('createFeishuTransport — self-identity recovery', () => {
     expect(otherRouteCalls).toHaveLength(1);
     expect(request).toHaveBeenCalledTimes(1);
     expect(transport.selfId).toBeUndefined();
+  });
+
+  test('a lookup that never answers is given up on, not waited for', async () => {
+    vi.useFakeTimers();
+    // A request that accepts the call and never settles: the SDK's own HTTP
+    // client has no timeout, so without a deadline around the whole lookup this
+    // promise would stay pending forever and whatever awaits it would too.
+    const request = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const { transport, started } = await startTransport(request);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await started;
+
+    expect(transport.selfId).toBeUndefined();
+
+    const retry = transport.ensureSelfIdentity();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(retry).resolves.toBeUndefined();
+    expect(transport.selfId).toBeUndefined();
+  });
+
+  test('the whole lookup leaves room inside the host shutdown deadline', async () => {
+    vi.useFakeTimers();
+    // The host gives a signal-initiated shutdown fifteen seconds before it
+    // exits (packages/dreamux/src/cli/server.ts), and the channel session
+    // spends up to five of them draining its card writer before it reaches this
+    // work. A lookup that outlasts the remainder turns a converging teardown
+    // into a failed one. Asserting against the full fifteen would pass a
+    // fourteen-second ceiling that leaves nothing for the closes after it, so
+    // this asserts against what is actually left.
+    const HOST_SHUTDOWN_DEADLINE_MS = 15_000;
+    const COT_DRAIN_BEFORE_THIS_MS = 5_000;
+    const available = HOST_SHUTDOWN_DEADLINE_MS - COT_DRAIN_BEFORE_THIS_MS;
+    const request = vi.fn().mockReturnValue(new Promise(() => undefined));
+    const { transport } = await startTransport(request);
+
+    let settled = false;
+    const lookup = transport.ensureSelfIdentity().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(available - 1);
+    expect(settled).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await lookup;
   });
 });

@@ -168,6 +168,7 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
     get botDisplayName(): string | undefined {
       return displayName;
     },
+    async ensureSelfIdentity(): Promise<void> {},
     async start(r: FeishuInboundRoutes): Promise<void> {
       routes = r;
     },

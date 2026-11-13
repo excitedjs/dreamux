@@ -531,6 +531,8 @@ describe('createFeishuTransport — app owner', () => {
       method: 'GET',
       url: '/open-apis/application/v6/applications/app',
       params: { lang: 'zh_cn', user_id_type: 'open_id' },
+      // Bounded for the same reason the bot-info lookup is.
+      timeout: 2_000,
     });
   });
 
@@ -577,6 +579,26 @@ describe('createFeishuTransport — app owner', () => {
     expect(haystack).toContain('application:application:self_manage');
     expect(haystack).toContain('admin:app.info:readonly');
     expect(haystack).not.toContain('application:app:readonly');
+  });
+
+  test('an owner lookup that never answers is given up on, not waited for', async () => {
+    vi.useFakeTimers();
+    const stub = stubClient();
+    stub.request.mockReturnValue(new Promise(() => undefined));
+    const transport = buildTransport(stub);
+
+    // Attach the rejection handler before the timer fires: the promise rejects
+    // while the fake clock advances, and an unhandled rejection in that window
+    // is a real failure of this test, not a flake.
+    const lookup = expect(transport.resolveAppOwner()).rejects.toThrow(
+      /did not answer within/,
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // A deadline expiry rejects: the empty identity means "this app has no
+    // owner", which a caller reports as a configuration defect, and a lookup
+    // that never answered must not be mistaken for it.
+    await lookup;
   });
 });
 

@@ -12,8 +12,11 @@
  *   - `start(routes)` takes one handler per Feishu event type (issue #62 seam):
  *     `onMessage` for `im.message.receive_v1` (decoded via the core's
  *     `parseFeishuInboundEvent`) and an optional `onBotMemberAdded` for
- *     `im.chat.member.bot.added_v1`. Each route awaits its handler, so the
- *     server gates and submits accepted inbound before the SDK acks.
+ *     `im.chat.member.bot.added_v1`. The route awaits whatever its handler
+ *     returns, and that is the platform's acknowledgement. A handler that
+ *     returns immediately is acknowledged immediately; the session decides per
+ *     route which work it keeps waiting for and which it takes ownership of
+ *     instead.
  *   - Every other member (`send`, `sendCard`, `addReaction`, `editCard`,
  *     document/message reads, `cot`, `resolveAppOwner`, `close`, …) is the
  *     core transport's own member, forwarded unchanged; its optionality
@@ -62,8 +65,11 @@ export type DocCommentHandler = (
  * The typed event-route seam (issue #62 Phase 1). `start` takes one handler per
  * Feishu event type instead of a single message handler, so a new event type is
  * wired by adding a field here and a transport route, without growing branches
- * in `Server`. Each route still awaits its handler before the SDK acks
- * (queue-before-ACK).
+ * in `Server`. Each route awaits its handler, and that await is the platform's
+ * acknowledgement — so a handler returns as soon as it has done what the
+ * platform's few-second window can afford, and takes ownership of anything
+ * longer itself. Returning early is not "not handled": the session tracks the
+ * work and drains it on close.
  *
  * This file used to say a third event type should promote the seam to a generic
  * `eventType -> handler` map. It stays typed instead, and knowingly: every route
@@ -135,8 +141,9 @@ export function createFeishuBot(opts: CreateBotOptions): FeishuBot {
     },
 
     async start(routes: FeishuInboundRoutes): Promise<void> {
-      // The core opens the WebSocket and awaits each route handler before the
-      // SDK acks; awaiting here keeps gate/submission work before ACK.
+      // The core opens the WebSocket and awaits each route handler; that await
+      // is the SDK's acknowledgement, so what a route returns decides when the
+      // platform considers the event handled.
       // `start` rejects if the connection does not come up, so the server's
       // try/catch can fail the dispatcher loudly rather than leave it dark.
       const table: Record<string, (raw: unknown) => Promise<unknown>> = {

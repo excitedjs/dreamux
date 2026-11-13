@@ -414,7 +414,11 @@ async function deliverAcceptedMessage(
       submission: built.submission,
     });
 
-    if (!work.isSessionActive()) return;
+    // A stopped session says so in the outcome now, so this path reports what
+    // happened instead of asking the lifecycle a second time. The report is
+    // still made: a message this happened to is gone, and the ids on the line
+    // are how an operator finds it. What changes is the level — a shutdown is
+    // not a delivery failure — and `describeSubmitOutcome` already decides that.
     reportDelivery(h, acceptedEvent, outcome);
     if (outcome.status === 'unsubmitted' || outcome.status === 'rejected') {
       // A Collaboration Space run that never produced a Team, or a submission
@@ -534,6 +538,7 @@ const INBOUND_DELIVERY_MESSAGES: SubmitOutcomeMessages = {
   rejected: 'feishu inbound was rejected before admission',
   ambiguous: 'feishu inbound admission was ambiguous; not replaying',
   failed: 'failed to submit feishu inbound',
+  not_attempted: 'feishu inbound was not attempted; the session closed',
 };
 
 async function enrichSenderName(

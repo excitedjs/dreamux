@@ -137,6 +137,7 @@ function fakeFeishuBot(): {
     appId: 'app-live',
     botOpenId: 'fake-bot',
     botDisplayName: 'Delivery Arm',
+    async ensureSelfIdentity() {},
     async start(next) {
       routes = next;
     },

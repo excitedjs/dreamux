@@ -15,7 +15,11 @@ export const BOT_MEMBER_ADDED_EVENT_TYPE = 'im.chat.member.bot.added_v1';
 export interface FeishuBotMemberAddedEvent {
   /** Chat id the bot was added to. */
   chatId: string;
-  /** Feishu event id from the header, empty when the host passes a bare event. */
+  /**
+   * Feishu event id, empty when the host passed a bare event body with no
+   * envelope. Callers use it as a redelivery key, so an empty value means
+   * "no id to dedupe on" and is never a collision.
+   */
   eventId: string;
 }
 
@@ -24,6 +28,14 @@ export interface FeishuBotMemberAddedEvent {
  * `FeishuBotMemberAddedEvent`. Tolerates either a full `{ header, event }`
  * envelope or the bare event body delivered by some host adapters. Pure: no
  * I/O, never throws.
+ *
+ * The event id is read from the top level as well as from `header`, because the
+ * Lark SDK flattens a v2 envelope before dispatching: `RequestHandle.parse`
+ * destructures `header` and `event` away and spreads both onto the top level,
+ * so what a live route handler receives carries `event_id` there and no
+ * `header` at all. Reading only `header.event_id` therefore yielded `''` on
+ * every real event, which silently disabled the redelivery dedupe the channel
+ * keys on it.
  */
 export function normalizeBotMemberAddedEvent(
   raw: unknown,
@@ -36,6 +48,6 @@ export function normalizeBotMemberAddedEvent(
   const header = isRecord(raw.header) ? raw.header : {};
   return {
     chatId,
-    eventId: asString(header.event_id),
+    eventId: asString(header.event_id) || asString(raw.event_id),
   };
 }

@@ -614,6 +614,9 @@ async function runCommand(
     createTime: '1',
     raw: {},
   });
+  // The route acknowledges the event and hands the work to the session, so
+  // nothing has run yet here; draining is the session's completion signal.
+  await session.lifecycle.drain();
   expect(observed).toHaveBeenCalledTimes(1);
   return observed.mock.results[0]!.value;
 }
@@ -810,6 +813,7 @@ describe('Feishu slash command inbound placement', () => {
       createTime: '1',
       raw: {},
     });
+    await session.lifecycle.drain();
 
     expect(calls).toEqual([{ command: 'team.list', payload: {} }]);
     expect(cot.cards).toHaveLength(0);
@@ -837,6 +841,7 @@ describe('Feishu slash command inbound placement', () => {
       createTime: '2',
       raw: {},
     });
+    await session.lifecycle.drain();
 
     expect(calls).toEqual([{ command: 'team.list', payload: {} }]);
     expect(bot.sentMessages.at(-1)?.text).toBe(
@@ -910,6 +915,7 @@ describe('Feishu slash command inbound placement', () => {
       createTime: '1',
       raw: {},
     });
+    await session.lifecycle.drain();
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.command).toBe('dispatcher.submit');
@@ -1017,6 +1023,7 @@ async function bindHarness(target = chatTarget('oc_bind', 'group')) {
         createTime: String(ordinal),
         raw: {},
       });
+      await session.lifecycle.drain();
       return messageId;
     },
     async speak(teamName: string) {

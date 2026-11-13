@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "An inbound chat message and an inbound document comment are now acknowledged as soon as the session has taken ownership of the work, instead of after the submission finishes. Feishu allows three seconds before it considers an event unhandled and re-pushes it, while this path's own budget is sixty, so a slow inbound — a cold agent-runtime start above all — was systematically re-pushed and opened a second conversation card. A failure after the acknowledgement is reported on the channel log; it is no longer left to the platform to retry. The bot's own identity is retried inside that work rather than ahead of the route, and the bot-added event id is now read from where the SDK actually delivers it, which restores the redelivery dedupe that had been silently inactive.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel",
+  "email": "dyzhu@bytedance.com"
+}

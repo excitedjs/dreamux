@@ -286,6 +286,8 @@ describe('the pairing resend reminder', () => {
       createTime: String(now),
       raw: {},
     });
+    // The route acknowledges the event and hands the work to the session.
+    await value.lifecycle.drain();
 
     expect(bot.sentMessages).toHaveLength(1);
     const sent = bot.sentMessages[0];

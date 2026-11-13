@@ -60,9 +60,19 @@ async function submitOutcomeFor(
     return submitOutcome(raw as unknown as TeamSubmitResult);
   } catch (err) {
     const code = commandErrorCode(err);
-    return code === 'TEAM_NOT_FOUND' || code === 'TEAM_CLOSED'
-      ? { status: 'rejected', code, message: errorMessage(err) }
-      : { status: 'error', message: errorMessage(err) };
+    if (code === 'TEAM_NOT_FOUND' || code === 'TEAM_CLOSED') {
+      return { status: 'rejected', code, message: errorMessage(err) };
+    }
+    // Core refused because the host is going away. That is the same fact the
+    // submitter reports when the lifecycle is already dead, only reached one
+    // step later — the submit was in flight when teardown began — so it answers
+    // with the same outcome. Reporting it as `error` would file a failure for a
+    // delivery the shutdown stopped.
+    return {
+      status: 'error',
+      message: errorMessage(err),
+      ...(code !== null ? { code } : {}),
+    };
   }
 }
 

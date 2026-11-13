@@ -55,13 +55,6 @@ export type {
 const WS_HANDSHAKE_TIMEOUT_MS = 15_000;
 const WS_STARTUP_GRACE_MS = 30_000;
 
-/**
- * The Feishu event type carrying inbound chat messages. It is the only route
- * that retries self-identity resolution, because it is the only one whose
- * handling depends on knowing this app's own open_id.
- */
-const IM_MESSAGE_EVENT_TYPE = 'im.message.receive_v1';
-
 /** One sent message and where the platform placed it. */
 export interface FeishuSentMessage {
   readonly messageId: string;
@@ -253,6 +246,16 @@ export interface FeishuTransport {
   readonly appId: string;
   readonly selfId: string | undefined;
   readonly selfName: string | undefined;
+  /**
+   * Retry the bot's own identity while it is still unresolved.
+   *
+   * A healthy `start` resolves it before the socket opens, so this is a no-op
+   * on the ordinary path. It exists for the start whose lookup failed: only a
+   * successful lookup is cached, so identity stays unresolved and the next
+   * caller decides when to ask again. Bounded end to end by the lookup's own
+   * deadline, because the SDK's HTTP client has no timeout of its own.
+   */
+  ensureSelfIdentity(): Promise<void>;
   start(routes: InboundRoutes): Promise<void>;
   send(
     target: OutboundTarget,
@@ -365,31 +368,16 @@ export function createFeishuTransport(
   let wsClient: lark.WSClient | undefined;
   const selfIdentity = createSelfIdentityCache(client, diag);
 
-  /**
-   * Retry self-identity resolution ahead of an inbound chat message while it is
-   * still unresolved, so a successful retry applies to that same message before
-   * a caller's mention gate reads `selfId`. A failed retry still delivers the
-   * message — the caller stays fail-closed for it — and leaves identity
-   * unresolved so the next message tries again.
-   */
-  function withSelfIdentityRecovery(routes: InboundRoutes): InboundRoutes {
-    const onMessage: RouteHandler | undefined = routes[IM_MESSAGE_EVENT_TYPE];
-    if (onMessage === undefined) return routes;
-    return {
-      ...routes,
-      [IM_MESSAGE_EVENT_TYPE]: async (raw: unknown): Promise<unknown> => {
-        await selfIdentity.ensureResolved();
-        return onMessage(raw);
-      },
-    };
-  }
-
   async function openInbound(routes: InboundRoutes): Promise<void> {
-    const inbound = withSelfIdentityRecovery(routes);
+    // Resolved once here, before the socket opens, so a healthy start never
+    // makes an inbound wait for identity. A start whose lookup failed leaves it
+    // unresolved for a caller to retry through `ensureSelfIdentity` — see the
+    // note on `createSelfIdentityCache`.
     await selfIdentity.ensureResolved();
+
     const dispatcher = new lark.EventDispatcher({
       logger: NOOP_SDK_LOGGER,
-    }).register(inbound);
+    }).register(routes);
     let markReady: () => void = () => {};
     const ready = new Promise<void>((resolve) => {
       markReady = resolve;
@@ -439,6 +427,10 @@ export function createFeishuTransport(
 
     get selfName(): string | undefined {
       return selfIdentity.resolved?.appName;
+    },
+
+    async ensureSelfIdentity(): Promise<void> {
+      await selfIdentity.ensureResolved();
     },
 
     async start(routes: InboundRoutes): Promise<void> {
