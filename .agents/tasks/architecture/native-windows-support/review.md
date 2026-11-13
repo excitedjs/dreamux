@@ -1,5 +1,28 @@
 # Complete-change review
 
+## Simplify correction review, 2026-11-13
+
+After the operator authorized the four adjudicated simplify corrections, an
+independent reviewer examined the complete eight-file implementation/test delta
+against the source delivered by the [R7 CI run](https://github.com/excitedjs/dreamux/actions/runs/43367043468).
+The review included all affected callers and native/process/filesystem contracts,
+not just the changed assertions. No actionable finding remained in that scope.
+
+The reviewer checked failed-launch rejection versus established-child errors,
+startup/stop overlap, standalone log tightening, real concurrent publication,
+distinct live and retained Job membership, shutdown budgets and cleanup, and
+explicit-platform environment precedence. Root review first corrected an
+unbounded wait in the new IPC-error test; its final bounded observation and
+stop-before-removal cleanup were included in independent review.
+
+The utils README, state/config owner, requirement, final solution and both patch
+notes were also reviewed against source with no blocker. The synthetic-home
+driver received a static scope/cleanup review, separate from executed evidence.
+The reviewer requested preserving the operator's original Chinese wording in
+the task README rather than presenting its English translation as an exact
+quote; that record was corrected. Final verification/closeout evidence remains
+subject to its recorded checks, not inferred from static review.
+
 ## Follow-up formal review, 2026-11-13
 
 The operator approved entry into review at 11:59 (UTC+08:00). The frozen target

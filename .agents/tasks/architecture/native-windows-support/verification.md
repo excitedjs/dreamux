@@ -1,5 +1,43 @@
 # Verification
 
+## Simplify correction, 2026-11-13
+
+The operator authorized necessary corrections after the independent simplify
+reports were adjudicated against source. This slice is limited to launch-failure
+notification, existing-log preparation, the shared service PID query and Windows
+environment-key precedence. The existing synthetic-home outer driver was reused
+with distinct log names; real Scheduler and model gates remained excluded.
+
+The first isolated path check passed four cases, with 34 other cases filtered
+out. The utils focused file passed 18 cases with two platform/permission skips.
+The four-file host run passed 74 cases with one opt-in Scheduler skip. These
+runs cover real post-start IPC errors, launch rejection, log permission/content
+preservation and a competing publisher, explicit-platform key precedence, and
+the existing Windows controller boundaries.
+
+Unified build passed in 6.19 seconds, lint in 34.50 seconds and test typechecking
+in 6.95 seconds. The first test-typecheck attempt was refused by Rush's repository
+lock while lint was running, before compilation; its failure evidence was kept.
+The subsequent serial invocation passed without a source change.
+
+The complete default suite passed **3,222 cases / 26 skipped**, 3,248 total, in
+146.7 seconds. Each of the eight package logs has one Tests summary: types 81/0,
+utils 241/5, host 1,373/21, transport 182/0, channel 822/0, Codex 243/0, Claude
+269/0 and bootstrap 11/0. Focused filtered cases are not suite skips. All seven
+successful outer runs reported exit 0, unchanged synthetic sentinels, no temporary
+children and captured-root removal. The refused lock attempt also preserved
+sentinels and removed its captured root. Static independent review covers all
+eight implementation/test files and their affected documentation/change notes.
+
+Before this source correction, a separate alpha publication and normal upgrade
+were completed. The first recovery callback did not send to the Team; the
+operator-authorized retry did. On 2026-11-13 at 15:21 (UTC+08:00), the operator
+reported seeing the CoT card marked interrupted. That is operator-observed
+acceptance for that retry, not a transport trace or proof about every restart.
+None of these earlier installed-service facts certifies this new source delta.
+Ordinary-permission adoption, real credential-dialog/storage acceptance and R5
+retain their existing limits; no running service was operated for this correction.
+
 ## R7 test correction, 2026-11-13
 
 After the operator selected "Correct and continue", the test retained the

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-utils",
+      "comment": "Report child launch failure through the rejected start promise only; reserve onError notifications for errors emitted by an established child.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils"
+}

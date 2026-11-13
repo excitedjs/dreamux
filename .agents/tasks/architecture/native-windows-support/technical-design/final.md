@@ -1,5 +1,23 @@
 # Native process and filesystem boundaries
 
+## Simplify correction, 2026-11-13
+
+- `SupervisedChild.start()` owns failed-launch rejection; `onError` remains for
+  actual child error events after launch. Entry code still observes its exit
+  promise immediately because startup can abort after listeners are installed.
+  Cleanup and stop-during-start sequencing are unchanged.
+- `prepareLogFile()` tightens an existing file directly. Only ENOENT enters
+  exclusive publication, followed by verification of the resulting file, including
+  a concurrent publisher's winner. Recursive historical-log checking and explicit
+  channel/workflow directory creation remain unchanged.
+- The Windows controller shares one status-to-PID query and transport-error
+  interpretation. A missing numeric PID has its own diagnostic. Readiness still
+  checks live membership; stop still retains the verified object before requesting
+  shutdown. Nonmember refusal, request/wait deadlines and forced cleanup remain.
+- `systemExecDirs(platform, env)` sorts environment keys before the Windows lookup,
+  matching duplicate-key precedence while preserving its explicit platform input.
+  No new environment abstraction or platform-dependent test shortcut is added.
+
 ## Cooperative stop follow-up, 2026-11-13
 
 The operator approved the [cooperative Windows stop solution](graceful-windows-stop.md)

@@ -569,6 +569,26 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
     ]);
   });
 
+  it.each([
+    { SystemRoot: 'ignored', SYSTEMROOT: 'selected' },
+    { SYSTEMROOT: 'selected', SystemRoot: 'ignored' },
+    { SystemRoot: 'ignored', SYSTEMROOT: undefined },
+    { SYSTEMROOT: undefined, SystemRoot: 'ignored' },
+  ])(
+    'uses Windows duplicate-key precedence for system directories: %j',
+    (env) => {
+      expect(systemExecDirs('win32', env)).toEqual(
+        env.SYSTEMROOT === undefined
+          ? []
+          : [
+              'selected',
+              join('selected', 'System32'),
+              join('selected', 'System32', 'WindowsPowerShell', 'v1.0'),
+            ],
+      );
+    },
+  );
+
   it('standardExecDirs combines user-local + system in order', () => {
     const home = '/home/example';
     const dirs = standardExecDirs({

@@ -679,8 +679,10 @@ committed destination first.
 
 `runServe()` awaits `prepareLogDirectory()` and privately prepares the server,
 channel, and workflow log destinations for its configured dispatcher IDs before
-constructing file loggers. `prepareLogFile()` creates an empty file without
-replacing existing content and confirms current-user ownership. This is needed
+constructing file loggers. `prepareLogFile()` verifies and tightens an existing
+file directly; only a missing file needs exclusive empty-file publication. It
+verifies the resulting file even when another publisher wins, preserving existing
+content and confirming current-user ownership. This is needed
 for elevated Windows tokens, whose newly created files otherwise default to
 Administrators ownership despite inheriting a private DACL. Log subdirectories
 are also explicitly owned by the current user, so a later limited service can

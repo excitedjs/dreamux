@@ -125,6 +125,25 @@ if ($instance.State -ne 4) { throw 'Windows service task did not enter Running s
   return { commands, handedOff: false };
 }
 
+async function queryServerPid(
+  socketPath: string,
+  timeoutMs: number,
+): Promise<number | null> {
+  try {
+    const response = (await adminJsonInvoker({ socketPath, timeoutMs }).invoke(
+      'server.status',
+      {},
+    )) as { pid?: number };
+    if (typeof response.pid !== 'number') {
+      throw new Error('server.status did not report a numeric process ID');
+    }
+    return response.pid;
+  } catch (error) {
+    if (error instanceof TransportError) return null;
+    throw error;
+  }
+}
+
 async function waitForWindowsService(
   task: WindowsTaskRegistration,
 ): Promise<void> {
@@ -135,23 +154,17 @@ async function waitForWindowsService(
     const job = await WindowsJob.open(windowsServiceJobName(root), 'query');
     try {
       if (job !== null) {
-        try {
-          const response = (await adminJsonInvoker({
-            socketPath: adminSocketPath(root),
-            timeoutMs: Math.max(1, Math.min(1000, deadline - Date.now())),
-          }).invoke('server.status', {})) as { pid?: number };
-          if (
-            typeof response.pid !== 'number' ||
-            !(await job.containsProcess(response.pid))
-          ) {
+        const pid = await queryServerPid(
+          adminSocketPath(root),
+          Math.max(1, Math.min(1000, deadline - Date.now())),
+        );
+        if (pid !== null) {
+          if (!(await job.containsProcess(pid))) {
             throw new Error(
               'The responding server does not belong to the Windows service Job',
             );
           }
           return;
-        } catch (error) {
-          if (!(error instanceof TransportError)) throw error;
-          // The real admin endpoint is not yet listening or answering.
         }
       }
     } finally {
@@ -192,22 +205,9 @@ async function requestWindowsServiceShutdown(
   job: WindowsJob,
 ): Promise<void> {
   const socketPath = adminSocketPath(windowsTaskRoot(task));
-  let response: { pid?: number };
-  try {
-    response = (await adminJsonInvoker({ socketPath, timeoutMs: 1000 }).invoke(
-      'server.status',
-      {},
-    )) as { pid?: number };
-  } catch (error) {
-    if (error instanceof TransportError) return;
-    throw error;
-  }
-  if (typeof response.pid !== 'number') {
-    throw new Error(
-      'The responding server does not belong to the Windows service Job',
-    );
-  }
-  const member = await job.retainMember(response.pid);
+  const pid = await queryServerPid(socketPath, 1000);
+  if (pid === null) return;
+  const member = await job.retainMember(pid);
   if (member === null) return; // It exited after replying to status.
   try {
     const deadline = Date.now() + SERVER_SHUTDOWN_DEADLINE_MS;
@@ -215,7 +215,7 @@ async function requestWindowsServiceShutdown(
       await adminJsonInvoker({
         socketPath,
         timeoutMs: SERVER_SHUTDOWN_DEADLINE_MS,
-      }).invoke('server.shutdown', { expectedPid: response.pid });
+      }).invoke('server.shutdown', { expectedPid: pid });
     } catch (error) {
       // An older installed server cannot cooperate. A lost response, however,
       // may follow an accepted request, so still grant the remaining time.

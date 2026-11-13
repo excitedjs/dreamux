@@ -14,6 +14,16 @@ should replace platform conditionals when they express the same contract.
 
 ## Scope and invariants
 
+The operator authorized the necessary fixes from the adjudicated simplify review
+on 2026-11-13. Launch failure must have one rejection path while later child
+errors remain observable. Existing logs must retain standalone permission
+verification without redundant temporary publication. Service PID queries may
+share parsing and transport handling, but readiness and retained-stop membership
+remain different operations. Windows SystemRoot lookup must preserve explicit
+platform selection and use the same duplicate-key precedence as child execution.
+No native permission check, Job control capability, graceful-stop budget or
+tree-exit guarantee is removed. This slice does not authorize live operations.
+
 The 2026-11-13 follow-up asks for smoother installation after a real local
 upgrade. A user who has the required Windows object permissions must not need
 an extra administrator-membership condition to adopt Administrators-owned
