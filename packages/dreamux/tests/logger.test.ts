@@ -7,12 +7,14 @@
  * honor DREAMUX_CONFIG_DIR, so injection — not an env var — is the seam.)
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
+
+import * as utils from '@excitedjs/dreamux-utils';
 
 import {
   createLogger,
@@ -24,6 +26,15 @@ import {
   expectOwnerOnlyPermissions,
   makeWorldReadable,
 } from '../../../common/testing/test-permissions.mjs';
+
+vi.mock('@excitedjs/dreamux-utils', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@excitedjs/dreamux-utils')>();
+  return {
+    ...actual,
+    publishFileExclusive: vi.fn(actual.publishFileExclusive),
+  };
+});
 
 function captureSink(): { sink: Writable; text: () => string } {
   const chunks: string[] = [];
@@ -43,6 +54,7 @@ describe('logger factory', () => {
     dir = mkdtempSync(join(tmpdir(), 'dreamux-logger-'));
   });
   afterEach(() => {
+    vi.clearAllMocks();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -73,6 +85,43 @@ describe('logger factory', () => {
     const contents = readFileSync(filePath, 'utf8');
     expect(contents).toContain('existing log line\n');
     expect(contents).toContain('"msg":"x"');
+  });
+
+  it('prepares an existing log directly without temporary publication', async () => {
+    const filePath = join(dir, 'existing.log');
+    writeFileSync(filePath, 'existing log line\n');
+    await makeWorldReadable(dir, 0o755);
+    await makeWorldReadable(filePath, 0o644);
+
+    await prepareLogFile(filePath);
+
+    expect(utils.publishFileExclusive).not.toHaveBeenCalled();
+    await expectOwnerOnlyPermissions(dir, 0o700);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
+    expect(readFileSync(filePath, 'utf8')).toBe('existing log line\n');
+  });
+
+  it('verifies a concurrent creation winner without replacing its log', async () => {
+    const filePath = join(dir, 'racing.log');
+    const actual = await vi.importActual<
+      typeof import('@excitedjs/dreamux-utils')
+    >('@excitedjs/dreamux-utils');
+    let published: boolean | undefined;
+    vi.mocked(utils.publishFileExclusive).mockImplementationOnce(
+      async (path, data, options) => {
+        // Another writer publishes after the missing-file check.
+        await actual.publishFileExclusive(path, 'concurrent log line\n');
+        await makeWorldReadable(path, 0o644);
+        published = await actual.publishFileExclusive(path, data, options);
+        return published;
+      },
+    );
+
+    await prepareLogFile(filePath);
+
+    expect(published).toBe(false);
+    expect(readFileSync(filePath, 'utf8')).toBe('concurrent log line\n');
+    await expectOwnerOnlyPermissions(filePath, 0o600);
   });
 
   it('rejects linked log entries without tightening the external target', async () => {

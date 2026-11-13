@@ -9,7 +9,7 @@
  * -killed in afterEach even on assertion failure, so a leftover ignore-SIGTERM
  * child can never survive the test process.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -250,7 +250,7 @@ describe('SupervisedChild', () => {
     await first;
   });
 
-  it('a bogus command rejects start() and also notifies onError', async () => {
+  it('a bogus command rejects start() without notifying onError', async () => {
     const child = new SupervisedChild({
       kind: 'spawn',
       command: '/definitely/not/a/real/binary/dreamux-utils-test',
@@ -259,7 +259,37 @@ describe('SupervisedChild', () => {
     const errors: Error[] = [];
     child.onError((error) => errors.push(error));
     await expect(child.start()).rejects.toThrow();
-    expect(errors.length).toBeGreaterThan(0);
+    expect(errors).toEqual([]);
+  });
+
+  it('reports a post-start child IPC error through onError', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dreamux child error '));
+    const modulePath = join(root, 'child.cjs');
+    const child = new SupervisedChild({
+      kind: 'fork',
+      modulePath,
+      options: { silent: true },
+    });
+    started.push(child);
+    try {
+      await writeFile(modulePath, 'setInterval(() => {}, 1000)');
+      const proc = await child.start();
+      const errors: Error[] = [];
+      child.onError((error) => errors.push(error));
+      proc.disconnect();
+      proc.send!({ message: 'after disconnect' });
+      await vi.waitFor(
+        () => {
+          if (errors.length === 0) throw new Error('child error not observed');
+        },
+        { timeout: 2_000 },
+      );
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ code: 'ERR_IPC_CHANNEL_CLOSED' });
+    } finally {
+      await child.stop();
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('onExit fires with the exit code when the child exits on its own', async () => {

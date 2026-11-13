@@ -48,6 +48,8 @@ import {
 } from '@excitedjs/dreamux-utils';
 import pino, { type DestinationStream, type LoggerOptions } from 'pino';
 
+import { isNotFound } from './fs-errors.js';
+
 /**
  * The neutral `DreamuxLogger` contract is pino-compatible (fields-first), so a
  * pino logger satisfies it structurally. This compile-time probe is the
@@ -120,6 +122,12 @@ export async function prepareLogDirectory(path: string): Promise<void> {
 /** Prepare a private append destination without replacing existing log content. */
 export async function prepareLogFile(path: string): Promise<void> {
   await ensureOwnerOnlyDir(dirname(path));
+  try {
+    await ensureOwnerOnlyFile(path);
+    return;
+  } catch (error) {
+    if (!isNotFound(error)) throw error;
+  }
   await publishFileExclusive(path, '');
   await ensureOwnerOnlyFile(path);
 }

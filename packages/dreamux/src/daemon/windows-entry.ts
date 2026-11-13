@@ -59,8 +59,8 @@ export async function runWindowsService(
           child.onError(reject);
         },
       );
-      // start() can throw after also notifying onError. Observe that rejection
-      // immediately, including when startup never reaches the await below.
+      // A post-spawn error can reject this while start() is being aborted.
+      // Observe it even if startup never reaches the await below.
       void exited.catch(() => {});
       try {
         await child.start();

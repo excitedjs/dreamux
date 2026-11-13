@@ -550,9 +550,9 @@ export function systemExecDirs(
   env: NodeJS.ProcessEnv = {},
 ): string[] {
   if (platform === 'win32') {
-    const key = Object.keys(env).find(
-      (name) => name.toLowerCase() === 'systemroot',
-    );
+    const key = Object.keys(env)
+      .sort()
+      .find((name) => name.toLowerCase() === 'systemroot');
     const root = key === undefined ? undefined : env[key];
     return root === undefined
       ? []

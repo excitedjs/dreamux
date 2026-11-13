@@ -89,20 +89,13 @@ export class SupervisedChild {
 
   private async doStart(): Promise<ChildProcess> {
     let child: ChildProcess;
-    try {
-      if (process.platform === 'win32') {
-        const { launchWindowsChild } = await import('./windows-child.js');
-        const launched = await launchWindowsChild(this.launch);
-        child = launched.child;
-        this.windowsJob = launched.job;
-      } else {
-        child = await launchChild(this.launch);
-      }
-    } catch (error) {
-      this.notifyError(
-        error instanceof Error ? error : new Error(String(error)),
-      );
-      throw error;
+    if (process.platform === 'win32') {
+      const { launchWindowsChild } = await import('./windows-child.js');
+      const launched = await launchWindowsChild(this.launch);
+      child = launched.child;
+      this.windowsJob = launched.job;
+    } else {
+      child = await launchChild(this.launch);
     }
     this.child_ = child;
     // stop() joins pending launch before reading this process-tree authority.

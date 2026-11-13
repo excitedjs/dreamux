@@ -75,6 +75,9 @@ directly; operating-system libraries load only when a Windows operation runs.
   alone can reach zero before process resources are released. Kernel
   kill-on-close also cleans the tree if its owning host dies. No PID ancestry
   discovery or command-line termination is used.
+  A failed launch rejects `start()` without also notifying `onError`; that
+  subscription observes errors emitted by an established child. Callers still
+  await `start()` and join `stop()` when startup or later work fails.
 - **windows-job** — native Job ownership for the Windows launch adapter and
   daemon service boundary. Named service Jobs have a protected current-user ACL;
   daemon control can acquire an existing Job or reserve its name before startup.
