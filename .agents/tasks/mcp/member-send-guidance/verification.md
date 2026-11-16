@@ -54,11 +54,13 @@ Each claim in the new wording was verified rather than inferred:
   call), and the `failed` variant of `RuntimeCompletion` has no `resultText`
   field at all. The owner therefore receives `"…turn failed."` with an empty
   body, pinned by `completion-renderer.test.ts`. This is why the shipped text
-  says the *outcome* is reported and a completed turn's message is *the text
-  that report carries* — the earlier draft's unconditional "your final message
-  is what reaches it" promised a delivery the failed path does not perform, and
-  "a completed turn carries your final message as that report" would still have
-  been false for a completed turn whose text is null.
+  says the *outcome* is reported and a completed turn's final message is *what
+  that report delivers* — the earlier draft's unconditional "your final message
+  is what reaches it" promised a delivery the failed path does not perform,
+  "a completed turn carries your final message as that report" was still false
+  for a completed turn whose text is null, and "is the text that report carries"
+  was false for a result long enough to be spilled to a file, where the report
+  carries the path. "Delivers" holds in all three shapes.
 - **Selection is by order, not by a phase filter.** The codex adapter reads the
   last `agentMessage` item and never inspects `AgentMessage.phase`; nothing in
   `packages/agent-runtime/codex/src/` reads that field. Commentary items precede

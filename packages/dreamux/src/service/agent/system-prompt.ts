@@ -36,7 +36,7 @@ export function teammateSystemPromptOptions(
     ...(owner === undefined
       ? []
       : [
-          `Your owner is the ${owner.role} ${JSON.stringify(owner.name)}. Your turn's outcome is reported to it whenever its runtime is available, and a completed turn's final message is the text that report carries. You can use teammate.send to pass a message to your owner or a peer in your collection before your turn ends, and teammate.list to list your owner and peers.`,
+          `Your owner is the ${owner.role} ${JSON.stringify(owner.name)}. Your turn's outcome is reported to it whenever its runtime is available, and a completed turn's final message is what that report delivers. You can use teammate.send to pass a message to your owner or a peer in your collection before your turn ends, and teammate.list to list your owner and peers.`,
         ]),
     ...(operationAppend ?? []),
     ...pluginInstructions,

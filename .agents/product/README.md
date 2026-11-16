@@ -419,10 +419,10 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   returns admission status and any error, with a reminder on successful
   submission that a reply requires the recipient's explicit send.
   Member guidance names the actual owner, then states the delivery fact — the
-  turn's outcome is reported, and a completed turn carries the final message —
-  before describing the send/list capabilities. `send` states its own
-  condition: it carries what the recipient needs before the member's turn ends,
-  rather than progress the turn result already delivers.
+  turn's outcome is reported, and a completed turn's final message is what that
+  report delivers — before describing the send/list capabilities. `send` states
+  its own condition: it carries what the recipient needs before the member's
+  turn ends, rather than progress the turn result already delivers.
   Sender identity is host-bound; the model cannot forge it or address peers in
   another collection. Explicit messages reach only the target. Replies require
   an explicit send; a send receipt confirms admission. Sending to a closed peer

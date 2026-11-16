@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "An ordinary member is told what reaches its owner: the turn's outcome is reported, and a completed turn carries the final message. `teammate.send` states when the call is worth making — what the recipient needs before the turn ends — instead of leaving members to narrate progress that their own turn result already delivers. No delivery, admission, receipt, or tool-schema change.",
+      "comment": "An ordinary member is told what reaches its owner: the turn's outcome is reported, and a completed turn's final message is what that report delivers. `teammate.send` states when the call is worth making — what the recipient needs before the turn ends — instead of leaving members to narrate progress that their own turn result already delivers. No delivery, admission, receipt, or tool-schema change.",
       "type": "patch",
       "packageName": "@excitedjs/dreamux"
     }

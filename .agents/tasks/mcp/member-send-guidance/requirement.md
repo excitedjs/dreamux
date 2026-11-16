@@ -37,7 +37,9 @@ Root cause, verified in source rather than inferred from the sample:
   (`packages/agent-runtime/codex/src/events.ts`, `extractAssistantText`);
   Claude Code takes the `result` text, falling back to the last assistant text
   (`packages/agent-runtime/claude-code/src/stream.ts`, `outcome()`).
-  Intermediate commentary never reaches the owner.
+  Selection is by order, not by phase: an intermediate commentary item does not
+  reach the owner's context because a final answer follows it, not because
+  anything filters on its phase.
 - `teammate.send` is therefore the member's only mid-turn channel. That is why
   it reaches for it to narrate progress, and also why it uses it at the very end
   of a turn where the automatic notice already says the same thing.
@@ -51,8 +53,10 @@ Root cause, verified in source rather than inferred from the sample:
 Two model-facing texts, both in `packages/dreamux/src/service/`:
 
 1. `agent/system-prompt.ts` — the ordinary-member communication statement.
-   The fact that a turn's final answer is delivered to the owner becomes the
-   leading statement instead of a subordinate clause.
+   The delivery fact — the turn's outcome is reported — follows the owner
+   address and precedes the send/list capability, instead of trailing it as a
+   subordinate clause. A completed turn's final message is what that report
+   delivers.
 2. `agent/member-mcp.ts` — the `send` tool description gains the condition
    under which the call is worth making.
 
@@ -78,9 +82,10 @@ Two model-facing texts, both in `packages/dreamux/src/service/`:
 ## Acceptance criteria
 
 - The member communication statement states the delivery fact before the
-  send/list capability: the turn's outcome is reported, and a completed turn
-  carries the final message. It must be accurate about failed turns, whose text
-  is not delivered.
+  send/list capability: the turn's outcome is reported, and a completed turn's
+  final message is what that report delivers. It must be accurate about failed
+  turns, whose text is not delivered, and about a completed turn that produced
+  no text.
 - The `send` description states when the call is worth making, in terms of the
   recipient's need before the turn ends. It does not restate the delivery fact;
   the prompt owns that.

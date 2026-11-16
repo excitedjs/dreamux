@@ -26,7 +26,7 @@ Facts the new text may state, each checked against current code:
    field. The owner receives `"…turn failed."` with an empty body, pinned by
    `completion-renderer.test.ts`. Any sentence promising the final message
    unconditionally is therefore false; the shipped text says the *outcome* is
-   reported and a *completed* turn carries the message.
+   reported and a completed turn's final message is what that report delivers.
 3. **Selection is by order, not by a phase filter.** The adapter never reads
    `AgentMessage.phase`; it takes the last `agentMessage` item. Commentary
    precedes the final answer in the observed shape, which is why the last item
@@ -77,16 +77,19 @@ Requirements for the replacement:
 Shipped:
 
 > Your owner is the {role} "{name}". Your turn's outcome is reported to it
-> whenever its runtime is available, and a completed turn's final message is the
-> text that report carries. You can use teammate.send to pass a message to your
-> owner or a peer in your collection before your turn ends, and teammate.list to
-> list your owner and peers.
+> whenever its runtime is available, and a completed turn's final message is what
+> that report delivers. You can use teammate.send to pass a message to your owner
+> or a peer in your collection before your turn ends, and teammate.list to list
+> your owner and peers.
 
-"Carries" is the accurate verb: a completed turn's `resultText` may itself be
-null (both adapters produce that — claude-code when the text is empty, codex
-when the turn had no assistant message), in which case the report still goes out
-with no body. Saying the message *is* the report would be false in that case;
-saying it is the text the report carries is true either way.
+"Delivers" is the accurate verb, and it survives all three shapes the text can
+take. A completed turn's `resultText` may be null (both adapters produce that —
+claude-code when the text is empty, codex when the turn had no assistant
+message), in which case the report still goes out with no body. A result longer
+than the inline budget is spilled to a file and the report carries the path
+(`completion-renderer.ts`, `completion-body.ts`). Saying the message *is* the
+report, or that the report *carries the text*, would be false in one of those
+cases; saying the message is what the report delivers holds in all three.
 
 The condition lives in the description, not here (see "Why this shape" below).
 An earlier draft of this page put the condition and two imperatives in this
