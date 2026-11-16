@@ -45,14 +45,27 @@ launched member rather than stopping at source:
 
 Each claim in the new wording was verified rather than inferred:
 
-- Only a turn's final assistant message reaches the owner. Codex reads the last
-  `agentMessage` item (`events.ts`, `extractAssistantText`); Claude Code reads
-  the `result` text with a last-assistant-text fallback (`stream.ts`,
-  `outcome()`).
-- Codex marks intermediate assistant messages `phase: "commentary"`
-  (app-server `AgentMessage.phase`); the adapter reads their text as display
-  activity and never selects one as the result. So mid-turn narration is
-  visible on the conversation display and absent from the owner's context.
+- **A completed turn's final message is what reaches the owner, and only a
+  completed turn carries any text at all.** Codex reads the last `agentMessage`
+  item (`events.ts`, `extractAssistantText`); Claude Code reads the `result`
+  text with a last-assistant-text fallback (`stream.ts`, `outcome()`). Core then
+  hard-codes `result: null` for a `failed` or `stopped` turn
+  (`service/agent/service.ts`, the `deliverRuntime` call), and the `failed`
+  variant of `RuntimeCompletion` has no `resultText` field. The owner therefore
+  receives `"…turn failed."` with an empty body, pinned by
+  `completion-renderer.test.ts`. This is why the shipped text says the
+  *outcome* is reported and a *completed* turn carries the final message —
+  the earlier draft's unconditional "your final message is what reaches it"
+  promised a delivery the failed path does not perform.
+- **Selection is by order, not by a phase filter.** The codex adapter reads the
+  last `agentMessage` item and never inspects `AgentMessage.phase`; nothing in
+  `packages/agent-runtime/codex/src/` reads that field. Commentary items precede
+  the final answer in practice, so the last item is the final answer in the
+  observed shape — but that is an ordering fact, not a filter. An earlier draft
+  of this page claimed a phase filter; it does not exist.
+- Intermediate commentary still reaches the conversation display as
+  `assistant.message` activity, which is a separate consumer from the owner's
+  context.
 - `teammate.send` reaches the owner through `submitInput` with the peer
   reminder; a peer-directed send goes through the collection's `send` and the
   owner is not copied.
@@ -68,6 +81,16 @@ Each claim in the new wording was verified rather than inferred:
 - **No restatement of the delivery fact in the `send` description.** The role
   prompt owns it; repeating it in the tool description would give one rule two
   owners.
+- **The usage condition lives in the description, not the prompt.** An earlier
+  draft stated the condition — "what that recipient needs before your turn
+  ends — a blocker, a decision, or a fact that changes its next step" — on both
+  surfaces, and added two imperatives to the prompt ("use it for …", "let your
+  turn result carry the rest"). Both were removed after review: the duplicated
+  rule violated the one-owner bullet this same change adds to
+  [model-facing writing](/.agents/domains/model-facing-writing.md), and the
+  imperatives contradicted the design's own "no imperative" rationale. The
+  prompt now states the delivery fact and the capability; the description states
+  the condition.
 
 ## Not verified
 

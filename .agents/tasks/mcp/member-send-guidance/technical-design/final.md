@@ -14,28 +14,40 @@ schema, routing, or adapter change. No new tool, field, or capability.
 
 Facts the new text may state, each checked against current code:
 
-1. **A turn's final assistant message is what reaches the owner.** Codex takes
-   the last `agentMessage` item (`events.ts`, `extractAssistantText`); Claude
-   Code takes the `result` text, falling back to the last assistant text
+1. **Only a completed turn's final assistant message reaches the owner.** Codex
+   takes the last `agentMessage` item (`events.ts`, `extractAssistantText`);
+   Claude Code takes the `result` text, falling back to the last assistant text
    (`stream.ts`, `outcome()`). The completion notice wraps that text
    (`completion-renderer.ts`).
-2. **Intermediate assistant messages are not delivered.** Codex marks them
-   `phase: "commentary"` (app-server `AgentMessage.phase`); the adapter reads
-   the item's text for display activity and never selects it as the result.
-   They still reach the conversation display (the Channel's COT), which is a
-   separate consumer — so a member's mid-turn narration is visible on the
-   display surface and absent from the owner's context.
-3. **`send` is the only path from a member into its owner's context before its
+2. **A failed or stopped turn carries no message text at all.** Core hard-codes
+   `result: null` for both (`service/agent/service.ts`, the `deliverRuntime`
+   call), and the `failed` variant of `RuntimeCompletion` has no `resultText`
+   field. The owner receives `"…turn failed."` with an empty body, pinned by
+   `completion-renderer.test.ts`. Any sentence promising the final message
+   unconditionally is therefore false; the shipped text says the *outcome* is
+   reported and a *completed* turn carries the message.
+3. **Selection is by order, not by a phase filter.** The adapter never reads
+   `AgentMessage.phase`; it takes the last `agentMessage` item. Commentary
+   precedes the final answer in the observed shape, which is why the last item
+   is the answer — an ordering fact, not a filter. An earlier draft of this page
+   claimed a phase filter that does not exist.
+4. **Intermediate commentary is still displayed.** It reaches the conversation
+   display as `assistant.message` activity, a separate consumer from the owner's
+   context — so a member's mid-turn narration is visible on the display surface
+   and absent from the owner's context.
+5. **`send` is the only path from a member into its owner's context before its
    turn ends.** It submits input with the peer reminder; the owner sees
    `<task from="…">` plus that reminder (`member-mcp.ts`, `submission-sources.ts`).
-4. **A send to a peer is not a send to the owner.** A peer-directed message
+6. **A send to a peer is not a send to the owner.** A peer-directed message
    reaches only that peer; the owner receives the *peer's* eventual turn result,
-   not the message. This asymmetry is why a single sentence covering both
-   recipients must not imply the owner sees peer traffic.
-5. **A send is admitted, not answered.** The receipt says admission only, and a
+   not the message.
+7. **A send is admitted, not answered.** The receipt says admission only, and a
    reply needs the recipient's own send.
-6. **Every measured send in the sample landed while the owner's turn was open**,
+8. **Every measured send in the sample landed while the owner's turn was open**,
    so all of them folded into that turn. The text may not promise a new turn.
+   A busy recipient's runtime may not read the input until after the sender's
+   turn ends, so the text describes when the member sends, never when the
+   recipient reads.
 
 ## Text 1 — member communication statement
 
@@ -48,30 +60,30 @@ Current (one run-on sentence, delivery as a trailing clause):
 
 Requirements for the replacement:
 
-- Lead with the delivery fact. A member that knows its final answer *is* the
-  report stops treating `send` as the report.
+- Put the delivery fact before the capability, so a member that knows its
+  completed turn *is* the report stops treating `send` as the report. It cannot
+  lead the sentence: the owner address must come first.
 - Keep the owner address, the two tools, and the availability qualifier. The
   qualifier is a real limit (`runtime is available`), not decoration.
-- State the condition for `send`: information the owner needs *before the turn
-  ends*. That is the boundary the sample shows members missing — they sent
-  progress and near-final summaries, both of which the turn result already
-  carries or supersedes.
-- Name the mid-turn case explicitly so the blocker path stays obviously
-  available. This is a stated condition, not a prohibition.
+- Do not put the `send` usage condition here — the tool description owns it.
+- Keep the delivery fact accurate about failed turns: the outcome is reported,
+  the message only on completion.
 - Stay short. The 2026-10-14 change in
   [PR #475](https://github.com/excitedjs/dreamux/pull/475) deliberately cut a
   much longer paragraph down to this one sentence; the replacement must not
   restore that length.
 
-Draft:
+Shipped:
 
-> Your owner is the {role} "{name}". Your turn's final message is what reaches
-> it, together with the turn's outcome, whenever its runtime is available.
-> teammate.send reaches your owner or a same-collection peer before your turn
-> ends; use it for what your owner needs while you are still working — a
-> blocker, a decision it must make, or a fact that changes what it does next —
-> and let your turn result carry the rest. teammate.list names your owner and
-> peers.
+> Your owner is the {role} "{name}". Your turn's outcome is reported to it
+> whenever its runtime is available, and a completed turn carries your final
+> message as that report. You can use teammate.send to pass a message to your
+> owner or a peer in your collection before your turn ends, and teammate.list to
+> list your owner and peers.
+
+The condition lives in the description, not here (see "Why this shape" below).
+An earlier draft of this page put the condition and two imperatives in this
+sentence; review removed them.
 
 ## Text 2 — `send` description
 
@@ -85,31 +97,37 @@ Requirements:
 
 - Keep the addressing fact, the closed-peer reopen fact, and the admission
   behavior. Each is a real capability a caller relies on.
-- Add the same usage condition as text 1, in this tool's own voice: the tool
-  description owns the contract of *this* tool.
-- Do not restate the receipt reminder; it is concatenated directly after.
+- State the usage condition here, in this tool's own voice: the tool description
+  owns the contract of *this* tool.
+- Do not restate the delivery fact or the receipt reminder; the prompt owns the
+  first, and the receipt is concatenated directly after.
 - Do not claim the owner sees peer traffic.
 
-Draft:
+Shipped:
 
-> Send a message to your owner or a same-collection peer by concrete name, for
-> what that recipient needs before your turn ends — a blocker, a decision, or a
-> fact that changes its next step. Your turn's final message reaches your owner
-> on its own, so progress and results that can wait belong there instead. A
-> message to a peer reaches that peer only; your owner receives its own turn
-> results, not this message. A closed peer reopens its recorded session; idle
-> input wakes the recipient and busy input follows its runtime admission.
-> {receipt reminder}
+> Send a message to your owner or a same-collection peer by concrete name, when
+> that recipient needs something before your turn ends — a blocker, a decision,
+> or a fact that changes its next step. A closed peer reopens its recorded
+> session; idle input wakes the recipient and busy input follows its runtime
+> admission. {receipt reminder}
 
-## Why this shape and not an imperative
+## Why the condition has one home
 
 [Model-facing writing](/.agents/domains/model-facing-writing.md) reserves
 imperatives for the dispatch boundary: "a reminder states a consequence the
 model cannot see, at the moment of the action, and does not generally order the
-model what to do." Both texts therefore state *what reaches the owner and
-when*, and let the condition follow from that consequence, rather than issuing
-"do not send progress updates". The member can still decide a blocker is worth
-reporting; the text only removes the reason to narrate.
+model what to do." It also gives each rule one owner.
+
+The delivery fact belongs to the role prompt, which every member reads on every
+turn. The usage condition belongs to the tool description, which the member
+reads when it is deciding whether to call this tool. An earlier draft stated the
+condition on both surfaces with the same three-item list and added two
+imperatives to the prompt ("use it for …", "let your turn result carry the
+rest"); review removed both. The shipped texts state the delivery fact once and
+the condition once, and neither issues an order.
+
+The member can still decide a blocker is worth reporting. The text removes the
+reason to narrate; it does not remove the capability.
 
 ## Verification plan
 

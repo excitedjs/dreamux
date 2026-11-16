@@ -418,9 +418,9 @@ Implementation: [provider runtime](../domains/provider-runtime.md#codex-reasonin
   status, configured runtime, and intent, excluding the caller itself. `send`
   returns admission status and any error, with a reminder on successful
   submission that a reply requires the recipient's explicit send.
-  Member guidance leads with the delivery fact — the turn's final message is
-  what reaches the owner, reported with the turn's outcome — then names the
-  actual owner and describes the send/list capabilities. `send` states its own
+  Member guidance names the actual owner, then states the delivery fact — the
+  turn's outcome is reported, and a completed turn carries the final message —
+  before describing the send/list capabilities. `send` states its own
   condition: it carries what the recipient needs before the member's turn ends,
   rather than progress the turn result already delivers.
   Sender identity is host-bound; the model cannot forge it or address peers in

@@ -77,11 +77,13 @@ Two model-facing texts, both in `packages/dreamux/src/service/`:
 
 ## Acceptance criteria
 
-- The member communication statement leads with the delivery fact: the turn's
-  final answer is what the owner receives.
+- The member communication statement states the delivery fact before the
+  send/list capability: the turn's outcome is reported, and a completed turn
+  carries the final message. It must be accurate about failed turns, whose text
+  is not delivered.
 - The `send` description states when the call is worth making, in terms of the
-  owner's need before the turn ends, and states that a turn result already
-  reaches the owner.
+  recipient's need before the turn ends. It does not restate the delivery fact;
+  the prompt owns that.
 - Both texts stay true for a TeamLeader owner and a Dispatcher-agent owner, and
   for both in-tree runtimes.
 - Both texts obey
