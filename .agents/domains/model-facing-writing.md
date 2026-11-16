@@ -42,6 +42,10 @@ Current source owners:
   "the user sees only the reply tool", the dispatch delegate owns "the result
   arrives later", the skill owns methodology, and the tool description owns
   the contract of that tool.
+- A member's delivery fact belongs to its role prompt, not to a tool
+  description. `teammate.send`'s description states when that call is worth
+  making; it does not restate that a turn result reaches the owner, because the
+  prompt already says so once.
 - Skills load for the work they guide, not as a standing condition of a turn.
   Tool-specific skills route through their frontmatter description and the
   relevant tool description. The TeamLeader prompt routes missing collaboration

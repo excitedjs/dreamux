@@ -36,7 +36,7 @@ export function teammateSystemPromptOptions(
     ...(owner === undefined
       ? []
       : [
-          `Your owner is the ${owner.role} ${JSON.stringify(owner.name)}. You can use teammate.send to pass a message to your owner or a peer in your collection, and teammate.list to list your owner and peers. Your normally completed and failed turn results are automatically reported to your owner when its runtime is available.`,
+          `Your owner is the ${owner.role} ${JSON.stringify(owner.name)}. Your turn's final message is what reaches it, reported with the turn's outcome whenever its runtime is available. teammate.send reaches your owner or a same-collection peer before your turn ends; use it for what that recipient needs while you are still working — a blocker, a decision it must make, or a fact that changes its next step — and let your turn result carry the rest. teammate.list names your owner and peers.`,
         ]),
     ...(operationAppend ?? []),
     ...pluginInstructions,
