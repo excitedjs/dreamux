@@ -10,9 +10,9 @@ import {
   notifyResumedRestart,
 } from '../../service/dispatcher-service/restart-intent.js';
 import { controlUserService, type DaemonVerb } from '../../daemon/control.js';
+import { createServiceHost } from '../../daemon/host.js';
 import { getServiceStatus } from '../../daemon/status.js';
 import { windowsServiceRoot } from '../../daemon/windows.js';
-import { ExecaCommandRunner } from '../../platform/command-runner.js';
 import { restartIntentPath } from '../../platform/paths.js';
 import { validateDispatcherId } from '../../platform/dispatcher-id.js';
 import { printServiceWarnings } from './service-output.js';
@@ -187,7 +187,7 @@ async function handleDaemonRestart(argv: DaemonRestartArgv): Promise<void> {
     ...(process.platform === 'win32'
       ? {
           path: restartIntentPath(
-            await windowsServiceRoot(new ExecaCommandRunner()),
+            await windowsServiceRoot(createServiceHost().runner),
           ),
         }
       : {}),

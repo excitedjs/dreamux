@@ -1,5 +1,51 @@
 # Verification
 
+## Rebase and PR-comment corrections, 2026-11-16
+
+The branch was rebased onto `next` including [PR #489](https://github.com/excitedjs/dreamux/pull/489). Independent range-diff review
+confirmed twenty-two equivalent commits and one conflict-context adjustment:
+the Feishu fixture retains both upstream identity initialization and this PR's
+CoT injection. The isolated fixture file passed all six cases after rebase.
+
+The first isolation filter selected no cases (six were filtered out), so it
+was not accepted as validation. The subsequent complete isolation file passed
+all six cases. Final focused runs passed 54 utils cases with three existing
+skips, and 133 host cases with one opt-in skip. They include actual Node/cmd
+children observing Scheduler-variable inheritance, case-insensitive captured
+overrides and registered-root precedence, with Scheduler query intercepted.
+The earlier invalid Task Data root-alias fixture input was removed before
+execution; the parser's root-override rejection remains unchanged.
+
+The final unified build passed in 3.82 seconds, test typechecking in 8.37 seconds
+and lint in 37.04 seconds. The full default suite passed **3,254 cases / 26
+skipped**, 3,280 total, in 147.4 seconds. Independent recount found exactly one
+Tests summary in each unfiltered package log: types 81/0, utils 247/5, host
+1,380/21, transport 187/0, channel 836/0, Codex 243/0, Claude 269/0 and bootstrap
+11/0. Host reported 111 passed files and four skipped files, with 124.41 seconds
+of Vitest duration. Relevant complete files include process-command 14 passed,
+daemon 42 passed, daemon-windows 18 passed/one skipped, windows-task 29 passed
+and Windows control six passed. All
+successful synthetic outer runs reported exit 0, null signal, unchanged sentinel
+files, no temporary children and removal of the captured root. Real Scheduler,
+installed-model and authenticated live-model gates remained excluded. Focused
+filtered cases are not counted as full-suite skips.
+
+Independent static review covers the complete thirteen-file implementation/test
+delta, affected owner documents, both patch notes and all fourteen draft replies.
+The notes were generated through Rush and the final staged change verification
+against `origin/next` exited 0. The historical Bash-launcher wording in one reply
+was corrected before publication. Native credential, ordinary-permission,
+cross-session, Task ACL and deferred R5 acceptance boundaries are unchanged;
+no installed service or package was operated for this follow-up. New-head CI
+and public thread resolution are delivery evidence, separate from these local
+results and earlier published revisions.
+
+The first complete KB check rejected two direct commit citations in the new
+records. They were replaced with the corresponding upstream PR link; the
+subsequent no-exception check passed: **64 task records and 420 reachable
+files**. This was a documentation-reference correction, not a product change
+or waived gate. Mandatory commit checks and fresh CI remain delivery gates.
+
 ## Simplify correction, 2026-11-13
 
 The operator authorized necessary corrections after the independent simplify

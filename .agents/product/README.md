@@ -703,7 +703,9 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   not enter JavaScript, arguments, environment or Dreamux configuration. The initial
   trigger remains user logon. Registration preserves existing triggers, settings,
   description and run level. The Task Action invokes the published service entry;
-  Task Data owns the captured environment and business command. `DREAMUX_ROOT`
+  Task Data owns the captured environment overrides and business command. The
+  service retains unrelated Scheduler environment values; captured overrides
+  win regardless of Windows key casing. `DREAMUX_ROOT`
   comes from the registered WorkingDirectory's parent, not a duplicate Data
   field or the controlling CLI's environment. The displayed `unitPath` is a native
   task identifier, not a file. Stop disables the task and reserves its Job, then

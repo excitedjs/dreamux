@@ -24,6 +24,8 @@ import { getServiceStatus } from '../src/daemon/status.js';
 import { assertWindowsServiceInstallable } from '../src/daemon/windows.js';
 import {
   windowsPowerShellEnvironment,
+  windowsServiceJobName,
+  windowsTaskData,
   type WindowsTaskRegistration,
 } from '../src/daemon/windows-task.js';
 import {
@@ -31,10 +33,7 @@ import {
   type CommandRunner,
 } from '../src/platform/command-runner.js';
 import { TransparentFileLedger } from '../src/platform/file-ledger.js';
-import {
-  restartIntentPath,
-  windowsServiceJobName,
-} from '../src/platform/paths.js';
+import { restartIntentPath } from '../src/platform/paths.js';
 
 const serviceEntry = fileURLToPath(
   new URL('../dist/daemon/windows-entry.js', import.meta.url),
@@ -471,7 +470,7 @@ await runWindowsService(${JSON.stringify(task.name)}, {
       const launcher = join(fixtureDir, 'launcher.cjs');
       await writeFile(
         launcher,
-        `console.log(JSON.stringify({arg: process.argv[2], home: process.env.USERPROFILE})); console.error('fixture stderr'); process.exitCode = 7;`,
+        `console.log(JSON.stringify({arg: process.argv[2], home: process.env.USERPROFILE, inherited: process.env.DREAMUX_ENV_INHERITED, overridden: process.env.DREAMUX_ENV_OVERRIDE, root: process.env.DREAMUX_ROOT})); console.error('fixture stderr'); process.exitCode = 7;`,
       );
       const shim = join(fixtureDir, 'launcher.cmd');
       if (kind === 'cmd')
@@ -483,11 +482,17 @@ await runWindowsService(${JSON.stringify(task.name)}, {
         ...fixtureAnswers,
         dreamuxBin: kind === 'cmd' ? shim : launcher,
       });
+      const data = windowsTaskData(task);
+      data.environment['Dreamux_Env_Override'] = 'captured';
+      task.data = JSON.stringify(data);
       const wrapper = join(fixtureDir, 'invoke-entry.mjs');
       await writeFile(
         wrapper,
         `
 import { runWindowsService } from ${JSON.stringify(new URL('../dist/daemon/windows-entry.js', import.meta.url).href)};
+process.env.DREAMUX_ENV_INHERITED = 'scheduler';
+process.env.DREAMUX_ENV_OVERRIDE = 'ambient';
+process.env.DREAMUX_ROOT = ${JSON.stringify(join(fixtureRoot, 'ambient-root'))};
 await runWindowsService(${JSON.stringify(task.name)}, {
   capture: async () => ${JSON.stringify(JSON.stringify(task))},
   run: async () => { throw new Error('Unexpected command execution'); },
@@ -516,7 +521,13 @@ await runWindowsService(${JSON.stringify(task.name)}, {
             .replace(/^\uFEFF/, '')
             .trim(),
         ),
-      ).toEqual({ arg: 'serve', home: fixtureRoot });
+      ).toEqual({
+        arg: 'serve',
+        home: fixtureRoot,
+        inherited: 'scheduler',
+        overridden: 'captured',
+        root: fixtureRoot,
+      });
       expect(
         await readFile(join(fixtureRoot, 'logs', 'daemon.stderr.log'), 'utf8'),
       ).toContain('fixture stderr');

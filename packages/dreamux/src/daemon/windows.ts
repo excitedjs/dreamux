@@ -6,7 +6,7 @@ import { WindowsJob } from '@excitedjs/dreamux-utils';
 import { AdminClientError, adminJsonInvoker } from '../admin/client.js';
 import type { CommandRunner } from '../platform/command-runner.js';
 import { TransportError } from '../platform/errors.js';
-import { adminSocketPath, windowsServiceJobName } from '../platform/paths.js';
+import { adminSocketPath } from '../platform/paths.js';
 import { SERVER_SHUTDOWN_DEADLINE_MS } from '../server/shutdown.js';
 import type { ServiceInstallAnswers } from './environment.js';
 import {
@@ -16,6 +16,7 @@ import {
   windowsPowerShellArgs,
   windowsPowerShellEnvironment,
   windowsServiceEntryPath,
+  windowsServiceJobName,
   windowsTaskData,
   windowsTaskRoot,
   type WindowsTaskRegistration,

@@ -2,16 +2,21 @@
 import { appendFile, open } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { SupervisedChild, WindowsJob } from '@excitedjs/dreamux-utils';
+import {
+  SupervisedChild,
+  WindowsJob,
+  withEnvironmentOverrides,
+} from '@excitedjs/dreamux-utils';
 
 import {
   ExecaCommandRunner,
   type CommandRunner,
 } from '../platform/command-runner.js';
-import { logsRoot, windowsServiceJobName } from '../platform/paths.js';
+import { logsRoot } from '../platform/paths.js';
 import { controlWindowsService } from './windows.js';
 import {
   readWindowsTask,
+  windowsServiceJobName,
   windowsTaskData,
   windowsTaskRoot,
 } from './windows-task.js';
@@ -49,7 +54,11 @@ export async function runWindowsService(
         args: data.execStart.slice(1),
         options: {
           cwd: task.workingDirectory,
-          env: { ...process.env, ...data.environment, DREAMUX_ROOT: root },
+          env: withEnvironmentOverrides(
+            process.env,
+            { ...data.environment, DREAMUX_ROOT: root },
+            'win32',
+          ),
           stdio: ['ignore', stdout.fd, stderr.fd],
         },
       });

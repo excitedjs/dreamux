@@ -67,6 +67,10 @@ runtime app-server readiness, uninstall, and same-version restart cautions.
   `DREAMUX_ROOT`: the parent of the registered `<root>/state` WorkingDirectory
   supplies the root for startup, status, control, logs and restart notices.
   Refresh these snapshots through `daemon install`, not manual Data edits.
+  The entry inherits the Scheduler environment and applies the captured map
+  and registered root as case-insensitive overrides. Unrelated inherited values
+  remain. Doctor validates the captured command and launch requirements, not
+  equality with every inherited runtime variable.
   The reported `unitPath` is the native Task.Path, not a file or a file-ledger
   entry. `daemon uninstall` preserves config, state and logs.
   Password tasks run noninteractively without leaving the service console on

@@ -50,7 +50,11 @@ import {
 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { assertUnixSocketPathBudget } from '@excitedjs/dreamux-utils';
+import {
+  assertUnixSocketPathBudget,
+  environmentValue,
+  withEnvironmentOverrides,
+} from '@excitedjs/dreamux-utils';
 
 import { validateDispatcherId } from './dispatcher-id.js';
 import { pathExists } from './fs-errors.js';
@@ -125,15 +129,6 @@ export function stateRoot(root = dreamuxRoot()): string {
  */
 export function runRoot(root = dreamuxRoot()): string {
   return join(root, 'run');
-}
-
-/** Same-user service ownership shared by the CLI and non-interactive sessions. */
-export function windowsServiceJobName(root = dreamuxRoot()): string {
-  const identity = createHash('sha256')
-    // Retain the established Job identity; this spelling is not a file lookup.
-    .update(resolve(root, 'daemon.mjs').toLowerCase())
-    .digest('hex');
-  return `Global\\Dreamux-service-${identity}`;
 }
 
 /**
@@ -550,10 +545,7 @@ export function systemExecDirs(
   env: NodeJS.ProcessEnv = {},
 ): string[] {
   if (platform === 'win32') {
-    const key = Object.keys(env)
-      .sort()
-      .find((name) => name.toLowerCase() === 'systemroot');
-    const root = key === undefined ? undefined : env[key];
+    const root = environmentValue(env, 'SystemRoot', platform);
     return root === undefined
       ? []
       : [
@@ -641,14 +633,13 @@ export function buildServicePath(input: ServicePathInput): string {
 export function withServicePath(
   env: NodeJS.ProcessEnv,
   input: ServicePathInput,
+  platform: NodeJS.Platform,
 ): NodeJS.ProcessEnv {
-  const result = { ...env };
-  if (process.platform === 'win32') {
-    for (const key of Object.keys(result)) {
-      if (key.toUpperCase() === 'PATH') delete result[key];
-    }
-  }
-  return { ...result, PATH: buildServicePath(input) };
+  return withEnvironmentOverrides(
+    env,
+    { PATH: buildServicePath(input) },
+    platform,
+  );
 }
 
 function homebrewExecDir(platform: NodeJS.Platform): string | null {

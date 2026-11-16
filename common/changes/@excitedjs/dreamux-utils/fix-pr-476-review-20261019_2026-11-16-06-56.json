@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Allow explicit-platform environment lookup and provide nonmutating environment overrides that replace Windows key aliases while preserving Unix case sensitivity and undefined values.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils"
+}

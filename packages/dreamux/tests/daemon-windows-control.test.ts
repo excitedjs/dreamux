@@ -9,13 +9,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { adminJsonInvoker } from '../src/admin/client.js';
 import { createAdminSocketServer } from '../src/admin/socket.js';
 import { controlWindowsService } from '../src/daemon/windows.js';
-import type { WindowsTaskRegistration } from '../src/daemon/windows-task.js';
+import {
+  windowsServiceJobName,
+  type WindowsTaskRegistration,
+} from '../src/daemon/windows-task.js';
 import type { CommandRunner } from '../src/platform/command-runner.js';
 import { createLogger } from '../src/platform/logger.js';
-import {
-  adminSocketPath,
-  windowsServiceJobName,
-} from '../src/platform/paths.js';
+import { adminSocketPath } from '../src/platform/paths.js';
 import { deferred } from './helpers/controlled-runtime-provider.js';
 
 // The product keeps its 30s startup deadline; allow additional fixture startup

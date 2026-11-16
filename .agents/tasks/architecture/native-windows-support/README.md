@@ -9,12 +9,14 @@
 - Verification: [Checks and coverage](verification.md)
 - Review: [Complete-change review and rulings](review.md)
 - Blockers: Non-administrator adoption of legacy BA-owned logs remains unverified: the custom restricted-token fixture failed before product code, and this runner has no linked Limited token. Real fixed-account UI and Password registration also remain unverified. The reported Job access-denied call site and cause remain unknown. R5 remains explicitly deferred and unverified; R6's force-push metadata range defect remains unchanged.
-- Next action: Deliver the verified simplify correction to the existing PR and evaluate fresh exact-head CI. The four corrections and independent implementation review are complete; this slice does not reopen deferred native validation or authorize another local update, release or merge.
+- Next action: Deliver the reviewed rebase and comment corrections to PR #488, verify fresh exact-head CI, then publish the fourteen adjudicated replies and resolve their threads. This slice does not reopen deferred native validation or authorize another local update, release or merge.
 - Coverage limit: The earlier installation failure is distinct from the later successful upgrade and recovery-callback retry. The operator reported an interrupted CoT card on that retry; it does not certify this subsequent source correction. Native credential storage, dialog behavior and general cross-session service operation still need independent acceptance; earlier CI results do not cover this revision.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/488); replaces [the closed original PR](https://github.com/excitedjs/dreamux/pull/476).
 - Related tasks: None.
 
 ## Development approval
+
+- On 2026-11-16 at 14:40 (UTC+08:00), the operator instructed: "rebase 一下，然后判断下 评论内容，如果是问题就修掉，不是问题就回复并关掉。" (English translation: "Rebase, then evaluate the comments; fix actual problems, otherwise reply and close them.") This authorizes rebasing PR #488 onto current `next`, evidence-based adjudication of its review comments, necessary corrections and verification, and public replies/resolution of nonissues. Existing delivery authority covers the resulting branch update; merging, release, installed-service changes and deferred native experiments remain outside this follow-up.
 
 - On 2026-11-13 at 16:17 (UTC+08:00), after receiving the adjudicated DeepSeek and MiMo simplify findings, the operator explicitly instructed: "该修的就修一下吧。" (English translation: "Make the necessary fixes.") This renews implementation authority for the four reported findings and their regression verification and independent review. The chosen scope removes duplicate launch-failure notification, avoids temporary publication for existing logs, shares the PID query while preserving distinct Job checks, and aligns SystemRoot duplicate-key precedence. Suggestions to remove existing-file permissions checks, PID validation or Job control capability, or cache native descriptors, are excluded. No live-service operation, new release or merge is included.
 
@@ -49,6 +51,21 @@
 - On 2026-10-20 at 21:36 (UTC+08:00), the operator clarified: "For the earlier black window issue, I meant installation should use Password mode, not continue installing in the original mode." This authorizes correcting the installation default to Password within the existing PR. It supersedes the Interactive default and the proposed console-hiding workaround. Credentials must be entered locally, never requested in chat or persisted by Dreamux; verification must not modify the operator's running task. The statement does not request a different trigger or resume merging.
 
 ## Delivery
+
+The November 16 correction is submission-ready under the operator's explicit
+rebase/fix/reply instruction and the existing delivery authority. Independent
+review covered the complete thirteen-file code/test delta, affected knowledge
+owners, two patch notes and fourteen proposed replies. Build, lint, test
+typechecking and the unfiltered suite passed; the suite contains 3,254 passed
+and 26 skipped cases. Current product, state/config, maintenance and utils
+owners record explicit-platform lookup and captured Windows overrides while
+preserving Scheduler inheritance, Job identity and existing capabilities.
+Task requirement/design/review/verification records are reconciled. Unchanged
+architecture, provider, glossary and global operating rules need no update.
+Full KB validation passed without exceptions: 64 task records and 420 reachable
+files. Mandatory commit gates precede branch delivery; CI and thread status
+remain owned by GitHub. No merge, release or service operation is included in
+this follow-up.
 
 On 2026-11-12, in response to the R6 correction card, the operator requested
 closing the old PR and opening a new one. Delivery therefore uses the new

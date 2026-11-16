@@ -1,9 +1,11 @@
 /** Task Scheduler registration and queries share one PowerShell boundary. */
+import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isPlainObject } from '@excitedjs/dreamux-utils';
 
 import type { CommandRunner } from '../platform/command-runner.js';
-import { stateRoot } from '../platform/paths.js';
+import { dreamuxRoot, stateRoot } from '../platform/paths.js';
 import {
   managedServiceCommand,
   managedServiceEnvironment,
@@ -29,6 +31,15 @@ export interface WindowsServiceData {
 export const windowsServiceEntryPath = fileURLToPath(
   new URL('./windows-entry.js', import.meta.url),
 );
+
+/** Same-user service ownership shared by the CLI and non-interactive sessions. */
+export function windowsServiceJobName(root = dreamuxRoot()): string {
+  const identity = createHash('sha256')
+    // Retain the established Job identity; this spelling is not a file lookup.
+    .update(resolve(root, 'daemon.mjs').toLowerCase())
+    .digest('hex');
+  return `Global\\Dreamux-service-${identity}`;
+}
 
 const TASK_IDENTITY = `
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
@@ -127,13 +138,10 @@ export function windowsTaskData(
   } catch {
     throw invalidTaskData();
   }
-  if (typeof value !== 'object' || value === null || Array.isArray(value))
-    throw invalidTaskData();
-  const { environment, execStart } = value as Record<string, unknown>;
+  if (!isPlainObject(value)) throw invalidTaskData();
+  const { environment, execStart } = value;
   if (
-    typeof environment !== 'object' ||
-    environment === null ||
-    Array.isArray(environment) ||
+    !isPlainObject(environment) ||
     !Object.entries(environment).every(
       ([key, entry]) =>
         key.toUpperCase() !== 'DREAMUX_ROOT' && typeof entry === 'string',

@@ -172,7 +172,6 @@ describe.skipIf(process.platform === 'win32')(
       await killProcessGroup(pgid, 'SIGKILL');
       await closed;
       expect(isProcessGroupAlive(pgid)).toBe(false);
-      // Native Windows termination includes a cold PowerShell/WMI startup on CI.
     }, 15_000);
 
     it('killProcessGroup on an already-absent group is a silent no-op (ESRCH swallowed)', async () => {

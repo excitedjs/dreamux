@@ -1,5 +1,53 @@
 # Complete-change review
 
+## PR comment adjudication, 2026-11-16
+
+The operator authorized rebasing PR #488, fixing actual issues and replying to
+and resolving nonissues. The fetched review contained fourteen unresolved
+threads, four from the initial review and ten from November 16. Rebase onto
+`next` including [PR #489](https://github.com/excitedjs/dreamux/pull/489) retained both upstream's `ensureSelfIdentity` and this PR's
+`cot` fixture member. Independent range-diff review found twenty-two equivalent
+commits and only that conflict-context adjustment in the remaining commit.
+
+The following rulings distinguish the comments' proposals from corrections
+justified by current producers and contracts. Execution and final independent
+review are recorded separately in [verification](verification.md).
+
+| Thread | Ruling and reason |
+| --- | --- |
+| [4550130990](https://github.com/excitedjs/dreamux/pull/488#discussion_r4550130990) | Not adopted. Job session namespaces do not establish the asserted named-pipe local/global fallback. Keep the stable pipe endpoint and user-SID DACL; actual cross-session acceptance remains open. |
+| [4550131007](https://github.com/excitedjs/dreamux/pull/488#discussion_r4550131007) | Accepted. PATH construction must use the supplied platform, including when exercised on another host OS. |
+| [4550131017](https://github.com/excitedjs/dreamux/pull/488#discussion_r4550131017) | Not adopted. Default MCP descriptors use the package launcher's resolved JavaScript path; configurable service commands pass through native command preparation. Sharing a suffix predicate would conflate those execution owners. |
+| [4550131027](https://github.com/excitedjs/dreamux/pull/488#discussion_r4550131027) | Accepted. Remove the stale Windows cold-start rationale from the POSIX-only process-group test; preserve its timeout and assertions. |
+| [4582541819](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541819) | Partly accepted. Reuse environment lookup only after preserving explicit platform and sorted duplicate-key/undefined semantics. Lookup selects one key; PSModulePath and NODE_OPTIONS filtering removes all aliases, so those operations are not merged merely for similar spelling. |
+| [4582541826](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541826) | Not adopted as an ordinary npm-launch defect. The package launcher overwrites DREAMUX_BIN with its own realpath before composing descriptors; the production descriptor caller has no custom command/environment input. Service launcher overrides are a distinct contract. |
+| [4582541833](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541833) | Not adopted. The controller changes its own locally created runner, not an injected/shared instance. Object spread loses this class's prototype methods; the two error-log sites also have different handle lifetimes. |
+| [4582541838](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541838) | Accepted. Reuse the existing plain-object guard without changing Task Data validation. |
+| [4582541840](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541840) | Partly accepted. Use the existing service-host factory. Keep the separate registration reads: one locates the notice before writing it, while control reads its current registration at the execution boundary. |
+| [4582541844](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541844) | Not adopted. The stop script has one 30-second deadline. Startup, application shutdown and Scheduler completion have separate budgets; matching numeric values do not make them one policy. Current queued/running values are consistent. |
+| [4582541850](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541850) | Not adopted. Existing-only control open returns null when absent and requests specific rights. Acquire can create/reserve a missing name and uses CreateJobObject's broader access. Removing the exported, documented control operation would delete a distinct capability, also used by fixture cleanup. |
+| [4582541854](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541854) | Not adopted. All eight execution sites use the shared PowerShell encoding and environment functions. Wrappers for capture results, stdin and command reporting add a layer without removing an owner or correcting a missed policy call. |
+| [4582541860](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541860) | Accepted. Move the service-only Job-name builder into the daemon owner, preserving the established hash input and object name byte-for-byte. |
+| [4582541862](https://github.com/excitedjs/dreamux/pull/488#discussion_r4582541862) | Partly accepted. Task Data is a captured override map, not the full Scheduler environment. Preserve inheritance, clarify that contract, and correct case-variant override precedence so an ambient COMSPEC cannot defeat captured ComSpec. |
+
+The named-pipe ruling follows Microsoft's [pipe security contract](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)
+and [kernel object namespace scope](https://learn.microsoft.com/en-us/windows/win32/termserv/kernel-object-namespaces),
+not a new cross-session experiment. The Job ruling follows the distinct
+[OpenJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-openjobobjectw)
+and [CreateJobObject](https://learn.microsoft.com/en-us/windows/win32/api/jobapi2/nf-jobapi2-createjobobjectw)
+contracts. No benchmark supports the comments' estimated PowerShell savings.
+
+Independent review compared the complete staged and unstaged correction against
+the rebased baseline, including all thirteen code/test files, seven affected
+owner/design/review documents, both patch notes and all fourteen proposed public
+replies. No actionable implementation or test finding remained. The reviewer
+checked explicit-platform propagation, undefined-key precedence, inherited
+environment preservation, valid Task Data in real Node/cmd entry fixtures,
+unchanged Job identity and cleanup. The historical reply wording was corrected
+to describe the former Bash launcher as a resolved launcher, not JavaScript.
+The synthetic-home driver also received a static review; executed results and
+final task-record checks are separate evidence below.
+
 ## Simplify correction review, 2026-11-13
 
 After the operator authorized the four adjudicated simplify corrections, an

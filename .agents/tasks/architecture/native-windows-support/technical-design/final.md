@@ -1,5 +1,27 @@
 # Native process and filesystem boundaries
 
+## PR review corrections, 2026-11-16
+
+Environment lookup accepts an explicit platform while retaining Node's sorted
+Windows duplicate-key precedence, including undefined values. PATH preparation
+uses that same platform. A shared copy-and-override operation removes all base
+environment aliases of overridden Windows keys, then applies the overrides;
+Unix keys remain case-sensitive. Both PATH preparation and the service entry
+use it without mutating caller-owned maps.
+
+Task Data contains captured installation overrides, not the complete effective
+Scheduler environment. The entry retains unrelated inherited values while
+ensuring captured values and the registered root win across key casing. Doctor
+validates the captured business command and launch requirements; it does not
+certify equivalence with every inherited runtime variable.
+
+The service-only Job-name builder belongs to `daemon/windows-task.ts`; its
+existing hash input and resulting name remain unchanged. Task Data validation
+uses the shared plain-object guard, and restart-notice lookup uses the existing
+service-host factory. Control still obtains its own current registration after
+the notice is written. The [comment rulings](../review.md) explain rejected
+mechanism and capability changes.
+
 ## Simplify correction, 2026-11-13
 
 - `SupervisedChild.start()` owns failed-launch rejection; `onError` remains for
@@ -14,9 +36,9 @@
   interpretation. A missing numeric PID has its own diagnostic. Readiness still
   checks live membership; stop still retains the verified object before requesting
   shutdown. Nonmember refusal, request/wait deadlines and forced cleanup remain.
-- `systemExecDirs(platform, env)` sorts environment keys before the Windows lookup,
-  matching duplicate-key precedence while preserving its explicit platform input.
-  No new environment abstraction or platform-dependent test shortcut is added.
+- `systemExecDirs(platform, env)` preserves explicit platform selection and
+  sorted duplicate-key precedence. The November 16 correction shares this
+  lookup with the native command owner without reading the host platform.
 
 ## Cooperative stop follow-up, 2026-11-13
 
@@ -167,7 +189,10 @@ startup, logs, status and control. TaskDefinition.Data is JSON containing only
 `{ environment: Record<string, string>; execStart: string[] }`. It retains the
 installation PATH, selected Node and custom Dreamux command. `environment`
 excludes `DREAMUX_ROOT`; startup derives that value from WorkingDirectory.
-Doctor receives this business command and environment, not the bootstrap Action.
+The entry applies the captured environment over its inherited Scheduler
+environment with case-insensitive override matching. Doctor receives the captured
+business command and environment, not the bootstrap Action or the complete
+inherited environment.
 Windows returns the native RegisteredTask.Path as the existing `unitPath: string`;
 it is a task identifier, never a file-ledger entry or filesystem removal target.
 `serviceUnitPath` describes only Unix unit files. Generated JavaScript, its regex

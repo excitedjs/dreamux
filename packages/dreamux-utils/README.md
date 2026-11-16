@@ -43,6 +43,10 @@ directly; operating-system libraries load only when a Windows operation runs.
   windows, and literal argument forwarding through npm command shims. Standard
   npm Node shims launch their script directly, preserving multiline arguments;
   other batch files reject multiline arguments that `cmd.exe` cannot preserve.
+  `environmentValue` accepts an explicit platform and follows Node's Windows
+  duplicate-key precedence. `withEnvironmentOverrides` copies an environment,
+  removing Windows aliases of overridden keys before applying the new map;
+  Unix matching remains case-sensitive and neither input is mutated.
 - **windows-security** — native pipe privacy (`restrictWindowsPipe`), replacing
   the existing pipe DACL with current-user full access before admitting clients.
 - **fs** — atomic-write primitives, one per publish semantic

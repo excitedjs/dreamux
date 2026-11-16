@@ -11,7 +11,57 @@ import {
   environmentValue,
   resolveExecutableOnPath,
   spawnCommand,
+  withEnvironmentOverrides,
 } from '../src/process-command.js';
+
+describe('explicit-platform environment keys', () => {
+  it('looks up Windows aliases and Unix exact keys independently of the host', () => {
+    const env = { Path: 'mixed', PATH: 'upper' };
+    expect(environmentValue(env, 'Path', 'win32')).toBe('upper');
+    expect(environmentValue(env, 'Path', 'linux')).toBe('mixed');
+    expect(environmentValue(env, 'path', 'linux')).toBeUndefined();
+  });
+
+  it.each([
+    { Path: 'mixed', PATH: undefined },
+    { PATH: undefined, Path: 'mixed' },
+  ])('retains undefined Windows precedence for %j', (env) => {
+    expect(environmentValue(env, 'Path', 'win32')).toBeUndefined();
+    expect(environmentValue(env, 'Path', 'linux')).toBe('mixed');
+  });
+
+  it('overrides every Windows base alias without changing either input', () => {
+    const env = Object.freeze({ Path: 'old', PATH: 'older', OTHER: 'kept' });
+    const overrides = Object.freeze({ path: 'new' });
+    expect(withEnvironmentOverrides(env, overrides, 'win32')).toEqual({
+      OTHER: 'kept',
+      path: 'new',
+    });
+    expect(env).toEqual({ Path: 'old', PATH: 'older', OTHER: 'kept' });
+    expect(overrides).toEqual({ path: 'new' });
+  });
+
+  it('preserves distinct Unix keys when overriding an exact key', () => {
+    expect(
+      withEnvironmentOverrides(
+        { Path: 'mixed', PATH: 'old' },
+        { PATH: 'new' },
+        'linux',
+      ),
+    ).toEqual({ Path: 'mixed', PATH: 'new' });
+  });
+
+  it('preserves undefined and duplicate keys supplied by the override owner', () => {
+    const result = withEnvironmentOverrides(
+      { path: 'ambient', OTHER: 'kept' },
+      { Path: 'mixed', PATH: undefined },
+      'win32',
+    );
+    expect(result).toEqual({ OTHER: 'kept', Path: 'mixed', PATH: undefined });
+    expect(Object.hasOwn(result, 'PATH')).toBe(true);
+    expect(environmentValue(result, 'PATH', 'win32')).toBeUndefined();
+  });
+});
 
 describe('native command launch', () => {
   let root: string | undefined;

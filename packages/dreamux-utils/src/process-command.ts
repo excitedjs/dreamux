@@ -59,14 +59,33 @@ export async function resolveExecutableOnPath(
 export function environmentValue(
   env: NodeJS.ProcessEnv,
   name: string,
+  platform: NodeJS.Platform = process.platform,
 ): string | undefined {
   const key =
-    process.platform === 'win32'
+    platform === 'win32'
       ? Object.keys(env)
           .sort()
           .find((key) => key.toUpperCase() === name.toUpperCase())
       : name;
   return key === undefined ? undefined : env[key];
+}
+
+/** Override environment keys without retaining Windows aliases from the base. */
+export function withEnvironmentOverrides(
+  env: NodeJS.ProcessEnv,
+  overrides: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  if (platform !== 'win32') return { ...env, ...overrides };
+  const overridden = new Set(
+    Object.keys(overrides).map((key) => key.toUpperCase()),
+  );
+  return {
+    ...Object.fromEntries(
+      Object.entries(env).filter(([key]) => !overridden.has(key.toUpperCase())),
+    ),
+    ...overrides,
+  };
 }
 
 /** Spawn a native executable or a Windows command shim with literal arguments. */

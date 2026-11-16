@@ -780,7 +780,12 @@ business command, including a custom Dreamux executable. `DREAMUX_ROOT` is
 excluded from Data's environment and derived from WorkingDirectory. Logs, admin
 endpoint and restart-intent paths use the existing root path builders. Refresh
 the snapshot through `dreamux daemon install`; do not hand-edit Data. Doctor
-receives that business command and environment rather than the bootstrap Action.
+receives that business command and captured environment rather than the bootstrap
+Action. Data is an override map: the entry inherits the Scheduler environment,
+then applies captured values and the registered root with case-insensitive key
+matching. Unrelated inherited values remain; aliases cannot defeat a captured
+override. Doctor validates the captured launch requirements, not equivalence
+with the complete inherited runtime environment.
 Windows `unitPath` is the native RegisteredTask.Path string, not a filesystem
 path or file-ledger entry. `serviceUnitPath` addresses only Unix unit files.
 

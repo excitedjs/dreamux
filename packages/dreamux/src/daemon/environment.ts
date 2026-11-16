@@ -155,7 +155,7 @@ export function stableNodeCandidates(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   if (platform === 'win32') {
-    const programFiles = environmentValue(env, 'ProgramFiles');
+    const programFiles = environmentValue(env, 'ProgramFiles', platform);
     return programFiles === undefined
       ? []
       : [join(programFiles, 'nodejs', 'node.exe')];
@@ -291,6 +291,7 @@ export function managedServiceEnvironment(
   answers: ServiceInstallAnswers,
 ): Record<string, string> {
   const home = answers.homeDir ?? homedir();
+  const platform = answers.platform ?? process.platform;
   // Unit PATH: stable dirs → captured session PATH → fallbacks (see managedServicePath).
   const env: Record<string, string> = {
     DREAMUX_ROOT: dreamuxRoot(),
@@ -298,9 +299,10 @@ export function managedServiceEnvironment(
     DREAMUX_NODE_BIN: answers.nodeBin,
     PATH: managedServicePath(answers),
   };
-  if ((answers.platform ?? process.platform) === 'win32') {
+  if (platform === 'win32') {
     // Windows runtimes and npm shims use these OS/profile directories even
-    // under the service's otherwise isolated environment.
+    // when checking the captured launch environment. At runtime these values
+    // override the Task Scheduler environment inherited by the Windows entry.
     for (const key of [
       'SystemRoot',
       'ComSpec',
@@ -312,7 +314,7 @@ export function managedServiceEnvironment(
       'ProgramData',
       'ProgramFiles',
     ]) {
-      const value = environmentValue(answers.env ?? {}, key);
+      const value = environmentValue(answers.env ?? {}, key, platform);
       if (value !== undefined) env[key] = value;
     }
     env['USERPROFILE'] = home;
@@ -406,9 +408,14 @@ export async function resolveServiceExecutable(
 export function withUserLocalBinPath(
   env: NodeJS.ProcessEnv,
   fallbackDirs: string[],
+  platform: NodeJS.Platform = process.platform,
 ): NodeJS.ProcessEnv {
-  const sessionPath = environmentValue(env, 'PATH') ?? '';
-  return withServicePath(env, { stableDirs: [], sessionPath, fallbackDirs });
+  const sessionPath = environmentValue(env, 'PATH', platform) ?? '';
+  return withServicePath(
+    env,
+    { stableDirs: [], sessionPath, fallbackDirs },
+    platform,
+  );
 }
 
 function configuredProviderBinChecks(
@@ -453,7 +460,11 @@ export async function resolveManagedServiceAnswers(
     homeDir: input.host.homeDir,
     env: input.env,
   });
-  const resolveEnv = withUserLocalBinPath(input.env, fallbackDirs);
+  const resolveEnv = withUserLocalBinPath(
+    input.env,
+    fallbackDirs,
+    input.host.platform,
+  );
   const providerBinChecks =
     input.config === null || input.catalogs === null
       ? []
@@ -504,7 +515,12 @@ function managedServicePath(answers: ServiceInstallAnswers): string {
     ...answers.providerBinChecks.flatMap((check) => absoluteDir(check.bin)),
     ...absoluteDir(answers.dreamuxBin),
   ];
-  const sessionPath = environmentValue(answers.env ?? {}, 'PATH') ?? '';
+  const sessionPath =
+    environmentValue(
+      answers.env ?? {},
+      'PATH',
+      answers.platform ?? process.platform,
+    ) ?? '';
   return buildServicePath({
     stableDirs,
     sessionPath,

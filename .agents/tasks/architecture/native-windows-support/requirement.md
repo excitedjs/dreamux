@@ -14,6 +14,14 @@ should replace platform conditionals when they express the same contract.
 
 ## Scope and invariants
 
+The 2026-11-16 PR follow-up rebases onto current `next` and adjudicates each
+review comment against actual callers. Environment construction must honor the
+explicit platform on every host. Windows Task Data is a captured override map:
+its values and the registered root must win over inherited case variants while
+unrelated Scheduler environment values remain available. This does not change
+the Task Data shape, pipe/Job identity, supported MCP launcher contract or Job
+control capability. Verification remains isolated from the running service.
+
 The operator authorized the necessary fixes from the adjudicated simplify review
 on 2026-11-13. Launch failure must have one rejection path while later child
 errors remain observable. Existing logs must retain standalone permission

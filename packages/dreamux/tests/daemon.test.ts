@@ -24,6 +24,7 @@ import { runDaemonInstall, runDaemonUninstall } from '../src/daemon/install.js';
 import {
   managedServiceEnvironment,
   resolveServiceExecutable,
+  stableNodeCandidates,
   withUserLocalBinPath,
   type ServiceNodeProbe,
 } from '../src/daemon/environment.js';
@@ -635,6 +636,18 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
 });
 
 describe('withUserLocalBinPath (resolve-time effective PATH)', () => {
+  it('uses the supplied platform for captured PATH lookup and replacement', () => {
+    const input = { Path: 'mixed', PATH: 'upper', OTHER: 'kept' };
+    expect(withUserLocalBinPath(input, [], 'win32')).toEqual({
+      PATH: 'upper',
+      OTHER: 'kept',
+    });
+    expect(withUserLocalBinPath(input, [], 'linux')).toEqual(input);
+    expect(
+      withUserLocalBinPath({ Path: 'mixed', PATH: undefined }, [], 'win32'),
+    ).toEqual({ PATH: '' });
+  });
+
   it('includes the captured session PATH ahead of fallbacks and never mutates process.env', () => {
     const home = '/home/example';
     const before = process.env['PATH'];
@@ -668,11 +681,15 @@ describe('withServicePath does not mutate process.env or the input env', () => {
   it('returns a fresh object and leaves process.env and the input env untouched', () => {
     const inputEnv = { PATH: '/usr/bin:/bin', FOO: 'bar' };
     const beforeProcess = process.env['PATH'];
-    const result = withServicePath(inputEnv, {
-      stableDirs: ['/opt/dreamux/bin'],
-      sessionPath: '/home/example/.nvm/versions/node/v22.7.0/bin',
-      fallbackDirs: ['/home/example/.local/bin'],
-    });
+    const result = withServicePath(
+      inputEnv,
+      {
+        stableDirs: ['/opt/dreamux/bin'],
+        sessionPath: '/home/example/.nvm/versions/node/v22.7.0/bin',
+        fallbackDirs: ['/home/example/.local/bin'],
+      },
+      process.platform,
+    );
 
     // Input env is not mutated.
     expect(inputEnv).toEqual({ PATH: '/usr/bin:/bin', FOO: 'bar' });
@@ -685,6 +702,25 @@ describe('withServicePath does not mutate process.env or the input env', () => {
       '/home/example/.nvm/versions/node/v22.7.0/bin',
       '/home/example/.local/bin',
     ]);
+  });
+
+  it('replaces Windows PATH aliases but preserves distinct Unix variables', () => {
+    const env = { Path: 'ambient', PATH: 'old', OTHER: 'kept' };
+    const input = {
+      stableDirs: ['selected'],
+      sessionPath: '',
+      fallbackDirs: [],
+    };
+    expect(withServicePath(env, input, 'win32')).toEqual({
+      PATH: 'selected',
+      OTHER: 'kept',
+    });
+    expect(withServicePath(env, input, 'linux')).toEqual({
+      Path: 'ambient',
+      PATH: 'selected',
+      OTHER: 'kept',
+    });
+    expect(env).toEqual({ Path: 'ambient', PATH: 'old', OTHER: 'kept' });
   });
 });
 
@@ -759,6 +795,55 @@ describe('captured session PATH appears in systemd and launchd service config', 
       fallbackDirs: linuxFallbackDirs(home, true),
     };
   }
+
+  it('captures Windows keys using the requested platform rather than the host', () => {
+    const input = {
+      Path: 'captured-session',
+      SystemRoot: 'ignored',
+      SYSTEMROOT: 'selected-system',
+      COMSPEC: 'selected-command',
+      PROGRAMFILES: 'selected-programs',
+    };
+    const env = managedServiceEnvironment({
+      ...baseAnswers(input),
+      platform: 'win32',
+    });
+    expect(env).toMatchObject({
+      SystemRoot: 'selected-system',
+      ComSpec: 'selected-command',
+      ProgramFiles: 'selected-programs',
+      USERPROFILE: home,
+    });
+    expect(env['PATH']?.split(delimiter)).toContain('captured-session');
+    expect(stableNodeCandidates('win32', input)).toEqual([
+      join('selected-programs', 'nodejs', 'node.exe'),
+    ]);
+    const unix = managedServiceEnvironment({
+      ...baseAnswers(input),
+      platform: 'linux',
+    });
+    expect(unix).not.toHaveProperty('SystemRoot');
+    expect(unix['PATH']?.split(delimiter)).not.toContain('captured-session');
+  });
+
+  it('does not revive Windows aliases masked by an undefined selected key', () => {
+    const input = {
+      Path: 'ignored-session',
+      PATH: undefined,
+      SystemRoot: 'ignored-system',
+      SYSTEMROOT: undefined,
+      ProgramFiles: 'ignored-programs',
+      PROGRAMFILES: undefined,
+    };
+    const env = managedServiceEnvironment({
+      ...baseAnswers(input),
+      platform: 'win32',
+    });
+    expect(env).not.toHaveProperty('SystemRoot');
+    expect(env).not.toHaveProperty('ProgramFiles');
+    expect(env['PATH']?.split(delimiter)).not.toContain('ignored-session');
+    expect(stableNodeCandidates('win32', input)).toEqual([]);
+  });
 
   it('systemd Environment=PATH includes the captured session PATH entries', () => {
     const unit = renderSystemdUnit(
