@@ -45,18 +45,20 @@ launched member rather than stopping at source:
 
 Each claim in the new wording was verified rather than inferred:
 
-- **A completed turn's final message is what reaches the owner, and only a
-  completed turn carries any text at all.** Codex reads the last `agentMessage`
-  item (`events.ts`, `extractAssistantText`); Claude Code reads the `result`
-  text with a last-assistant-text fallback (`stream.ts`, `outcome()`). Core then
-  hard-codes `result: null` for a `failed` or `stopped` turn
-  (`service/agent/service.ts`, the `deliverRuntime` call), and the `failed`
-  variant of `RuntimeCompletion` has no `resultText` field. The owner therefore
-  receives `"…turn failed."` with an empty body, pinned by
-  `completion-renderer.test.ts`. This is why the shipped text says the
-  *outcome* is reported and a *completed* turn carries the final message —
-  the earlier draft's unconditional "your final message is what reaches it"
-  promised a delivery the failed path does not perform.
+- **Only a completed turn's final message can reach the owner, and it may be
+  absent even then.** Codex reads the last `agentMessage` item and returns null
+  when there is none (`events.ts`, `extractAssistantText`); Claude Code reads
+  the `result` text with a last-assistant-text fallback and maps an empty result
+  to null (`stream.ts`, `rpc.ts`). Core then hard-codes `result: null` for a
+  `failed` or `stopped` turn (`service/agent/service.ts`, the `deliverRuntime`
+  call), and the `failed` variant of `RuntimeCompletion` has no `resultText`
+  field at all. The owner therefore receives `"…turn failed."` with an empty
+  body, pinned by `completion-renderer.test.ts`. This is why the shipped text
+  says the *outcome* is reported and a completed turn's message is *the text
+  that report carries* — the earlier draft's unconditional "your final message
+  is what reaches it" promised a delivery the failed path does not perform, and
+  "a completed turn carries your final message as that report" would still have
+  been false for a completed turn whose text is null.
 - **Selection is by order, not by a phase filter.** The codex adapter reads the
   last `agentMessage` item and never inspects `AgentMessage.phase`; nothing in
   `packages/agent-runtime/codex/src/` reads that field. Commentary items precede

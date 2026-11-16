@@ -14,11 +14,12 @@ schema, routing, or adapter change. No new tool, field, or capability.
 
 Facts the new text may state, each checked against current code:
 
-1. **Only a completed turn's final assistant message reaches the owner.** Codex
-   takes the last `agentMessage` item (`events.ts`, `extractAssistantText`);
+1. **Only a completed turn's final assistant message can reach the owner, and it
+   may be absent even then.** Codex takes the last `agentMessage` item
+   (`events.ts`, `extractAssistantText`), returning null when there is none;
    Claude Code takes the `result` text, falling back to the last assistant text
-   (`stream.ts`, `outcome()`). The completion notice wraps that text
-   (`completion-renderer.ts`).
+   and mapping an empty result to null (`stream.ts`, `rpc.ts`). The completion
+   notice wraps whatever text it gets (`completion-renderer.ts`).
 2. **A failed or stopped turn carries no message text at all.** Core hard-codes
    `result: null` for both (`service/agent/service.ts`, the `deliverRuntime`
    call), and the `failed` variant of `RuntimeCompletion` has no `resultText`
@@ -76,10 +77,16 @@ Requirements for the replacement:
 Shipped:
 
 > Your owner is the {role} "{name}". Your turn's outcome is reported to it
-> whenever its runtime is available, and a completed turn carries your final
-> message as that report. You can use teammate.send to pass a message to your
+> whenever its runtime is available, and a completed turn's final message is the
+> text that report carries. You can use teammate.send to pass a message to your
 > owner or a peer in your collection before your turn ends, and teammate.list to
 > list your owner and peers.
+
+"Carries" is the accurate verb: a completed turn's `resultText` may itself be
+null (both adapters produce that — claude-code when the text is empty, codex
+when the turn had no assistant message), in which case the report still goes out
+with no body. Saying the message *is* the report would be false in that case;
+saying it is the text the report carries is true either way.
 
 The condition lives in the description, not here (see "Why this shape" below).
 An earlier draft of this page put the condition and two imperatives in this
