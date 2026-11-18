@@ -1,5 +1,5 @@
 /**
- * The reply tool's contract: three fields, a body that reaches Feishu exactly
+ * The reply tool's contract: address, text and optional artifacts, a body that reaches Feishu exactly
  * as written, and a platform refusal the model can act on.
  *
  * Mentions are no longer a separate argument — they are written in the body in
@@ -145,7 +145,7 @@ function session(bot: FeishuBot, log: DreamuxLogger): FeishuChannelSession {
 }
 
 describe('the reply tool contract', () => {
-  it('takes exactly chat_id, message_id and text', () => {
+  it('takes addressing, text and optional artifacts', () => {
     const def = findFeishuTool('reply', 'team_leader');
     const schema = def?.inputSchema as {
       properties: Record<string, { description?: string }>;
@@ -154,6 +154,7 @@ describe('the reply tool contract', () => {
     };
 
     expect(Object.keys(schema.properties).sort()).toEqual([
+      'artifacts',
       'chat_id',
       'message_id',
       'text',
@@ -165,7 +166,7 @@ describe('the reply tool contract', () => {
     );
   });
 
-  it('carries nothing beyond those three fields into the session call', () => {
+  it('carries nothing beyond those address, text and optional artifacts into the session call', () => {
     const def = findFeishuTool('reply', 'team_leader');
 
     // The closed schema is what refuses an unknown argument upstream; parsing

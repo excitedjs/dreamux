@@ -2,28 +2,37 @@
  * Feishu message `content`: how an authored body becomes one, and how big one
  * may be.
  *
- * A reply is an interactive card holding one `markdown` element with the
- * authored Markdown as written. A card is the presentation because the
- * client shows card text in its compact size; a native post shows the same
- * text larger. Card Markdown renders the authored `<at user_id="…">Name</at>`
- * mention tag as it is, so nothing here rewrites the body.
+ * A reply holds authored Markdown in an interactive card or a native post.
+ * Cards show compact text; native posts show larger text. Mentions retain
+ * their authored syntax. The local-image helpers replace image destinations
+ * before envelope selection and splitting.
  *
  * The only reason a body is ever cut is size. The budget is measured on the
  * serialized `content` string, JSON escaping included, because that is what
  * the platform receives.
  */
 
-import { marked, type Token } from 'marked';
+import { marked, type Token, type Tokens } from 'marked';
 
 /**
  * The serialized-content budget for one message, under the platform's
  * documented 30 KB ceiling. One budget covers rendered and raw cards alike:
- * they are the same `content` field.
+ * cards and posts use the same `content` field.
  */
 export const FEISHU_MESSAGE_CONTENT_SAFE_BYTES = 28 * 1024;
 
-/** Serialize one Markdown body as an interactive card message content string. */
-function cardContent(markdown: string): string {
+/** The platform message types that carry a Markdown body. */
+export type FeishuTextMessageType = 'interactive' | 'post';
+
+function messageContent(
+  markdown: string,
+  messageType: FeishuTextMessageType,
+): string {
+  if (messageType === 'post') {
+    return JSON.stringify({
+      zh_cn: { content: [[{ tag: 'md', text: markdown }]] },
+    });
+  }
   return JSON.stringify({
     schema: '2.0',
     config: { update_multi: true },
@@ -31,21 +40,24 @@ function cardContent(markdown: string): string {
   });
 }
 
-const CARD_ENVELOPE_BYTES = Buffer.byteLength(cardContent(''), 'utf8');
-
 /**
- * Serialize one authored body into the card contents to send, in order. The
+ * Serialize one authored body into the message contents to send, in order. The
  * whole body is tried first: a body that fits is one message no matter how
  * many Markdown blocks it holds.
  */
-export function cardContents(body: string): string[] {
-  const whole = cardContent(body);
+export function cardContents(
+  body: string,
+  messageType: FeishuTextMessageType = 'interactive',
+): string[] {
+  const whole = messageContent(body, messageType);
   if (Buffer.byteLength(whole, 'utf8') <= FEISHU_MESSAGE_CONTENT_SAFE_BYTES) {
     return [whole];
   }
-  const budget = FEISHU_MESSAGE_CONTENT_SAFE_BYTES - CARD_ENVELOPE_BYTES;
+  const budget =
+    FEISHU_MESSAGE_CONTENT_SAFE_BYTES -
+    Buffer.byteLength(messageContent('', messageType), 'utf8');
   return splitMarkdownBody(body, budget).map((piece) => {
-    const content = cardContent(piece);
+    const content = messageContent(piece, messageType);
     assertMessageContentFits(content);
     return content;
   });
@@ -65,9 +77,9 @@ function contentTooLarge(bytes: number): string {
   );
 }
 
-/** What one Markdown fragment would cost as a whole card `content`. */
-function contentBytes(markdown: string): number {
-  return Buffer.byteLength(cardContent(markdown), 'utf8');
+/** What one Markdown fragment would cost as a selected envelope `content`. */
+function contentBytes(markdown: string, budget: number): number {
+  return escapedBytes(markdown) + FEISHU_MESSAGE_CONTENT_SAFE_BYTES - budget;
 }
 
 /**
@@ -140,7 +152,7 @@ function splitFencedCode(raw: string, budget: number): string[] {
   const frame = `${open}\n${close}`;
   const inner = budget - escapedBytes(frame);
   if (inner <= 0) {
-    throw new Error(contentTooLarge(contentBytes(frame)));
+    throw new Error(contentTooLarge(contentBytes(frame, budget)));
   }
   return packSegments(lines.slice(1, -1), inner).map(
     (piece) => `${open}${piece.endsWith('\n') ? piece : `${piece}\n`}${close}`,
@@ -162,7 +174,7 @@ function splitTableRows(raw: string, budget: number): string[] {
     rowBudget <= 0 ? '' : rows.find((row) => escapedBytes(row) > rowBudget);
   if (oversized !== undefined) {
     throw new Error(
-      `${contentTooLarge(contentBytes(`${header}${oversized}`))} A table ` +
+      `${contentTooLarge(contentBytes(`${header}${oversized}`, budget))} A table ` +
         'header plus a single data row already exceeds it, so the table ' +
         'cannot be split by row. Shorten the row, or send the data as a ' +
         'fenced code block.',
@@ -240,4 +252,188 @@ function lineSegments(text: string): string[] {
  */
 function escapedBytes(text: string): number {
   return Buffer.byteLength(JSON.stringify(text), 'utf8') - 2;
+}
+
+/** One actual Markdown image and the source range of its destination. */
+export interface LocalMarkdownImage {
+  readonly path: string;
+  readonly start: number;
+  readonly end: number;
+  readonly prefix: string;
+  readonly suffix: string;
+}
+
+/** Find local image nodes, consuming sibling raw tokens so code stays opaque. */
+export function localMarkdownImages(body: string): LocalMarkdownImage[] {
+  // marked normalizes CRLF. Project its offsets back into the authored source;
+  // only destination slices are replaced, so even short CRLF bodies stay intact.
+  const source = body.replace(/\r\n?/g, '\n');
+  const offsets: number[] = [];
+  for (let i = 0; i < body.length; i += 1) {
+    offsets.push(i);
+    if (body[i] === '\r' && body[i + 1] === '\n') i += 1;
+  }
+  offsets.push(body.length);
+  const images: LocalMarkdownImage[] = [];
+  function visit(tokens: Token[], start: number, end: number): void {
+    let cursor = start;
+    for (const token of tokens) {
+      const location = locateTokenSource(source, token.raw, cursor, end);
+      const located = location !== undefined;
+      const from = location?.[0] ?? cursor;
+      const to = location?.at(-1) ?? end;
+      if (token.type === 'image') {
+        if (token.href.startsWith('/') && !token.href.startsWith('//')) {
+          if (!located)
+            throw new Error(
+              `Cannot locate Markdown image source: ${token.href}`,
+            );
+          const destination = imageDestination(token.raw, token.title);
+          images.push({
+            path: token.href,
+            start: offsets[location![destination.start]!]!,
+            end: offsets[location![destination.end]!]!,
+            prefix: destination.prefix,
+            suffix: destination.suffix,
+          });
+        }
+      } else if (token.type === 'table') {
+        const table = token as Tokens.Table;
+        visit(
+          [
+            ...table.header.flatMap((cell) => cell.tokens),
+            ...table.rows.flatMap((row) => row.flatMap((cell) => cell.tokens)),
+          ],
+          from,
+          to,
+        );
+      } else if (token.type === 'list') {
+        visit(token.items, from, to);
+      } else if ('tokens' in token && Array.isArray(token.tokens)) {
+        visit(token.tokens, from, to);
+      }
+      if (located) cursor = to;
+    }
+  }
+  visit(marked.lexer(source), 0, source.length);
+  return images;
+}
+
+/** Locate the inline destination within an image token, respecting escapes. */
+function imageDestination(
+  raw: string,
+  title: string | null,
+): { start: number; end: number; prefix: string; suffix: string } {
+  let depth = 1;
+  let i = 2;
+  for (; i < raw.length; i += 1) {
+    if (raw[i] === '\\') {
+      i += 1;
+      continue;
+    }
+    if (raw[i] === '[') depth += 1;
+    if (raw[i] === ']' && --depth === 0) break;
+  }
+  i += 1;
+  if (raw[i] !== '(') {
+    return {
+      start: i,
+      end: raw.length,
+      prefix: '(',
+      suffix: `${title === null ? '' : ` "${title.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`})`,
+    };
+  }
+  i += 1;
+  while (/\s/.test(raw[i] ?? '') && i < raw.length) i += 1;
+  const angle = raw[i] === '<';
+  if (angle) i += 1;
+  const start = i;
+  depth = 0;
+  for (; i < raw.length; i += 1) {
+    if (raw[i] === '\\') {
+      i += 1;
+      continue;
+    }
+    if (
+      angle
+        ? raw[i] === '>'
+        : depth === 0 && (raw[i] === ')' || /\s/.test(raw[i]!))
+    )
+      break;
+    if (raw[i] === '(') depth += 1;
+    if (raw[i] === ')') depth -= 1;
+  }
+  return { start, end: i, prefix: '', suffix: '' };
+}
+
+/** Rewrite only the selected image destinations, retaining all other source. */
+export function replaceLocalMarkdownImages(
+  body: string,
+  images: readonly LocalMarkdownImage[],
+  keys: readonly string[],
+): string {
+  let rewritten = body;
+  for (let i = images.length - 1; i >= 0; i -= 1) {
+    const image = images[i]!;
+    rewritten =
+      rewritten.slice(0, image.start) +
+      image.prefix +
+      keys[i]! +
+      image.suffix +
+      rewritten.slice(image.end);
+  }
+  return rewritten;
+}
+
+/** Match a child raw token through the prefixes/escapes its parent removed. */
+function locateTokenSource(
+  source: string,
+  raw: string,
+  start: number,
+  end: number,
+): number[] | undefined {
+  if (raw === '') return [start];
+  let candidate = source.indexOf(raw[0]!, start);
+  while (candidate !== -1 && candidate < end) {
+    const positions: number[] = [];
+    let cursor = candidate;
+    let index = 0;
+    for (; index < raw.length && cursor < end; index += 1) {
+      if (index > 0 && raw[index - 1] === '\n') {
+        // Match the complete next raw line, including retained code indent.
+        // Only quote/list prefixes may stand between it and the source line.
+        const rawBreak = raw.indexOf('\n', index);
+        const rawLine = raw.slice(
+          index,
+          rawBreak === -1 ? raw.length : rawBreak,
+        );
+        const sourceBreak = source.indexOf('\n', cursor);
+        const lineEnd = sourceBreak === -1 ? end : Math.min(sourceBreak, end);
+        const lineStart =
+          rawLine === ''
+            ? lineEnd
+            : locateTokenSource(source, rawLine, cursor, lineEnd)?.[0];
+        if (
+          lineStart !== undefined &&
+          /^[> \t]*$/.test(source.slice(cursor, lineStart))
+        )
+          cursor = lineStart;
+      }
+      if (
+        source[cursor] === '\\' &&
+        source[cursor + 1] === '|' &&
+        raw[index] === '|'
+      )
+        cursor += 1;
+      if (source[cursor] !== raw[index]) break;
+      positions.push(cursor);
+      cursor += 1;
+    }
+    if (index === raw.length) {
+      positions.push(cursor);
+      return positions;
+    }
+    candidate = source.indexOf(raw[0]!, candidate + 1);
+  }
+  return undefined;
 }

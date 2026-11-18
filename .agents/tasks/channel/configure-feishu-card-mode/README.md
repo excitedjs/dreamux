@@ -1,0 +1,64 @@
+# Configure Feishu reply presentation and artifacts
+
+## Current state
+
+- Goal: Allow ordinary Feishu replies to select interactive cards or native posts, render local Markdown images, and send non-image artifacts
+- State: `done`
+- Requirement: [Approved requirement](/.agents/tasks/channel/configure-feishu-card-mode/requirement.md)
+- Final solution: [Approved implementation design](/.agents/tasks/channel/configure-feishu-card-mode/technical-design/final.md)
+- Solution review Issue: Not created.
+- Verification: [Live probe, review, and local-check evidence](/.agents/tasks/channel/configure-feishu-card-mode/verification.md)
+- Blockers: None.
+- Next action: Wait for the final PR checks and obtain merge authority through a dedicated card.
+- Related tasks: Builds on the native-post implementation and preserved send semantics from [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md); preserves the interactive default selected by [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md).
+
+## Task selection
+
+On 2026-11-18 the operator selected "创建新任务 (Recommended)" rather than reopening the completed native-post task. The new requirement lineage is configurable reply presentation, not a reopening of that completed work.
+
+## Requirement confirmation
+
+On 2026-11-18 the operator selected "确认完整需求 (Recommended)" on the revised requirement card. The confirmed boundary includes `interactive` / `post` reply presentation, local absolute-path Markdown images without an image argument, and optional non-image `artifacts`; width changes remain excluded. This confirmation authorizes solution work only.
+
+## Solution confirmation
+
+On 2026-11-18 the operator selected "确认方案 (Recommended)" after confirming that `card_mode` belongs in the Feishu channel instance's existing `config` object and clarifying that Markdown/image processing precedes card/post envelope selection. The confirmed solution remains reply-only; this decision does not authorize implementation.
+
+## Development approval
+
+- Status: Granted on 2026-11-18 by the operator's "批准开发与探针 (Recommended)" answer to the dedicated development-authorization card.
+- Approved implementation boundary: The complete approved requirement and final solution, including Feishu channel config, reply Markdown images, non-image artifacts, tests, owning documentation, Rush change notes, and all required checks. The card also authorizes live interactive/post inline-image probes and representative MP4/archive messages in the originating conversation. If native post cannot render the inline image, stop and request a product decision. No merge authority was granted.
+
+## Review transition
+
+On 2026-11-18 the operator selected "进入代码评审 (Recommended)" after the complete implementation, live-probe evidence, whole-diff inspection, and all required monorepo gates were presented. The review target is the entire uncommitted change in this Team worktree against the approved requirement and solution, including the corrected MP4 mapping and all test/documentation changes.
+
+The operator then required the review vehicle explicitly:
+
+> devbox 和你不在一台机器，你只能开pr后让他review pr
+
+This authorizes committing, publishing, and opening the PR needed for that independent review. It does not grant merge authority or declare review/knowledge closeout complete. The task remains blocked on the PR review and resumes at `review`.
+
+## Review adjudication
+
+On 2026-11-18 the operator resumed `review` and selected "补 live 探针" for finding 1. The authorized correction evidence is native file-message probes for the specialized upload types, rather than collapsing them to `stream`. No specialized branch may be removed or retained on assumption; record the observed results before further correction.
+
+On 2026-11-18 the operator selected "统一返回形态 (Recommended)" for finding 2 after a concrete two-message failure example. Partial text and artifact sends must both settle as structured public failures with their observed ids; zero-receipt behavior remains unchanged. The correction must not infer partial delivery by matching error text.
+
+## Knowledge closeout
+
+The operator approved entry on 2026-11-18. The final diff, approved requirement/solution, review corrections, and verification evidence were reconciled.
+
+- Product behavior: updated in `.agents/product/README.md` for per-channel reply presentation, inline images, artifacts, and failure behavior.
+- Channel architecture: updated in `.agents/domains/channel.md` for ownership, wire formats, uploads, ordering, and typed partial failures.
+- Package contracts: updated in both Feishu package READMEs; no directory `CLAUDE.md` contract required a change.
+- Config maintenance: updated `builtin-feishu.md` with `card_mode` and reply media behavior in the same change.
+- Release notes: ordinary 0.x `minor` declarations exist for channel, transport, and Dreamux; no migration or upgrade blocker exists.
+- Glossary and root routing: N/A; no overloaded term or new task-routing domain was introduced.
+- Independent review: Devbox approved the corrected PR; all findings have recorded operator rulings and verified resolutions.
+
+## Delivery
+
+- Pull request: [#492](https://github.com/excitedjs/dreamux/pull/492)
+- Knowledge closeout: Complete; affected owners are reconciled above.
+- Done confirmation: Granted by the operator on 2026-11-18 through the dedicated "确认 done (Recommended)" card. Merge authority was not part of that decision.

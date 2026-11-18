@@ -111,6 +111,9 @@ describe('real Codex #63 inbound gate', () => {
         throw new Error('No platform fixture for this operation');
       };
       const bot: FeishuBot = {
+        uploadImage: unsupported,
+        uploadFile: unsupported,
+        sendFile: unsupported,
         appId: 'app-live',
         botOpenId: 'fake-bot',
         botDisplayName: 'Dispatcher',

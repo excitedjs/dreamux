@@ -201,6 +201,7 @@ async function handle(
     router,
   });
   const tools: FeishuToolSession = {
+    cardMode: 'interactive',
     logger: log,
     channelId,
     outbound,

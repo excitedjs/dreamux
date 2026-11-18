@@ -9,6 +9,7 @@ export { createFeishuPlugin } from './plugin.js';
 export {
   createFeishuChannelProvider,
   type FeishuChannelConfig,
+  type FeishuCardMode,
 } from './provider.js';
 
 export type {

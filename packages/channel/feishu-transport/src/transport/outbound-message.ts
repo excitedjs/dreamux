@@ -31,7 +31,7 @@ export interface MessageSendResponse {
 }
 
 /**
- * Send one already-serialized card as an `interactive` message.
+ * Send one already-serialized message with its platform message type.
  *
  * Create versus reply is the only addressing distinction the platform makes
  * here, so it is the only branch: an AbortSignal rides along with either.
@@ -47,6 +47,7 @@ export async function sendFeishuMessage(
   client: lark.Client,
   target: OutboundTarget,
   content: string,
+  msgType: 'interactive' | 'post' | 'file',
   signal?: AbortSignal,
 ): Promise<MessageSendResponse> {
   const replyTo = target.replyToMessageId;
@@ -57,12 +58,12 @@ export async function sendFeishuMessage(
           url: '/open-apis/im/v1/messages',
           method: 'POST' as const,
           params: { receive_id_type: 'chat_id' },
-          data: { receive_id: target.chatId, msg_type: 'interactive', content },
+          data: { receive_id: target.chatId, msg_type: msgType, content },
         }
       : {
           url: `/open-apis/im/v1/messages/${encodeURIComponent(replyTo)}/reply`,
           method: 'POST' as const,
-          data: { msg_type: 'interactive', content },
+          data: { msg_type: msgType, content },
         };
 
   let res: MessageSendResponse;
