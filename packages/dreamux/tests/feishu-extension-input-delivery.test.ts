@@ -142,6 +142,15 @@ function fakeFeishuBot(
   const landings = new Map<string, string>();
   let nextMessage = 0;
   const bot: FeishuBot = {
+    async uploadImage() {
+      throw new Error('No image upload fixture');
+    },
+    async uploadFile() {
+      throw new Error('No file upload fixture');
+    },
+    async sendFile() {
+      throw new Error('No file send fixture');
+    },
     appId: 'app-live',
     botOpenId: 'fake-bot',
     botDisplayName: 'Delivery Arm',

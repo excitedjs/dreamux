@@ -76,7 +76,7 @@ function memberToolRecords(scope: MemberMcpScope): McpToolRecord[] {
     {
       descriptor: tool(
         'send',
-        'Send a message to your owner or a same-collection peer by concrete name. A closed peer reopens its recorded session; idle input wakes the recipient and busy input follows its runtime admission. ' +
+        'Send a message to your owner or a same-collection peer by concrete name, when that recipient needs something before your turn ends — a blocker, a decision, or a fact that changes its next step. A closed peer reopens its recorded session; idle input wakes the recipient and busy input follows its runtime admission. ' +
           MEMBER_RECEIPT_REMINDER,
         {
           name: { type: 'string', minLength: 1, maxLength: 64 },

@@ -43,6 +43,7 @@ export interface FeishuListChatBotsResult {
  * document subscriptions, and chat-bot state remain with their own objects.
  */
 export interface FeishuToolSession {
+  readonly cardMode: import('../provider.js').FeishuCardMode;
   readonly logger: ChannelLogger;
   readonly channelId: string;
   readonly outbound: Pick<FeishuOutbound, 'sendText' | 'react'>;

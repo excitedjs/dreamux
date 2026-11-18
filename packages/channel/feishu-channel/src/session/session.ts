@@ -76,6 +76,7 @@ export type ChannelLogger = DreamuxLogger;
 export type { FeishuListChatBotsResult, WireChatBot };
 
 export interface FeishuChannelSessionOptions {
+  cardMode?: import('../provider.js').FeishuCardMode;
   /**
    * The owning dispatcher id — used for log fields, and, for an extension's
    * state root only, as a path segment under the Feishu plugin's own state
@@ -238,6 +239,7 @@ export class FeishuChannelSession {
       router: this.router,
     });
     this.tools = {
+      cardMode: opts.cardMode ?? 'interactive',
       logger: opts.log,
       channelId: opts.channelId,
       outbound: this.outbound,

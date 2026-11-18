@@ -45,10 +45,13 @@ export interface FeishuCotConfig {
  * `read` always returns `cot`; it stays optional on the type because an
  * embedder may construct this object directly, and the product default is off.
  */
+export type FeishuCardMode = 'interactive' | 'post';
+
 export interface FeishuChannelConfig {
   appId: string;
   appSecret: string;
   readonly cot?: FeishuCotConfig;
+  readonly cardMode?: FeishuCardMode;
 }
 
 const DEFAULT_COT: FeishuCotConfig = { reasoning: false };
@@ -113,7 +116,14 @@ export function buildFeishuChannelProvider(
             'feishu channel config requires a non-empty app_secret',
           );
         }
-        return { appId, appSecret, cot: readCotConfig(obj['cot']) };
+        const cardMode =
+          obj['card_mode'] === undefined ? 'interactive' : obj['card_mode'];
+        if (cardMode !== 'interactive' && cardMode !== 'post') {
+          throw new RuleViolation(
+            'feishu channel config field card_mode must be interactive or post',
+          );
+        }
+        return { appId, appSecret, cot: readCotConfig(obj['cot']), cardMode };
       },
     },
     identity: {
@@ -191,6 +201,7 @@ export function buildFeishuChannelProvider(
         attachmentCacheDir: join(cacheRoot, 'feishu-attachments'),
         log,
         cotReasoning: context.config.cot?.reasoning ?? false,
+        cardMode: context.config.cardMode ?? 'interactive',
         extensions,
       });
       return {

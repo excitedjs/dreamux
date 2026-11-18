@@ -122,3 +122,30 @@ node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
+
+## Outbound Markdown and Uploads
+
+`send(target, markdown, { messageType?: 'interactive' | 'post', signal? })`
+selects the platform envelope per call; omission retains Card JSON 2.0 with
+one Markdown element. Native posts use one `md` node. Both measure the same
+28 KiB serialized-content budget and preserve ordered splitting/receipts.
+`sendCard` always sends interactive content. Width is unchanged.
+
+`localMarkdownImages` and `replaceLocalMarkdownImages` use marked's actual
+tokens and source positions to replace local destinations while retaining code,
+alt/title text and surrounding Markdown. The caller owns async local reads and
+upload/send order; this package knows no Dreamux config, routing or file roots.
+
+`uploadImage(bytes)` uses `im.v1.image.create` with `image_type: 'message'` and
+returns the SDK's direct `image_key`. `uploadFile({ fileName, bytes })` uses
+`im.v1.file.create`, deriving file_type from the filename (pdf/Office,
+otherwise stream) and returns the direct `file_key`. `sendFile(target, key)`
+sends a native `file` message through the same create/reply boundary. MP4 and OPUS
+uploads use `stream` to match the downloadable `file` message. The `mp4` and `opus`
+upload types are for media and cannot be sent as native files; no media cover
+is generated.
+Platform send errors retain operation/status/code/reason/log id; a later split
+failure throws `FeishuPartialSendError` with the earlier platform receipts in
+`messages`. Its diagnostic message still lists those IDs and its `cause` is
+the original error. A failure before any receipt retains its original identity;
+channel callers decide how the typed partial failure settles at their tool boundary.
