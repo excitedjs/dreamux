@@ -88,3 +88,10 @@ All four commands completed successfully in one exit-0 sequence. The test stage
 completed with warnings only for the default-gated live Codex/model cases
 described above; it did not certify those excluded native model behaviors.
 `git diff --check` also passed.
+
+The first PR CI run rejected the change declaration because Dreamux's tests and
+maintenance reference changed without an `@excitedjs/dreamux` change file. Rush
+was used to generate the missing ordinary `minor` declaration for the built-in
+Feishu behavior; duplicate channel/transport declarations from the bulk
+generation were removed, preserving their existing reviewed notes. The corrected
+PR checks are pending.
