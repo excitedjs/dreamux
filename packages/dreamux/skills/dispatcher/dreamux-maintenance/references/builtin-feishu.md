@@ -28,10 +28,12 @@ local image inline; actual image nodes are rewritten to image keys before
 presentation/splitting. Code examples and remote/image-key references stay
 untouched. `reply.artifacts` optionally lists non-image local absolute paths.
 All uploads finish before any chat message; text sends first, then downloadable
-native file messages in array order, including MP4 without preview. MP4
+native file messages in array order, including MP4 without preview. MP4 and OPUS
 artifacts upload as `stream` to match native file delivery. The result's
 `message_ids` includes text and file messages in that order. Read/upload failure
-sends nothing; later send failure reports the already sent IDs and stops. There
+sends nothing; later send failure stops and returns a structured reply-tool
+failure with the platform error and all earlier text/file IDs. A send exception
+before any receipt retains its thrown behavior. There
 is no root allowlist, image argument, media-cover generation or delivery ledger.
 
 ## Feishu-Owned Routing State

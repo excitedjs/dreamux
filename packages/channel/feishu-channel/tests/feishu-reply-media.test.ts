@@ -356,25 +356,59 @@ describe.each(['interactive', 'post'] as const)('reply media (%s)', (mode) => {
     }
     expect(f.request).toHaveBeenCalledTimes(3);
   });
-  it('retains earlier chunk receipts if text sending fails and sends no file', async () => {
-    const f = await fixture(mode);
-    f.request
-      .mockResolvedValueOnce({
-        code: 0,
-        data: { message_id: 'chunk-id', chat_id: 'chat' },
-      })
-      .mockRejectedValueOnce(new Error('text denied'));
-    await expect(
-      f.reply({
+  it.each([undefined, 'source'])(
+    'settles text partial failure with all receipts and platform detail (%s)',
+    async (messageId) => {
+      const f = await fixture(mode);
+      const platform = Object.assign(
+        new Error('Request failed with status code 400'),
+        {
+          response: {
+            status: 400,
+            data: {
+              code: 230028,
+              msg: 'denied',
+              error: { log_id: 'log_example' },
+            },
+          },
+        },
+      );
+      f.request
+        .mockResolvedValueOnce({
+          code: 0,
+          data: { message_id: 'chunk-1', chat_id: 'chat' },
+        })
+        .mockResolvedValueOnce({
+          code: 0,
+          data: { message_id: 'chunk-2', chat_id: 'chat' },
+        })
+        .mockRejectedValueOnce(platform);
+      const result = await f.reply({
         chat_id: 'chat',
         text: 'x'.repeat(90_000),
         artifacts: [f.videoPath],
-      }),
-    ).rejects.toThrow('already sent message_ids: chunk-id');
-    expect(f.events).toEqual(['upload:video.mp4']);
-    expect(f.request).toHaveBeenCalledTimes(2);
-    for (const [call] of f.request.mock.calls)
-      expect(call).toMatchObject({ data: { msg_type: mode } });
+        ...(messageId ? { message_id: messageId } : {}),
+      });
+      expect(result).toEqual({
+        ok: false,
+        message: `Feishu text send failed: Feishu message.${messageId ? 'reply' : 'create'} failed (HTTP 400, code 230028, log_id=log_example): denied; already sent message_ids: chunk-1, chunk-2`,
+      });
+      expect(f.events).toEqual(['upload:video.mp4']);
+      expect(f.request).toHaveBeenCalledTimes(3);
+      for (const [call] of f.request.mock.calls)
+        expect(call).toMatchObject({ data: { msg_type: mode } });
+    },
+  );
+  it('keeps zero-receipt errors thrown even when their prose resembles a partial error', async () => {
+    const f = await fixture(mode);
+    const failure = new Error(
+      'upstream failure; already sent message_ids: unverified',
+    );
+    f.request.mockRejectedValueOnce(failure);
+    await expect(f.reply({ chat_id: 'chat', text: 'text' })).rejects.toBe(
+      failure,
+    );
+    expect(f.request).toHaveBeenCalledTimes(1);
   });
 });
 

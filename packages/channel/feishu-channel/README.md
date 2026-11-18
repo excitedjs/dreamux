@@ -26,7 +26,10 @@ message. Text parts send first, then native file messages in artifact order;
 MP4 is a downloadable file without a media preview. Every message uses the
 same resolved conversation and `message_ids` aggregates all receipts in send
 order. Read/upload failure sends nothing; a later send failure stops and
-reports the already sent IDs and failed artifact path. There is no image
+settles the reply MCP call as a structured failure with the original platform
+error, all text/file IDs, and the failed artifact path when applicable. Text
+and artifact partial failures use the same shape; zero-receipt send exceptions
+retain their thrown identity. There is no image
 argument or workspace-root allowlist.
 
 ## What it owns

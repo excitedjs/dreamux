@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts. Upload MP4 artifacts as stream to match downloadable file messages.",
+      "comment": "Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts. Upload MP4 and OPUS artifacts as stream to match downloadable file messages. Expose typed partial-send errors carrying platform receipts while preserving existing diagnostic messages and causes.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-transport"
     }

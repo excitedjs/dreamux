@@ -72,6 +72,19 @@ export interface FeishuSendResult {
   readonly messages: readonly FeishuSentMessage[];
 }
 
+/** A failed send after earlier platform receipts; the original error is cause. */
+export class FeishuPartialSendError extends Error {
+  constructor(
+    readonly messages: readonly FeishuSentMessage[],
+    cause: unknown,
+  ) {
+    super(
+      `${cause instanceof Error ? cause.message : String(cause)}; already sent message_ids: ${messages.map((m) => m.messageId).join(', ')}`,
+      { cause },
+    );
+  }
+}
+
 export interface FeishuSendOptions {
   messageType?: FeishuTextMessageType;
   signal?: AbortSignal;
@@ -467,10 +480,7 @@ export function createFeishuTransport(
         }
       } catch (err) {
         if (messages.length === 0) throw err;
-        throw new Error(
-          `${err instanceof Error ? err.message : String(err)}; already sent message_ids: ${messages.map((m) => m.messageId).join(', ')}`,
-          { cause: err },
-        );
+        throw new FeishuPartialSendError(messages, err);
       }
       return { messages };
     },

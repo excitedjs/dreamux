@@ -1,7 +1,7 @@
 {
   "changes": [
     {
-      "comment": "Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts.",
+      "comment": "Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts. Settle text and artifact partial reply failures with the same structured failure shape, preserving platform errors and receipts.",
       "type": "minor",
       "packageName": "@excitedjs/feishu-channel"
     }

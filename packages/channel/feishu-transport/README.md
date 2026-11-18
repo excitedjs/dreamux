@@ -138,11 +138,14 @@ upload/send order; this package knows no Dreamux config, routing or file roots.
 
 `uploadImage(bytes)` uses `im.v1.image.create` with `image_type: 'message'` and
 returns the SDK's direct `image_key`. `uploadFile({ fileName, bytes })` uses
-`im.v1.file.create`, deriving file_type from the filename (pdf/Office/opus,
+`im.v1.file.create`, deriving file_type from the filename (pdf/Office,
 otherwise stream) and returns the direct `file_key`. `sendFile(target, key)`
-sends a native `file` message through the same create/reply boundary. MP4
-uploads use `stream` to match the downloadable `file` message. The `mp4`
-upload type is for media and cannot be sent as a native file; no media cover
+sends a native `file` message through the same create/reply boundary. MP4 and OPUS
+uploads use `stream` to match the downloadable `file` message. The `mp4` and `opus`
+upload types are for media and cannot be sent as native files; no media cover
 is generated.
 Platform send errors retain operation/status/code/reason/log id; a later split
-failure also lists earlier message IDs and retains the original error as cause.
+failure throws `FeishuPartialSendError` with the earlier platform receipts in
+`messages`. Its diagnostic message still lists those IDs and its `cause` is
+the original error. A failure before any receipt retains its original identity;
+channel callers decide how the typed partial failure settles at their tool boundary.

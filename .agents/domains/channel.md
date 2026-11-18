@@ -214,19 +214,25 @@ untouched. It asynchronously reads/uploads `artifacts` before sending text,
 then sends native files in array order and aggregates all receipts. No local
 root allowlist or new core capability is involved. Transport's
 `transport/uploads.ts` accepts bytes and filenames, invokes SDK image/file
-create, and reads direct key results. MP4 uses upload file_type `stream` to match its native `file` message;
-all attachments send as `file`; media previews need a cover that this argument
-does not supply.
+create, and reads direct key results. MP4 and OPUS use upload file_type
+`stream` to match native `file` messages. PDF/Office retain their specialized
+upload types. All attachments send as `file`; media previews need a cover that
+this argument does not supply.
 
 `transport/outbound-message.ts` shares the create/reply SDK request boundary
 across `interactive`, `post`, and `file`. Read/upload failure sends no chat
 message. Each text receipt is observed before the next part; later failure
-stops and reports the already observed IDs. Outbound adds the failing artifact
-path and earlier text/file IDs to later file errors. No retry, rollback or
-persisted delivery state is introduced. Platform response failures expose the
+stops and reports the already observed IDs. `FeishuPartialSendError` carries
+text receipts and the original cause while preserving the direct transport
+message/cause contract. Outbound uses that type to combine observed receipts,
+then settles both text and artifact partial failures as `PublicInvokeFailure`
+with one ordered ID list and the original platform error. File failures also
+name the failing artifact path; no error-text matching decides the result
+shape. No retry, rollback or persisted delivery state is introduced. Platform response failures expose the
 operation, available HTTP status, code, reason and log ID without the body,
-credentials or SDK request configuration. A failure before any receipt retains
-its thrown identity; partial text errors retain their original cause.
+credentials or SDK request configuration. A send exception before any receipt
+retains its thrown identity; direct transport partial errors retain their
+original cause.
 
 Sources:
 - `/packages/channel/feishu-channel/src/provider.ts`
@@ -235,6 +241,7 @@ Sources:
 - `/packages/channel/feishu-transport/src/transport/message-content.ts`
 - `/packages/channel/feishu-transport/src/transport/uploads.ts`
 - `/packages/channel/feishu-transport/src/transport/outbound-message.ts`
+- `/packages/channel/feishu-transport/src/transport/feishu.ts`
 
 #### `ask_user_question`
 

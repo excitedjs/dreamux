@@ -44,20 +44,30 @@ it('uploads exact image bytes and returns the SDK direct image key', async () =>
 it.each([
   ['video.MP4', 'stream'],
   ['bundle.zip', 'stream'],
-  ['sound.opus', 'opus'],
+  ['sound.opus', 'stream'],
+  ['sound.OPUS', 'stream'],
   ['report.pdf', 'pdf'],
   ['report.docx', 'doc'],
   ['report.xlsx', 'xls'],
   ['report.pptx', 'ppt'],
 ])('uploads %s using file_type %s', async (fileName, fileType) => {
-  const { transport, file } = fixture();
+  const { transport, file, request } = fixture();
   const bytes = Buffer.from('file bytes');
-  await expect(transport.uploadFile({ fileName, bytes })).resolves.toBe(
-    'file_uploaded',
-  );
+  const key = await transport.uploadFile({ fileName, bytes });
+  expect(key).toBe('file_uploaded');
   expect(file).toHaveBeenCalledWith({
     data: { file_name: fileName, file_type: fileType, file: bytes },
   });
+  await transport.sendFile({ chatId: 'chat' }, key);
+  expect(request).toHaveBeenCalledWith(
+    expect.objectContaining({
+      data: {
+        receive_id: 'chat',
+        msg_type: 'file',
+        content: '{"file_key":"file_uploaded"}',
+      },
+    }),
+  );
 });
 
 it('propagates upload failures and never accepts a missing SDK key', async () => {

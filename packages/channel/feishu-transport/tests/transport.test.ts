@@ -9,7 +9,10 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { Readable } from 'node:stream';
 import { describe, expect, test, vi } from 'vitest';
-import { createFeishuTransport } from '../src/transport/feishu';
+import {
+  createFeishuTransport,
+  FeishuPartialSendError,
+} from '../src/transport/feishu';
 import {
   FEISHU_MESSAGE_CONTENT_SAFE_BYTES,
   type FeishuTextMessageType,
@@ -1561,23 +1564,47 @@ describe.each(['interactive', 'post'] as const)(
         })),
       );
     });
-    test('stops a multi-part send at the failed part and propagates that failure', async () => {
+    test('stops a multi-part send and carries receipts with the same error message/cause', async () => {
       const stub = stubClient();
       const failure = new Error('second part failed');
       stub.request.mockResolvedValueOnce({
         code: 0,
-        data: { message_id: 'created' },
+        data: {
+          message_id: 'created',
+          chat_id: 'reported-chat',
+          thread_id: 'reported-topic',
+        },
       });
+      stub.request.mockRejectedValueOnce(failure);
+      const sending = buildTransport(stub, messageType).send(
+        { chatId: 'oc_chat' },
+        'x'.repeat(90_000),
+      );
+      await expect(sending).rejects.toBeInstanceOf(FeishuPartialSendError);
+      await expect(sending).rejects.toMatchObject({
+        cause: failure,
+        message: 'second part failed; already sent message_ids: created',
+        messages: [
+          {
+            messageId: 'created',
+            chatId: 'reported-chat',
+            threadId: 'reported-topic',
+          },
+        ],
+      });
+      expect(stub.request).toHaveBeenCalledTimes(2);
+    });
+    test('keeps the original error when no earlier platform receipt exists', async () => {
+      const stub = stubClient();
+      const failure = new Error('second part failed');
+      stub.request.mockResolvedValueOnce({ code: 0, data: {} });
       stub.request.mockRejectedValueOnce(failure);
       await expect(
         buildTransport(stub, messageType).send(
           { chatId: 'oc_chat' },
           'x'.repeat(90_000),
         ),
-      ).rejects.toMatchObject({
-        cause: failure,
-        message: 'second part failed; already sent message_ids: created',
-      });
+      ).rejects.toBe(failure);
       expect(stub.request).toHaveBeenCalledTimes(2);
     });
     test('a later split-part refusal preserves the platform error and stops further sends', async () => {

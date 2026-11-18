@@ -28,6 +28,7 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import {
+  FeishuPartialSendError,
   localMarkdownImages,
   replaceLocalMarkdownImages,
   type FeishuTextMessageType,
@@ -303,9 +304,11 @@ export class FeishuOutbound {
         },
         'feishu send failed',
       );
+      if (err instanceof FeishuPartialSendError) messages.push(...err.messages);
       if (messages.length === 0) throw err;
+      const failure = err instanceof FeishuPartialSendError ? err.cause : err;
       throw new PublicInvokeFailure(
-        `Feishu ${failedPart} send failed: ${errorMessage(err)}; already sent message_ids: ${messages.map((m) => m.messageId).join(', ')}`,
+        `Feishu ${failedPart} send failed: ${errorMessage(failure)}; already sent message_ids: ${messages.map((m) => m.messageId).join(', ')}`,
       );
     }
     this.opts.log.info(

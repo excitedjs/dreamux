@@ -51,6 +51,7 @@ export {
 export type { OutboundTarget } from './transport/outbound-message.js';
 export {
   createFeishuTransport,
+  FeishuPartialSendError,
   FEISHU_APP_OWNER_TYPE_ENTERPRISE_MEMBER,
   type FeishuTransport,
   type FeishuCredentials,

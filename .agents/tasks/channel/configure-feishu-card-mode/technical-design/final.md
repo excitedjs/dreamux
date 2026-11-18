@@ -109,8 +109,8 @@ Transport adds two low-level capabilities:
 
 - `uploadFile({ fileName, bytes })` reads no Dreamux paths. It derives Feishu's
   `file_type` from the filename using Feishu's native file-message-compatible
-  suffix mapping (`pdf` and Office formats, `opus`, otherwise `stream`; MP4 is
-  deliberately `stream` for this file-message path) and calls
+  suffix mapping (`pdf` and Office formats, otherwise `stream`; MP4 and OPUS
+  deliberately use `stream` for this file-message path) and calls
   `client.im.v1.file.create` with `file_name` and bytes.
 - `sendFile(target, fileKey)` sends `msg_type: "file"` with
   `{ file_key }` through the same create/reply boundary and error description.
@@ -126,9 +126,13 @@ confirmed argument does not carry. No cover generator or extra parameter is
 added.
 
 If an artifact read/upload fails, no text or artifact message has been sent.
-If a native text/file send fails after earlier sends, throw an honest public
-error naming the failed artifact and listing the already-observed message ids;
-do not continue, retry, roll back, or report success. This preserves partial
+If a native text/file send fails after earlier sends, transport preserves the
+receipts in a platform-oriented `FeishuPartialSendError`; outbound converts
+that typed fact into the same `PublicInvokeFailure` shape used for artifact
+failures, naming the failed artifact and listing the observed ids once. Direct
+transport diagnostics and the original cause remain intact, and zero-receipt
+errors propagate unchanged. Do not continue, retry, roll back, report success,
+or detect partial delivery by matching error prose. This preserves partial
 receipts without inventing a second result schema or delivery state.
 
 ## Contracts, compatibility, and state

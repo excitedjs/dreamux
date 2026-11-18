@@ -64,8 +64,10 @@ the same change that touches it.
   without a media preview. All messages use the same resolved conversation;
   `message_ids` returns text and file IDs in send order. A read/upload failure
   sends no messages. Later send failures stop immediately and report already
-  sent IDs; created messages are not retracted. Platform failures retain the
-  operation, available HTTP status, Feishu code, reason and log ID without
+  sent IDs; the reply tool settles text and artifact partial failures in the
+  same structured failure shape. Send exceptions before any receipt retain
+  their thrown behavior. Created messages are not retracted. Platform failures
+  retain the operation, available HTTP status, Feishu code, reason and log ID without
   copying SDK request data. No image argument or path-root allowlist is added.
   (Task: [configure-feishu-card-mode](/.agents/tasks/channel/configure-feishu-card-mode/requirement.md).)
 - **Inbound messages read as one text body.** Text, rich posts, cards, and

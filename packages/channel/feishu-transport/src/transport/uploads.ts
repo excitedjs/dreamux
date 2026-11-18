@@ -27,14 +27,13 @@ export async function uploadFile(
         : suffix === 'pptx'
           ? 'ppt'
           : suffix;
-  // MP4 uploads must use stream for native file messages; mp4 is a media
-  // upload type and Feishu rejects sending its key as file (code 230055).
+  // MP4 and OPUS must use stream for native file messages. Their media upload
+  // types cannot be sent as file; Feishu rejects those keys (code 230055).
   const type =
     fileType === 'pdf' ||
     fileType === 'doc' ||
     fileType === 'xls' ||
-    fileType === 'ppt' ||
-    fileType === 'opus'
+    fileType === 'ppt'
       ? fileType
       : 'stream';
   const result = await client.im.v1.file.create({

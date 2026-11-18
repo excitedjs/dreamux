@@ -8,9 +8,9 @@
 - Final solution: [Approved implementation design](/.agents/tasks/channel/configure-feishu-card-mode/technical-design/final.md)
 - Solution review Issue: Not created.
 - Verification: [Live probe and local-check evidence](/.agents/tasks/channel/configure-feishu-card-mode/verification.md)
-- Blockers: Devbox can review only a published PR, so independent review is blocked until that PR is opened.
-- Resume stage: `review` after the PR review arrives.
-- Next action: Commit and publish the complete change, open a PR to `next`, and request Devbox review on the PR.
+- Blockers: Both ratified review corrections are complete and verified; independent re-review of the updated PR is pending.
+- Resume stage: `review` after the updated PR review arrives.
+- Next action: Publish both corrections and request Devbox re-review of PR #492.
 - Related tasks: Builds on the native-post implementation and preserved send semantics from [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md); preserves the interactive default selected by [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md).
 
 ## Task selection
@@ -39,6 +39,12 @@ The operator then required the review vehicle explicitly:
 > devbox 和你不在一台机器，你只能开pr后让他review pr
 
 This authorizes committing, publishing, and opening the PR needed for that independent review. It does not grant merge authority or declare review/knowledge closeout complete. The task remains blocked on the PR review and resumes at `review`.
+
+## Review adjudication
+
+On 2026-11-18 the operator resumed `review` and selected "补 live 探针" for finding 1. The authorized correction evidence is native file-message probes for the specialized upload types, rather than collapsing them to `stream`. No specialized branch may be removed or retained on assumption; record the observed results before further correction.
+
+On 2026-11-18 the operator selected "统一返回形态 (Recommended)" for finding 2 after a concrete two-message failure example. Partial text and artifact sends must both settle as structured public failures with their observed ids; zero-receipt behavior remains unchanged. The correction must not infer partial delivery by matching error text.
 
 ## Delivery
 
