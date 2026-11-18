@@ -55,8 +55,10 @@ configuration scope, Markdown source replacement, upload/send ordering, partial
 receipts, and the corrected MP4 mapping.
 
 The operator then clarified that Devbox is on a different machine and can review
-only a published PR. The task is blocked pending that PR's independent review;
-the local review request alone is not evidence of review coverage.
+only a published PR. The complete change was published as
+[#492](https://github.com/excitedjs/dreamux/pull/492), which is the review
+target. The task is blocked pending that PR's independent review; the earlier
+local review request alone is not evidence of review coverage.
 
 ## Local checks
 

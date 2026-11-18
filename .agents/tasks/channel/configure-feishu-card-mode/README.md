@@ -42,5 +42,5 @@ This authorizes committing, publishing, and opening the PR needed for that indep
 
 ## Delivery
 
-- Pull request: Not opened.
+- Pull request: [#492](https://github.com/excitedjs/dreamux/pull/492)
 - Knowledge closeout: Pending.
