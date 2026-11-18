@@ -41,6 +41,9 @@ class FakeTransport implements FeishuTransport {
   constructor() {
     // The real transport returns an object with own function properties.
     // Match that boundary: the bot forwards those members by object spread.
+    this.uploadImage = this.uploadImage.bind(this);
+    this.uploadFile = this.uploadFile.bind(this);
+    this.sendFile = this.sendFile.bind(this);
     this.send = this.send.bind(this);
     this.sendCard = this.sendCard.bind(this);
     this.editCard = this.editCard.bind(this);
@@ -75,6 +78,16 @@ class FakeTransport implements FeishuTransport {
         },
       ],
     };
+  }
+
+  async uploadImage(): Promise<string> {
+    throw new Error('No image upload fixture');
+  }
+  async uploadFile(): Promise<string> {
+    throw new Error('No file upload fixture');
+  }
+  async sendFile(): Promise<FeishuSendResult> {
+    throw new Error('No file send fixture');
   }
 
   async sendCard(

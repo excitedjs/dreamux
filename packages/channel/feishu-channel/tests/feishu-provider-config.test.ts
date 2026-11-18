@@ -84,3 +84,20 @@ describe('Feishu channel config — cot.reasoning', () => {
     await expect(read({ cot: { reasoning: true } })).rejects.toThrow(/app_id/);
   });
 });
+
+it.each([undefined, 'interactive', 'post'])(
+  'normalizes card_mode %s',
+  async (card_mode) => {
+    expect((await read(credentials({ card_mode }))).cardMode).toBe(
+      card_mode ?? 'interactive',
+    );
+  },
+);
+it.each([null, '', 'wide', 1, true, {}])(
+  'rejects invalid card_mode %s with the field name',
+  async (card_mode) => {
+    await expect(read(credentials({ card_mode }))).rejects.toThrow(
+      /card_mode must be interactive or post/,
+    );
+  },
+);

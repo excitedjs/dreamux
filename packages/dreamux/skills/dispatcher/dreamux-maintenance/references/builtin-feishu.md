@@ -4,6 +4,11 @@ Accepted `dispatchers[].channels[].config` fields:
 
 - `app_id`: required non-empty string identifying this Channel config;
 - `app_secret`: required non-empty string authenticating the Feishu app;
+- `card_mode`: optional `"interactive"` or `"post"`, default `"interactive"`.
+  Only the `reply` tool consumes it: compact Card JSON 2.0 Markdown or one
+  native rich-text `md` node. Channel-authored notices, question/binding cards,
+  explicit cards and COT stay interactive; width is unchanged. Any other value
+  fails config loading with a `card_mode` diagnostic.
 - `cot`: optional object with one switch, `reasoning` (boolean, default
   `false`). When `true`, the Channel shows the runtime's native reasoning
   blocks on its COT cards, each headed once by `Thinking...`, with card updates
@@ -15,6 +20,19 @@ Accepted `dispatchers[].channels[].config` fields:
 There are no credential defaults. An absent or empty `cot` object means every
 switch is off; a `cot` or `cot.reasoning` value of the wrong type fails config
 loading rather than being ignored.
+
+## Reply Images and Artifacts
+
+Use `![alt](/absolute/path)` in reply Markdown to upload a daemon-readable
+local image inline; actual image nodes are rewritten to image keys before
+presentation/splitting. Code examples and remote/image-key references stay
+untouched. `reply.artifacts` optionally lists non-image local absolute paths.
+All uploads finish before any chat message; text sends first, then downloadable
+native file messages in array order, including MP4 without preview. MP4
+artifacts upload as `stream` to match native file delivery. The result's
+`message_ids` includes text and file messages in that order. Read/upload failure
+sends nothing; later send failure reports the already sent IDs and stops. There
+is no root allowlist, image argument, media-cover generation or delivery ledger.
 
 ## Feishu-Owned Routing State
 

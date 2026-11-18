@@ -122,3 +122,27 @@ node common/scripts/install-run-rush.js update
 node common/scripts/install-run-rush.js build
 node common/scripts/install-run-rush.js test
 ```
+
+## Outbound Markdown and Uploads
+
+`send(target, markdown, { messageType?: 'interactive' | 'post', signal? })`
+selects the platform envelope per call; omission retains Card JSON 2.0 with
+one Markdown element. Native posts use one `md` node. Both measure the same
+28 KiB serialized-content budget and preserve ordered splitting/receipts.
+`sendCard` always sends interactive content. Width is unchanged.
+
+`localMarkdownImages` and `replaceLocalMarkdownImages` use marked's actual
+tokens and source positions to replace local destinations while retaining code,
+alt/title text and surrounding Markdown. The caller owns async local reads and
+upload/send order; this package knows no Dreamux config, routing or file roots.
+
+`uploadImage(bytes)` uses `im.v1.image.create` with `image_type: 'message'` and
+returns the SDK's direct `image_key`. `uploadFile({ fileName, bytes })` uses
+`im.v1.file.create`, deriving file_type from the filename (pdf/Office/opus,
+otherwise stream) and returns the direct `file_key`. `sendFile(target, key)`
+sends a native `file` message through the same create/reply boundary. MP4
+uploads use `stream` to match the downloadable `file` message. The `mp4`
+upload type is for media and cannot be sent as a native file; no media cover
+is generated.
+Platform send errors retain operation/status/code/reason/log id; a later split
+failure also lists earlier message IDs and retains the original error as cause.

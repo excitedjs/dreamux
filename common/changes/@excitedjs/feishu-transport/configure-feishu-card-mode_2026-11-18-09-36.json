@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts. Upload MP4 artifacts as stream to match downloadable file messages.",
+      "type": "minor",
+      "packageName": "@excitedjs/feishu-transport"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-transport",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

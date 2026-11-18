@@ -22,9 +22,17 @@
  * message) name their conversation themselves and are never re-addressed.
  * `notify` adds one policy of its own: a notice into a topic replies under
  * that topic's root, and when its caller has none the root is asked of Feishu
- * and remembered on the route. Every other method is a thin, logged wrapper
- * over the transport.
+ * and remembered on the route. `sendText` also owns async local reads and
+ * upload/send order; the other methods are logged transport wrappers.
  */
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+import {
+  localMarkdownImages,
+  replaceLocalMarkdownImages,
+  type FeishuTextMessageType,
+} from '@excitedjs/feishu-transport';
+
 import {
   describeTarget,
   messageTarget,
@@ -217,7 +225,8 @@ export class FeishuOutbound {
   }
 
   /**
-   * Send a message as a card whose body is Markdown text. Where it lands is
+   * Upload local images/artifacts, then send Markdown and ordered files.
+   * Where the whole call lands is
    * `resolveTarget`'s decision; see there for what an omitted `messageId`
    * means.
    */
@@ -226,6 +235,8 @@ export class FeishuOutbound {
     text: string;
     messageId?: string | undefined;
     sender: FeishuSender;
+    messageType?: FeishuTextMessageType;
+    artifacts?: readonly string[];
   }): Promise<{ messages: readonly FeishuSentMessage[] }> {
     const target = this.resolveTarget(
       {
@@ -236,9 +247,52 @@ export class FeishuOutbound {
       },
       input.sender,
     );
-    let result: FeishuSendResult;
+    const messages: FeishuSentMessage[] = [];
+    let failedPart = 'text';
     try {
-      result = await this.opts.bot.send(target, input.text);
+      const images = localMarkdownImages(input.text);
+      const keys: string[] = [];
+      for (const image of images) {
+        try {
+          keys.push(
+            await this.opts.bot.uploadImage(await readFile(image.path)),
+          );
+        } catch (err) {
+          throw new PublicInvokeFailure(
+            `Feishu image ${image.path} read/upload failed: ${errorMessage(err)}`,
+          );
+        }
+      }
+      const files: Array<{ path: string; key: string }> = [];
+      for (const path of input.artifacts ?? []) {
+        try {
+          files.push({
+            path,
+            key: await this.opts.bot.uploadFile({
+              fileName: basename(path),
+              bytes: await readFile(path),
+            }),
+          });
+        } catch (err) {
+          throw new PublicInvokeFailure(
+            `Feishu artifact ${path} read/upload failed: ${errorMessage(err)}`,
+          );
+        }
+      }
+      const text = replaceLocalMarkdownImages(input.text, images, keys);
+      const result = await this.opts.bot.send(
+        target,
+        text,
+        input.messageType === undefined
+          ? undefined
+          : { messageType: input.messageType },
+      );
+      messages.push(...result.messages);
+      for (const file of files) {
+        failedPart = `artifact ${file.path}`;
+        const sent = await this.opts.bot.sendFile(target, file.key);
+        messages.push(...sent.messages);
+      }
     } catch (err) {
       this.opts.log.error(
         {
@@ -249,18 +303,21 @@ export class FeishuOutbound {
         },
         'feishu send failed',
       );
-      throw err;
+      if (messages.length === 0) throw err;
+      throw new PublicInvokeFailure(
+        `Feishu ${failedPart} send failed: ${errorMessage(err)}; already sent message_ids: ${messages.map((m) => m.messageId).join(', ')}`,
+      );
     }
     this.opts.log.info(
       {
         dispatcher_id: this.opts.dispatcherId,
         chat_id: target.chatId,
         message_id: target.replyToMessageId,
-        message_ids: result.messages.map((m) => m.messageId),
+        message_ids: messages.map((m) => m.messageId),
       },
       'feishu message sent',
     );
-    return result;
+    return { messages };
   }
 
   /**

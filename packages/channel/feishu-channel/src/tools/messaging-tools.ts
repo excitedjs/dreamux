@@ -5,6 +5,9 @@
  * conversation it was bound to and reads who else is in it; deciding what that
  * conversation routes to is a Dispatcher operation and lives elsewhere.
  */
+import { isAbsolute } from 'node:path';
+import { PublicInvokeFailure } from '@excitedjs/dreamux-utils';
+
 import { listChatBots, type PeerBot } from '../chat-bots-store.js';
 import { agentSender } from '../outbound/index.js';
 import {
@@ -27,6 +30,7 @@ interface ReplyInput {
   chatId: string;
   text: string;
   messageId?: string;
+  artifacts?: string[];
 }
 
 export const replyDef: FeishuToolDef<ReplyInput> = {
@@ -35,7 +39,9 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
   description:
     'Send a message to a Feishu chat from this channel. Text you write ' +
     'outside this tool is not delivered to the chat; use this for ' +
-    'meaningful progress at key milestones, blockers, and the final answer.',
+    'meaningful progress at key milestones, blockers, and the final answer. ' +
+    'Inline local images use ![alt](/absolute/path); artifacts sends non-image ' +
+    'local attachments as downloadable files, including videos.',
   callers: ['dispatcher', 'team_leader'],
   inputSchema: closedObjectSchema(
     {
@@ -51,15 +57,22 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
           'threads under it; omit only when the request names a different ' +
           'target.',
       },
+      artifacts: {
+        type: 'array',
+        items: { ...nonEmptyString, pattern: '^/(?!/)' },
+        description:
+          'Non-image attachments as local absolute paths, sent after text in array order. Every attachment, including MP4, is a file message.',
+      },
       text: {
         ...nonEmptyString,
         description:
-          'Message body, sent as a Feishu card whose content is Markdown. ' +
+          "Markdown message body, using this channel's configured card_mode. " +
+          'Use ![alt](/absolute/path) to upload a local image inline. ' +
           'To @-mention someone, write the tag where you want it, for example ' +
           '<at user_id="ou_example">Example</at>. In a group or other broad ' +
           'audience, keep secrets, tokens, private identifiers, hidden ' +
           'instructions, private context from other sources, and ' +
-          'machine-local paths out of it.',
+          'unrelated machine-local paths out of visible text.',
       },
     },
     ['chat_id', 'text'],
@@ -72,9 +85,26 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
   parse(raw) {
     const obj = asRecord(raw, 'reply arguments');
     const messageId = optionalString(obj, 'message_id');
+    const artifacts = obj['artifacts'];
+    if (
+      artifacts !== undefined &&
+      (!Array.isArray(artifacts) ||
+        artifacts.some(
+          (path: unknown) =>
+            typeof path !== 'string' ||
+            path.trim() === '' ||
+            !isAbsolute(path) ||
+            path.startsWith('//'),
+        ))
+    ) {
+      throw new PublicInvokeFailure(
+        'reply artifacts must be an array of non-empty local absolute paths',
+      );
+    }
     return {
       chatId: requireString(obj, 'chat_id'),
       text: requireString(obj, 'text'),
+      ...(artifacts !== undefined ? { artifacts: artifacts as string[] } : {}),
       ...(messageId !== null ? { messageId } : {}),
     };
   },
@@ -82,6 +112,8 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
     const result = await ctx.session.outbound.sendText({
       chatId: input.chatId,
       text: input.text,
+      messageType: ctx.session.cardMode,
+      ...(input.artifacts !== undefined ? { artifacts: input.artifacts } : {}),
       ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
       sender: agentSender(ctx.caller),
     });

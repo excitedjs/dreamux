@@ -10,6 +10,25 @@ of the Lark SDK.
 `@excitedjs/dreamux` depends on this package and always loads its plugin, so
 the Feishu channel ships out of the box.
 
+## Reply Configuration and Attachments
+
+Set `dispatchers[].channels[].config.card_mode` to `interactive` (default) or
+`post` to select compact Markdown cards or native rich text for the `reply`
+tool. Other Channel notices, explicit cards, question/binding cards and COT
+stay interactive. Width does not change; invalid values fail config loading.
+
+In either mode, `![alt](/absolute/path)` uploads a local image and replaces its
+Markdown destination with the image key. Code examples, ordinary links,
+remote images and existing keys stay untouched. Optional `reply.artifacts`
+is an array of non-empty local absolute paths for non-image attachments.
+All local reads are async, and all uploads finish before the first chat
+message. Text parts send first, then native file messages in artifact order;
+MP4 is a downloadable file without a media preview. Every message uses the
+same resolved conversation and `message_ids` aggregates all receipts in send
+order. Read/upload failure sends nothing; a later send failure stops and
+reports the already sent IDs and failed artifact path. There is no image
+argument or workspace-root allowlist.
+
 ## What it owns
 
 - The live Feishu channel **session** (bot start/close) above raw Lark JSAPI

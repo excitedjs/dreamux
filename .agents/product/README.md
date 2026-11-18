@@ -41,26 +41,33 @@ the same change that touches it.
   needing no orphan governance; a later message on that conversation simply
   creates or selects another Team. Dissolving a Team cancels all bindings that
   point at it.
-- **Replies are Markdown cards.** The agent writes Markdown and inline
-  `<at user_id="ou_example">Example</at>` directly in the `reply` body; there is
-  no separate mention-list argument. The body is sent as one interactive card
-  holding a single Markdown element, because a card shows text in the client's
-  compact size where a native post shows it larger and thins the information
-  out. A leading heading is no longer lifted into a card title and a table is
-  no longer a native table element; the Markdown goes into the card as
-  written, the mention tag included, and the card renders that tag as a
-  mention (verified in a direct chat), so the model reads and writes one
-  syntax. A supplied `message_id`
-  addresses the original conversation. One body is one card when its
-  serialized content fits 28 KiB; larger bodies split in order, preserving
-  Unicode clusters, code fences, and table headers. An indivisible oversized
-  table row produces a size error. Explicit interactive cards and COT remain
-  available. Platform send failures expose the operation, available HTTP
-  status, Feishu code, reason, and log ID in logs and the MCP failure without
-  copying request data.
-  (Task: [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md),
-  superseding the native-post presentation of
-  [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+- **Reply presentation is configured per Feishu channel.**
+  `dispatchers[].channels[].config.card_mode` accepts `interactive` (the
+  default) or `post`. Only the agent's `reply` tool uses the setting. The
+  default keeps compact Card JSON 2.0 Markdown; `post` holds the same authored
+  Markdown in one native rich-text `md` node. Inline
+  `<at user_id="ou_example">Example</at>` mentions stay as written, with no
+  separate mention-list argument. Headings and tables stay Markdown rather
+  than becoming card titles or native tables. Width is unchanged.
+  A supplied `message_id` addresses the original conversation. One body is one
+  message when its serialized content fits 28 KiB; larger bodies split in
+  order, preserving Unicode clusters, code fences, and table headers. An
+  indivisible oversized table row produces a size error. Channel-authored
+  notices, explicit cards, question/binding cards and COT stay interactive.
+- **Replies deliver local images and non-image artifacts.** Actual Markdown
+  images with local absolute destinations are uploaded and their destinations
+  replaced with image keys before either reply envelope is measured. Code
+  examples, ordinary links, remote images and existing image keys are left
+  alone. Optional `artifacts` takes local absolute paths; all images and files
+  finish uploading before any chat message. Text parts send first, followed by
+  downloadable native file messages in artifact order, including MP4 files
+  without a media preview. All messages use the same resolved conversation;
+  `message_ids` returns text and file IDs in send order. A read/upload failure
+  sends no messages. Later send failures stop immediately and report already
+  sent IDs; created messages are not retracted. Platform failures retain the
+  operation, available HTTP status, Feishu code, reason and log ID without
+  copying SDK request data. No image argument or path-root allowlist is added.
+  (Task: [configure-feishu-card-mode](/.agents/tasks/channel/configure-feishu-card-mode/requirement.md).)
 - **Inbound messages read as one text body.** Text, rich posts, cards, and
   attachments reach the model as one `<content>` body whose mentions are
   written exactly as the `reply` tool takes them, `<at user_id="...">Name</at>`,

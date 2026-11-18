@@ -6,7 +6,12 @@ import {
   type MessageSendResponse,
   type OutboundTarget,
 } from './outbound-message.js';
-import { assertMessageContentFits, cardContents } from './message-content.js';
+import { uploadImage, uploadFile } from './uploads.js';
+import {
+  assertMessageContentFits,
+  cardContents,
+  type FeishuTextMessageType,
+} from './message-content.js';
 import {
   connectionErrorLogLine,
   reconnectedLogLine,
@@ -68,6 +73,7 @@ export interface FeishuSendResult {
 }
 
 export interface FeishuSendOptions {
+  messageType?: FeishuTextMessageType;
   signal?: AbortSignal;
 }
 
@@ -262,6 +268,9 @@ export interface FeishuTransport {
     text: string,
     options?: FeishuSendOptions,
   ): Promise<FeishuSendResult>;
+  uploadImage(bytes: Buffer): Promise<string>;
+  uploadFile(input: { fileName: string; bytes: Buffer }): Promise<string>;
+  sendFile(target: OutboundTarget, fileKey: string): Promise<FeishuSendResult>;
   sendCard(
     target: OutboundTarget,
     card: unknown,
@@ -443,17 +452,44 @@ export function createFeishuTransport(
       options?: FeishuSendOptions,
     ): Promise<FeishuSendResult> {
       const messages: FeishuSentMessage[] = [];
-      for (const content of cardContents(text)) {
-        const res = await sendFeishuMessage(
-          client,
-          target,
-          content,
-          options?.signal,
+      const messageType = options?.messageType ?? 'interactive';
+      try {
+        for (const content of cardContents(text, messageType)) {
+          const res = await sendFeishuMessage(
+            client,
+            target,
+            content,
+            messageType,
+            options?.signal,
+          );
+          const sent = sentMessageFrom(res.data);
+          if (sent !== undefined) messages.push(sent);
+        }
+      } catch (err) {
+        if (messages.length === 0) throw err;
+        throw new Error(
+          `${err instanceof Error ? err.message : String(err)}; already sent message_ids: ${messages.map((m) => m.messageId).join(', ')}`,
+          { cause: err },
         );
-        const sent = sentMessageFrom(res.data);
-        if (sent !== undefined) messages.push(sent);
       }
       return { messages };
+    },
+
+    uploadImage(bytes) {
+      return uploadImage(client, bytes);
+    },
+    uploadFile(input) {
+      return uploadFile(client, input);
+    },
+    async sendFile(target, fileKey) {
+      const res = await sendFeishuMessage(
+        client,
+        target,
+        JSON.stringify({ file_key: fileKey }),
+        'file',
+      );
+      const sent = sentMessageFrom(res.data);
+      return { messages: sent !== undefined ? [sent] : [] };
     },
 
     async sendCard(
@@ -467,6 +503,7 @@ export function createFeishuTransport(
         client,
         target,
         content,
+        'interactive',
         options?.signal,
       );
       const sent = sentMessageFrom(res.data);

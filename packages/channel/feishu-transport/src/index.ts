@@ -93,3 +93,10 @@ export type { TransportLogger } from './transport/diagnostics.js';
 
 // ── small shared util ──
 export { isRecord, asString } from './json.js';
+
+export {
+  localMarkdownImages,
+  replaceLocalMarkdownImages,
+  type LocalMarkdownImage,
+  type FeishuTextMessageType,
+} from './transport/message-content.js';

@@ -27,6 +27,7 @@ export interface FakeFeishuBot extends FeishuBot {
     chatId: string;
     target: OutboundTarget;
     text: string;
+    messageType: string;
     messageIds: string[];
     messages: FeishuSentMessage[];
   }>;
@@ -184,11 +185,21 @@ export function createFakeFeishuBot(appId: string = 'fake-bot'): FakeFeishuBot {
         chatId: target.chatId,
         target,
         text,
+        messageType: options?.messageType ?? 'interactive',
         messageIds: [id],
         messages,
       });
       await waitForSendCardDelay(sendReceiptDelay, options?.signal);
       return { messages };
+    },
+    async uploadImage(): Promise<string> {
+      throw new Error('No image upload fixture');
+    },
+    async uploadFile(): Promise<string> {
+      throw new Error('No file upload fixture');
+    },
+    async sendFile(): Promise<FeishuSendResult> {
+      throw new Error('No file send fixture');
     },
     async sendCard(
       target: OutboundTarget,

@@ -10,7 +10,10 @@ import * as lark from '@larksuiteoapi/node-sdk';
 import { Readable } from 'node:stream';
 import { describe, expect, test, vi } from 'vitest';
 import { createFeishuTransport } from '../src/transport/feishu';
-import { FEISHU_MESSAGE_CONTENT_SAFE_BYTES } from '../src/transport/message-content';
+import {
+  FEISHU_MESSAGE_CONTENT_SAFE_BYTES,
+  type FeishuTextMessageType,
+} from '../src/transport/message-content';
 import type { TransportLogger } from '../src/transport/diagnostics';
 
 /**
@@ -129,6 +132,15 @@ function sentRequests(stub: ReturnType<typeof stubClient>): SentRequest[] {
 /** The Markdown inside each card that was sent, in order. */
 function cardBodies(stub: ReturnType<typeof stubClient>): string[] {
   return sentRequests(stub).map((sent) => {
+    if (sent.data.msg_type === 'post') {
+      const post = JSON.parse(sent.data.content) as {
+        zh_cn: { content: Array<Array<{ tag: string; text: string }>> };
+      };
+      expect(post.zh_cn.content).toHaveLength(1);
+      expect(post.zh_cn.content[0]).toHaveLength(1);
+      expect(post.zh_cn.content[0]?.[0]?.tag).toBe('md');
+      return post.zh_cn.content[0]?.[0]?.text ?? '';
+    }
     expect(sent.data.msg_type).toBe('interactive');
     const card = JSON.parse(sent.data.content) as {
       schema: string;
@@ -141,7 +153,10 @@ function cardBodies(stub: ReturnType<typeof stubClient>): string[] {
   });
 }
 
-function buildTransport(stub: ReturnType<typeof stubClient>) {
+function buildTransport(
+  stub: ReturnType<typeof stubClient>,
+  messageType: FeishuTextMessageType = 'interactive',
+) {
   const noop = (): void => undefined;
   const logger: TransportLogger = {
     error: noop,
@@ -150,223 +165,236 @@ function buildTransport(stub: ReturnType<typeof stubClient>) {
     debug: noop,
     trace: noop,
   };
-  return createFeishuTransport(
+  const transport = createFeishuTransport(
     { appId: 'app', appSecret: 'secret' },
     { client: stub.client, logger },
   );
+  return {
+    ...transport,
+    send: (
+      target: Parameters<typeof transport.send>[0],
+      text: string,
+      options?: Parameters<typeof transport.send>[2],
+    ) => transport.send(target, text, { ...options, messageType }),
+  };
 }
 
-describe('createFeishuTransport — send', () => {
-  test('an oversized body loses its carriage returns in the split', async () => {
-    // The split tiles the lexer's block `raw` values, which normalize CRLF
-    // to LF; a body that fits is sent as written. Pinned rather than fixed:
-    // the agent writes LF.
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = 'line one\r\nline two\r\n\r\n'.repeat(2000);
+describe.each(['interactive', 'post'] as const)(
+  'createFeishuTransport — send (%s)',
+  (messageType) => {
+    test('an oversized body loses its carriage returns in the split', async () => {
+      // The split tiles the lexer's block `raw` values, which normalize CRLF
+      // to LF; a body that fits is sent as written. Pinned rather than fixed:
+      // the agent writes LF.
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const body = 'line one\r\nline two\r\n\r\n'.repeat(2000);
 
-    await transport.send({ chatId: 'oc_chat' }, body);
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(1);
-    expect(bodies.join('')).toBe(body.replace(/\r\n/g, '\n'));
-  });
+      const bodies = cardBodies(stub);
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(bodies.join('')).toBe(body.replace(/\r\n/g, '\n'));
+    });
 
-  test('a body of many small blocks still sends as one message', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = Array.from({ length: 400 }, (_v, i) => `- item ${i}`).join(
-      '\n',
-    );
-
-    await transport.send({ chatId: 'oc_chat' }, body);
-
-    expect(stub.request).toHaveBeenCalledTimes(1);
-    expect(cardBodies(stub)).toEqual([body]);
-  });
-
-  test('measures the budget on the escaped payload, not the raw text', async () => {
-    // A body of characters that each cost six bytes once JSON-escaped: a raw
-    // UTF-8 count would call this one message and the platform would reject it.
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = '\u0001'.repeat(20_000);
-
-    await transport.send({ chatId: 'oc_chat' }, body);
-
-    expect(cardBodies(stub).join('')).toBe(body);
-    for (const sent of sentRequests(stub)) {
-      expect(Buffer.byteLength(sent.data.content, 'utf8')).toBeLessThanOrEqual(
-        FEISHU_MESSAGE_CONTENT_SAFE_BYTES,
+    test('a body of many small blocks still sends as one message', async () => {
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const body = Array.from({ length: 400 }, (_v, i) => `- item ${i}`).join(
+        '\n',
       );
-    }
-  });
 
-  test('splits multi-byte text at grapheme boundaries', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = '汉'.repeat(20_000);
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-    await transport.send({ chatId: 'oc_chat' }, body);
+      expect(stub.request).toHaveBeenCalledTimes(1);
+      expect(cardBodies(stub)).toEqual([body]);
+    });
 
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(1);
-    expect(bodies.join('')).toBe(body);
-    for (const piece of bodies) {
-      expect(piece).not.toContain('\uFFFD');
-      expect([...piece].every((char) => char === '汉')).toBe(true);
-    }
-  });
+    test('measures the budget on the escaped payload, not the raw text', async () => {
+      // A body of characters that each cost six bytes once JSON-escaped: a raw
+      // UTF-8 count would call this one message and the platform would reject it.
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const body = '\u0001'.repeat(20_000);
 
-  test('keeps every piece of a split code block fenced', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const code = Array.from({ length: 3_000 }, (_v, i) => `line ${i}`).join(
-      '\n',
-    );
-    const body = `\`\`\`ts\n${code}\n\`\`\`\n`;
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-    await transport.send({ chatId: 'oc_chat' }, body);
+      expect(cardBodies(stub).join('')).toBe(body);
+      for (const sent of sentRequests(stub)) {
+        expect(
+          Buffer.byteLength(sent.data.content, 'utf8'),
+        ).toBeLessThanOrEqual(FEISHU_MESSAGE_CONTENT_SAFE_BYTES);
+      }
+    });
 
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(1);
-    for (const piece of bodies) {
-      expect(piece.startsWith('```ts\n')).toBe(true);
-      expect(piece.trimEnd().endsWith('```')).toBe(true);
-    }
-    expect(
-      bodies
-        .map((piece) => piece.slice('```ts\n'.length, piece.lastIndexOf('```')))
-        .join(''),
-    ).toBe(`${code}\n`);
-  });
+    test('splits multi-byte text at grapheme boundaries', async () => {
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const body = '汉'.repeat(20_000);
 
-  test('never sends a message that holds only blank lines', async () => {
-    // Two oversized code blocks separated by a blank line, and a blank line at
-    // the end: once each block is split the separators are left over on their
-    // own. A separator between messages is not a message.
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const lines = (tag: string): string[] =>
-      Array.from({ length: 6_000 }, (_v, i) => `${tag} ${i}`);
-    const block = (tag: string): string =>
-      `\`\`\`ts\n${lines(tag).join('\n')}\n\`\`\`\n`;
-    const body = `${block('a')}\n${block('b')}\n\n`;
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-    await transport.send({ chatId: 'oc_chat' }, body);
+      const bodies = cardBodies(stub);
+      expect(bodies.length).toBeGreaterThan(1);
+      expect(bodies.join('')).toBe(body);
+      for (const piece of bodies) {
+        expect(piece).not.toContain('\uFFFD');
+        expect([...piece].every((char) => char === '汉')).toBe(true);
+      }
+    });
 
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(2);
-    for (const piece of bodies) expect(piece.trim()).not.toBe('');
-    expect(
-      bodies
-        .flatMap((piece) => piece.split('\n'))
-        .filter((line) => line !== '' && !line.startsWith('```')),
-    ).toEqual([...lines('a'), ...lines('b')]);
-  });
-
-  test('splits a code block whose single line is larger than one message', async () => {
-    // Every piece pays for both fence lines plus the newline that separates the
-    // split line from the closing fence; a piece that forgets the newline is
-    // one escaped byte over the budget the platform enforces.
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = '```ts\n' + 'x'.repeat(30_000) + '\n```';
-
-    await transport.send({ chatId: 'oc_chat' }, body);
-
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(1);
-    for (const sent of sentRequests(stub)) {
-      expect(Buffer.byteLength(sent.data.content, 'utf8')).toBeLessThanOrEqual(
-        FEISHU_MESSAGE_CONTENT_SAFE_BYTES,
+    test('keeps every piece of a split code block fenced', async () => {
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const code = Array.from({ length: 3_000 }, (_v, i) => `line ${i}`).join(
+        '\n',
       );
-    }
-    expect(
-      bodies
-        .map((piece) =>
-          piece.slice('```ts\n'.length, piece.lastIndexOf('```')).trimEnd(),
-        )
-        .join(''),
-    ).toBe('x'.repeat(30_000));
-  });
+      const body = `\`\`\`ts\n${code}\n\`\`\`\n`;
 
-  test('repeats a long table header on every piece', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const header = '| id | note |\n| --- | --- |\n';
-    const rows = Array.from(
-      { length: 3_000 },
-      (_v, i) => `| ${i} | note ${i} |`,
-    ).join('\n');
-    const body = `${header}${rows}\n`;
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-    await transport.send({ chatId: 'oc_chat' }, body);
+      const bodies = cardBodies(stub);
+      expect(bodies.length).toBeGreaterThan(1);
+      for (const piece of bodies) {
+        expect(piece.startsWith('```ts\n')).toBe(true);
+        expect(piece.trimEnd().endsWith('```')).toBe(true);
+      }
+      expect(
+        bodies
+          .map((piece) =>
+            piece.slice('```ts\n'.length, piece.lastIndexOf('```')),
+          )
+          .join(''),
+      ).toBe(`${code}\n`);
+    });
 
-    const bodies = cardBodies(stub);
-    expect(bodies.length).toBeGreaterThan(1);
-    for (const piece of bodies) expect(piece.startsWith(header)).toBe(true);
-    expect(bodies.map((piece) => piece.slice(header.length)).join('')).toBe(
-      `${rows}\n`,
-    );
-  });
+    test('never sends a message that holds only blank lines', async () => {
+      // Two oversized code blocks separated by a blank line, and a blank line at
+      // the end: once each block is split the separators are left over on their
+      // own. A separator between messages is not a message.
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const lines = (tag: string): string[] =>
+        Array.from({ length: 6_000 }, (_v, i) => `${tag} ${i}`);
+      const block = (tag: string): string =>
+        `\`\`\`ts\n${lines(tag).join('\n')}\n\`\`\`\n`;
+      const body = `${block('a')}\n${block('b')}\n\n`;
 
-  test('refuses a table whose header and single row cannot fit', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const body = [
-      '| id | note |',
-      '| --- | --- |',
-      `| 1 | ${'x'.repeat(FEISHU_MESSAGE_CONTENT_SAFE_BYTES)} |`,
-    ].join('\n');
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-    await expect(transport.send({ chatId: 'oc_chat' }, body)).rejects.toThrow(
-      /table header plus a single data row/,
-    );
-    expect(stub.request).not.toHaveBeenCalled();
-  });
+      const bodies = cardBodies(stub);
+      expect(bodies.length).toBeGreaterThan(2);
+      for (const piece of bodies) expect(piece.trim()).not.toBe('');
+      expect(
+        bodies
+          .flatMap((piece) => piece.split('\n'))
+          .filter((line) => line !== '' && !line.startsWith('```')),
+      ).toEqual([...lines('a'), ...lines('b')]);
+    });
 
-  test('sendCard rejects a card body over the content budget', async () => {
-    const stub = stubClient();
-    const transport = buildTransport(stub);
-    const card = { text: 'x'.repeat(FEISHU_MESSAGE_CONTENT_SAFE_BYTES) };
+    test('splits a code block whose single line is larger than one message', async () => {
+      // Every piece pays for both fence lines plus the newline that separates the
+      // split line from the closing fence; a piece that forgets the newline is
+      // one escaped byte over the budget the platform enforces.
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const body = '```ts\n' + 'x'.repeat(30_000) + '\n```';
 
-    await expect(
-      transport.sendCard({ chatId: 'oc_chat' }, card),
-    ).rejects.toThrow(/over the 28672-byte budget/);
-    expect(stub.request).not.toHaveBeenCalled();
-  });
+      await transport.send({ chatId: 'oc_chat' }, body);
 
-  test('sendCard forwards AbortSignal to the cancellable request path', async () => {
-    const stub = stubClient();
-    const controller = new AbortController();
-    stub.request.mockImplementationOnce((raw: unknown) => {
-      const signal = (raw as { signal?: AbortSignal }).signal;
-      return new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), {
-          once: true,
+      const bodies = cardBodies(stub);
+      expect(bodies.length).toBeGreaterThan(1);
+      for (const sent of sentRequests(stub)) {
+        expect(
+          Buffer.byteLength(sent.data.content, 'utf8'),
+        ).toBeLessThanOrEqual(FEISHU_MESSAGE_CONTENT_SAFE_BYTES);
+      }
+      expect(
+        bodies
+          .map((piece) =>
+            piece.slice('```ts\n'.length, piece.lastIndexOf('```')).trimEnd(),
+          )
+          .join(''),
+      ).toBe('x'.repeat(30_000));
+    });
+
+    test('repeats a long table header on every piece', async () => {
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const header = '| id | note |\n| --- | --- |\n';
+      const rows = Array.from(
+        { length: 3_000 },
+        (_v, i) => `| ${i} | note ${i} |`,
+      ).join('\n');
+      const body = `${header}${rows}\n`;
+
+      await transport.send({ chatId: 'oc_chat' }, body);
+
+      const bodies = cardBodies(stub);
+      expect(bodies.length).toBeGreaterThan(1);
+      for (const piece of bodies) expect(piece.startsWith(header)).toBe(true);
+      expect(bodies.map((piece) => piece.slice(header.length)).join('')).toBe(
+        `${rows}\n`,
+      );
+    });
+
+    test('refuses a table whose header and single row cannot fit', async () => {
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const body = [
+        '| id | note |',
+        '| --- | --- |',
+        `| 1 | ${'x'.repeat(FEISHU_MESSAGE_CONTENT_SAFE_BYTES)} |`,
+      ].join('\n');
+
+      await expect(transport.send({ chatId: 'oc_chat' }, body)).rejects.toThrow(
+        /table header plus a single data row/,
+      );
+      expect(stub.request).not.toHaveBeenCalled();
+    });
+
+    test('sendCard rejects a card body over the content budget', async () => {
+      const stub = stubClient();
+      const transport = buildTransport(stub, messageType);
+      const card = { text: 'x'.repeat(FEISHU_MESSAGE_CONTENT_SAFE_BYTES) };
+
+      await expect(
+        transport.sendCard({ chatId: 'oc_chat' }, card),
+      ).rejects.toThrow(/over the 28672-byte budget/);
+      expect(stub.request).not.toHaveBeenCalled();
+    });
+
+    test('sendCard forwards AbortSignal to the cancellable request path', async () => {
+      const stub = stubClient();
+      const controller = new AbortController();
+      stub.request.mockImplementationOnce((raw: unknown) => {
+        const signal = (raw as { signal?: AbortSignal }).signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), {
+            once: true,
+          });
         });
       });
+      const transport = buildTransport(stub, messageType);
+
+      const sending = transport.sendCard(
+        { chatId: 'oc_chat' },
+        { elements: [{ tag: 'div' }] },
+        { signal: controller.signal },
+      );
+      expect(stub.request).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: '/open-apis/im/v1/messages',
+          method: 'POST',
+          signal: controller.signal,
+        }),
+      );
+
+      controller.abort();
+      await expect(sending).rejects.toBe(controller.signal.reason);
     });
-    const transport = buildTransport(stub);
-
-    const sending = transport.sendCard(
-      { chatId: 'oc_chat' },
-      { elements: [{ tag: 'div' }] },
-      { signal: controller.signal },
-    );
-    expect(stub.request).toHaveBeenCalledWith(
-      expect.objectContaining({
-        url: '/open-apis/im/v1/messages',
-        method: 'POST',
-        signal: controller.signal,
-      }),
-    );
-
-    controller.abort();
-    await expect(sending).rejects.toBe(controller.signal.reason);
-  });
-});
+  },
+);
 
 /**
  * The platform's own refusal, as the SDK delivers it: an HTTP rejection whose
@@ -389,126 +417,131 @@ const AUDIT_REFUSAL = {
   error: { log_id: 'log_example' },
 };
 
-describe('createFeishuTransport — message send failures', () => {
-  test('names the operation, status, code, reason and log id on create', async () => {
-    const stub = stubClient();
-    stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
-    const transport = buildTransport(stub);
+describe.each(['interactive', 'post'] as const)(
+  'createFeishuTransport — message send failures (%s)',
+  (messageType) => {
+    test('names the operation, status, code, reason and log id on create', async () => {
+      const stub = stubClient();
+      stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
+      const transport = buildTransport(stub, messageType);
 
-    await expect(
-      transport.send({ chatId: 'oc_chat' }, 'hello'),
-    ).rejects.toThrow(
-      'Feishu message.create failed (HTTP 400, code 230028, ' +
-        'log_id=log_example): ' +
-        AUDIT_REFUSAL.msg,
-    );
-  });
+      await expect(
+        transport.send({ chatId: 'oc_chat' }, 'hello'),
+      ).rejects.toThrow(
+        'Feishu message.create failed (HTTP 400, code 230028, ' +
+          'log_id=log_example): ' +
+          AUDIT_REFUSAL.msg,
+      );
+    });
 
-  test('names message.reply when the send threaded under a message', async () => {
-    const stub = stubClient();
-    stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
-    const transport = buildTransport(stub);
+    test('names message.reply when the send threaded under a message', async () => {
+      const stub = stubClient();
+      stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
+      const transport = buildTransport(stub, messageType);
 
-    await expect(
-      transport.send(
-        { chatId: 'oc_chat', replyToMessageId: 'om_source' },
-        'hello',
-      ),
-    ).rejects.toThrow(/^Feishu message\.reply failed \(HTTP 400, code 230028/);
-  });
+      await expect(
+        transport.send(
+          { chatId: 'oc_chat', replyToMessageId: 'om_source' },
+          'hello',
+        ),
+      ).rejects.toThrow(
+        /^Feishu message\.reply failed \(HTTP 400, code 230028/,
+      );
+    });
 
-  test('keeps the platform rejection as the cause and leaks no request', async () => {
-    const stub = stubClient();
-    const original = platformRejection(400, AUDIT_REFUSAL);
-    stub.request.mockRejectedValueOnce(original);
-    const transport = buildTransport(stub);
+    test('keeps the platform rejection as the cause and leaks no request', async () => {
+      const stub = stubClient();
+      const original = platformRejection(400, AUDIT_REFUSAL);
+      stub.request.mockRejectedValueOnce(original);
+      const transport = buildTransport(stub, messageType);
 
-    const thrown = await transport
-      .send({ chatId: 'oc_chat' }, 'a private body with a secret in it')
-      .then(() => undefined)
-      .catch((err: unknown) => err as Error);
+      const thrown = await transport
+        .send({ chatId: 'oc_chat' }, 'a private body with a secret in it')
+        .then(() => undefined)
+        .catch((err: unknown) => err as Error);
 
-    expect(thrown?.cause).toBe(original);
-    expect(thrown?.message).not.toContain('secret');
-    expect(thrown?.message).not.toContain('Authorization');
-    expect(thrown?.message).not.toContain('oc_chat');
-  });
+      expect(thrown?.cause).toBe(original);
+      expect(thrown?.message).not.toContain('secret');
+      expect(thrown?.message).not.toContain('Authorization');
+      expect(thrown?.message).not.toContain('oc_chat');
+    });
 
-  test('a resolved nonzero business code is a failed send, not an empty one', async () => {
-    const stub = stubClient();
-    stub.request.mockResolvedValueOnce({ ...AUDIT_REFUSAL, data: {} });
-    const transport = buildTransport(stub);
+    test('a resolved nonzero business code is a failed send, not an empty one', async () => {
+      const stub = stubClient();
+      stub.request.mockResolvedValueOnce({ ...AUDIT_REFUSAL, data: {} });
+      const transport = buildTransport(stub, messageType);
 
-    await expect(
-      transport.send({ chatId: 'oc_chat' }, 'hello'),
-    ).rejects.toThrow(
-      `Feishu message.create failed (code 230028, log_id=log_example): ${
-        AUDIT_REFUSAL.msg
-      }`,
-    );
-  });
+      await expect(
+        transport.send({ chatId: 'oc_chat' }, 'hello'),
+      ).rejects.toThrow(
+        `Feishu message.create failed (code 230028, log_id=log_example): ${
+          AUDIT_REFUSAL.msg
+        }`,
+      );
+    });
 
-  test('the explicit card send reports the same platform detail', async () => {
-    const stub = stubClient();
-    stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
-    const transport = buildTransport(stub);
+    test('the explicit card send reports the same platform detail', async () => {
+      const stub = stubClient();
+      stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
+      const transport = buildTransport(stub, messageType);
 
-    await expect(
-      transport.sendCard({ chatId: 'oc_chat' }, { tag: 'div' }),
-    ).rejects.toThrow(/code 230028/);
-  });
+      await expect(
+        transport.sendCard({ chatId: 'oc_chat' }, { tag: 'div' }),
+      ).rejects.toThrow(/code 230028/);
+    });
 
-  test('an error with no Feishu response keeps its own identity', async () => {
-    const stub = stubClient();
-    const network = new Error('socket hang up');
-    stub.request.mockRejectedValueOnce(network);
-    const transport = buildTransport(stub);
+    test('an error with no Feishu response keeps its own identity', async () => {
+      const stub = stubClient();
+      const network = new Error('socket hang up');
+      stub.request.mockRejectedValueOnce(network);
+      const transport = buildTransport(stub, messageType);
 
-    await expect(transport.send({ chatId: 'oc_chat' }, 'hello')).rejects.toBe(
-      network,
-    );
-  });
+      await expect(transport.send({ chatId: 'oc_chat' }, 'hello')).rejects.toBe(
+        network,
+      );
+    });
 
-  test('a rejection whose response is not a Feishu envelope keeps its own', async () => {
-    // A gateway can answer with an HTML page under the same field name. There
-    // is no code, reason or log id to state, so the library's message stays.
-    const stub = stubClient();
-    const gateway = Object.assign(
-      new Error('Request failed with status code 502'),
-      {
-        response: { status: 502, data: '<html>502 Bad Gateway</html>' },
-      },
-    );
-    stub.request.mockRejectedValueOnce(gateway);
-    const transport = buildTransport(stub);
+    test('a rejection whose response is not a Feishu envelope keeps its own', async () => {
+      // A gateway can answer with an HTML page under the same field name. There
+      // is no code, reason or log id to state, so the library's message stays.
+      const stub = stubClient();
+      const gateway = Object.assign(
+        new Error('Request failed with status code 502'),
+        {
+          response: { status: 502, data: '<html>502 Bad Gateway</html>' },
+        },
+      );
+      stub.request.mockRejectedValueOnce(gateway);
+      const transport = buildTransport(stub, messageType);
 
-    await expect(transport.send({ chatId: 'oc_chat' }, 'hello')).rejects.toBe(
-      gateway,
-    );
-  });
+      await expect(transport.send({ chatId: 'oc_chat' }, 'hello')).rejects.toBe(
+        gateway,
+      );
+    });
 
-  test('a cancelled card send still rejects with the abort reason', async () => {
-    const stub = stubClient();
-    const controller = new AbortController();
-    stub.request.mockImplementationOnce((raw: unknown) => {
-      const signal = (raw as { signal?: AbortSignal }).signal;
-      return new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), {
-          once: true,
+    test('a cancelled card send still rejects with the abort reason', async () => {
+      const stub = stubClient();
+      const controller = new AbortController();
+      stub.request.mockImplementationOnce((raw: unknown) => {
+        const signal = (raw as { signal?: AbortSignal }).signal;
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), {
+            once: true,
+          });
         });
       });
-    });
-    const transport = buildTransport(stub);
+      const transport = buildTransport(stub, messageType);
 
-    const sending = transport.sendCard(
-      { chatId: 'oc_chat' },
-      { tag: 'div' },
-      { signal: controller.signal },
-    );
-    controller.abort();
-    await expect(sending).rejects.toBe(controller.signal.reason);
-  });
-});
+      const sending = transport.sendCard(
+        { chatId: 'oc_chat' },
+        { tag: 'div' },
+        { signal: controller.signal },
+      );
+      controller.abort();
+      await expect(sending).rejects.toBe(controller.signal.reason);
+    });
+  },
+);
 describe('createFeishuTransport — app owner', () => {
   test('resolves creator and human owner as open_id values', async () => {
     const stub = stubClient();
@@ -1484,71 +1517,83 @@ describe('outbound content and placement over returned platform messages', () =>
   });
 });
 
-describe('split message sequencing and partial failure', () => {
-  test('awaits each platform send before starting the next and returns landings in order', async () => {
-    const stub = stubClient();
-    let release!: (value: unknown) => void;
-    stub.request.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
-    );
-    stub.request.mockImplementation(async () => ({
-      code: 0,
-      data: {
-        message_id: `part-${stub.request.mock.calls.length}`,
-        chat_id: 'reported-chat',
-        thread_id: 'reported-thread',
-      },
-    }));
-    const sending = buildTransport(stub).send(
-      { chatId: 'oc_chat' },
-      'x'.repeat(90_000),
-    );
-    await Promise.resolve();
-    expect(stub.request).toHaveBeenCalledTimes(1);
-    release({
-      code: 0,
-      data: {
-        message_id: 'part-1',
-        chat_id: 'reported-chat',
-        thread_id: 'reported-thread',
-      },
+describe.each(['interactive', 'post'] as const)(
+  'split message sequencing and partial failure (%s)',
+  (messageType) => {
+    test('awaits each platform send before starting the next and returns landings in order', async () => {
+      const stub = stubClient();
+      let release!: (value: unknown) => void;
+      stub.request.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            release = resolve;
+          }),
+      );
+      stub.request.mockImplementation(async () => ({
+        code: 0,
+        data: {
+          message_id: `part-${stub.request.mock.calls.length}`,
+          chat_id: 'reported-chat',
+          thread_id: 'reported-thread',
+        },
+      }));
+      const sending = buildTransport(stub, messageType).send(
+        { chatId: 'oc_chat' },
+        'x'.repeat(90_000),
+      );
+      await Promise.resolve();
+      expect(stub.request).toHaveBeenCalledTimes(1);
+      release({
+        code: 0,
+        data: {
+          message_id: 'part-1',
+          chat_id: 'reported-chat',
+          thread_id: 'reported-thread',
+        },
+      });
+      const result = await sending;
+      expect(result.messages.length).toBeGreaterThan(2);
+      expect(result.messages).toEqual(
+        result.messages.map((_item, i) => ({
+          messageId: `part-${i + 1}`,
+          chatId: 'reported-chat',
+          threadId: 'reported-thread',
+        })),
+      );
     });
-    const result = await sending;
-    expect(result.messages.length).toBeGreaterThan(2);
-    expect(result.messages).toEqual(
-      result.messages.map((_item, i) => ({
-        messageId: `part-${i + 1}`,
-        chatId: 'reported-chat',
-        threadId: 'reported-thread',
-      })),
-    );
-  });
-  test('stops a multi-part send at the failed part and propagates that failure', async () => {
-    const stub = stubClient();
-    const failure = new Error('second part failed');
-    stub.request.mockResolvedValueOnce({
-      code: 0,
-      data: { message_id: 'created' },
+    test('stops a multi-part send at the failed part and propagates that failure', async () => {
+      const stub = stubClient();
+      const failure = new Error('second part failed');
+      stub.request.mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'created' },
+      });
+      stub.request.mockRejectedValueOnce(failure);
+      await expect(
+        buildTransport(stub, messageType).send(
+          { chatId: 'oc_chat' },
+          'x'.repeat(90_000),
+        ),
+      ).rejects.toMatchObject({
+        cause: failure,
+        message: 'second part failed; already sent message_ids: created',
+      });
+      expect(stub.request).toHaveBeenCalledTimes(2);
     });
-    stub.request.mockRejectedValueOnce(failure);
-    await expect(
-      buildTransport(stub).send({ chatId: 'oc_chat' }, 'x'.repeat(90_000)),
-    ).rejects.toBe(failure);
-    expect(stub.request).toHaveBeenCalledTimes(2);
-  });
-  test('a later split-part refusal preserves the platform error and stops further sends', async () => {
-    const stub = stubClient();
-    stub.request.mockResolvedValueOnce({
-      code: 0,
-      data: { message_id: 'created' },
+    test('a later split-part refusal preserves the platform error and stops further sends', async () => {
+      const stub = stubClient();
+      stub.request.mockResolvedValueOnce({
+        code: 0,
+        data: { message_id: 'created' },
+      });
+      stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
+      await expect(
+        buildTransport(stub, messageType).send(
+          { chatId: 'oc_chat' },
+          'x'.repeat(90_000),
+        ),
+      ).rejects.toThrow(/code 230028/);
+      expect(stub.request).toHaveBeenCalledTimes(2);
     });
-    stub.request.mockRejectedValueOnce(platformRejection(400, AUDIT_REFUSAL));
-    await expect(
-      buildTransport(stub).send({ chatId: 'oc_chat' }, 'x'.repeat(90_000)),
-    ).rejects.toThrow(/code 230028/);
-    expect(stub.request).toHaveBeenCalledTimes(2);
-  });
-});
+  },
+);

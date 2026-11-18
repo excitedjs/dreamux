@@ -187,35 +187,54 @@ not change the existing notification path.
 
 #### `reply`
 
-`reply(chat_id, message_id?, text)` sends one interactive card whose body is
-a single `markdown` element carrying the authored Markdown as written. The
-inline `<at user_id="...">Name</at>` tag, the form the inbound body shows the
-model, renders as a mention in card Markdown (verified with a live card in
-a direct chat on 2026-09-14), so the model reads and writes one syntax and no mention array,
-shorthand, or rewrite exists. A card was chosen over a native
-`post` because the client shows card text in its compact size (the 2026-09-14
-ruling in the task record). The Markdown-to-card renderer that lifted a
-heading into the card title and a table into a native table element, its
-public exports, and the `editText` API stay retired. Explicit
-`sendCard`/`editCard` and native COT retain their real callers.
+`reply(chat_id, message_id?, text, artifacts?)` uses the channel-owned
+`dispatchers[].channels[].config.card_mode`: `interactive` by default, or
+`post`. The provider validates and normalizes it; the session's tool view
+passes it only on reply calls to outbound. Channel-authored `sendText`
+notices omit it and remain interactive. Core has no Feishu config concept.
 
-`channelOutboundToFeishuTarget` still maps conversation and reply-message IDs.
-`transport/message-content.ts` owns the 28 KiB serialized-content budget,
-including JSON escaping. A fitting body is sent whole. Oversized bodies use raw
-Markdown blocks, repeated code fences/table headers, then lines and grapheme
-clusters. A table header plus one oversized row fails explicitly. Each successful
-message receipt is observed before the next part; later failure does not retract
-created messages. Raw cards retain the same serialized-byte guard.
+Transport's per-call `messageType` chooses Card JSON 2.0 with one `markdown`
+element or `{ zh_cn: { content: [[{ tag: "md", text: body }]] } }`. Authored
+mentions stay as written; width stays unchanged. The retired heading/table
+renderer and `editText` remain retired. Explicit cards, question/binding
+cards and COT retain their existing interactive paths.
 
-`transport/outbound-message.ts` uses one SDK `client.request` send boundary for
-create/reply addressing; every message it sends is `interactive`. It describes rejected
-Feishu response envelopes and resolved nonzero business codes with the operation,
-available HTTP status, code, message, and log ID. Existing channel logs and Core
-MCP failure text preserve that description; Core does not parse Feishu errors.
-Non-Feishu failures and cancellation keep their thrown identity. The description
-never includes the outbound body, credentials, or SDK request configuration.
+`transport/message-content.ts` owns both envelopes, actual Markdown image
+tokens and source replacement, and the 28 KiB serialized-content budget
+including JSON escaping. Its marked traversal retains source offsets so code,
+nested inline tokens, table cells and CRLF are preserved during replacement.
+A reference image is made inline without changing a shared ordinary-link
+reference. Oversized bodies retain the existing block/fence/table/line/grapheme
+split; a table header plus an indivisible oversized row fails explicitly.
 
-(Task: [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md).)
+`FeishuOutbound.sendText` resolves the target once, asynchronously reads local
+absolute image paths, uploads bytes, and replaces only image destinations.
+Remote/image-key sources, protocol-relative URLs and code examples stay
+untouched. It asynchronously reads/uploads `artifacts` before sending text,
+then sends native files in array order and aggregates all receipts. No local
+root allowlist or new core capability is involved. Transport's
+`transport/uploads.ts` accepts bytes and filenames, invokes SDK image/file
+create, and reads direct key results. MP4 uses upload file_type `stream` to match its native `file` message;
+all attachments send as `file`; media previews need a cover that this argument
+does not supply.
+
+`transport/outbound-message.ts` shares the create/reply SDK request boundary
+across `interactive`, `post`, and `file`. Read/upload failure sends no chat
+message. Each text receipt is observed before the next part; later failure
+stops and reports the already observed IDs. Outbound adds the failing artifact
+path and earlier text/file IDs to later file errors. No retry, rollback or
+persisted delivery state is introduced. Platform response failures expose the
+operation, available HTTP status, code, reason and log ID without the body,
+credentials or SDK request configuration. A failure before any receipt retains
+its thrown identity; partial text errors retain their original cause.
+
+Sources:
+- `/packages/channel/feishu-channel/src/provider.ts`
+- `/packages/channel/feishu-channel/src/tools/messaging-tools.ts`
+- `/packages/channel/feishu-channel/src/outbound/index.ts`
+- `/packages/channel/feishu-transport/src/transport/message-content.ts`
+- `/packages/channel/feishu-transport/src/transport/uploads.ts`
+- `/packages/channel/feishu-transport/src/transport/outbound-message.ts`
 
 #### `ask_user_question`
 
