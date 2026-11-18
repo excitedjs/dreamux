@@ -3,14 +3,13 @@
 ## Current state
 
 - Goal: Allow ordinary Feishu replies to select interactive cards or native posts, render local Markdown images, and send non-image artifacts
-- State: `blocked`
+- State: `done`
 - Requirement: [Approved requirement](/.agents/tasks/channel/configure-feishu-card-mode/requirement.md)
 - Final solution: [Approved implementation design](/.agents/tasks/channel/configure-feishu-card-mode/technical-design/final.md)
 - Solution review Issue: Not created.
-- Verification: [Live probe and local-check evidence](/.agents/tasks/channel/configure-feishu-card-mode/verification.md)
-- Blockers: Both ratified review corrections are complete and verified; independent re-review of the updated PR is pending.
-- Resume stage: `review` after the updated PR review arrives.
-- Next action: Publish both corrections and request Devbox re-review of PR #492.
+- Verification: [Live probe, review, and local-check evidence](/.agents/tasks/channel/configure-feishu-card-mode/verification.md)
+- Blockers: None.
+- Next action: Wait for the final PR checks and obtain merge authority through a dedicated card.
 - Related tasks: Builds on the native-post implementation and preserved send semantics from [simplify-feishu-replies](/.agents/tasks/channel/simplify-feishu-replies/README.md); preserves the interactive default selected by [read-feishu-inbound-as-text](/.agents/tasks/channel/read-feishu-inbound-as-text/README.md).
 
 ## Task selection
@@ -46,7 +45,20 @@ On 2026-11-18 the operator resumed `review` and selected "补 live 探针" for f
 
 On 2026-11-18 the operator selected "统一返回形态 (Recommended)" for finding 2 after a concrete two-message failure example. Partial text and artifact sends must both settle as structured public failures with their observed ids; zero-receipt behavior remains unchanged. The correction must not infer partial delivery by matching error text.
 
+## Knowledge closeout
+
+The operator approved entry on 2026-11-18. The final diff, approved requirement/solution, review corrections, and verification evidence were reconciled.
+
+- Product behavior: updated in `.agents/product/README.md` for per-channel reply presentation, inline images, artifacts, and failure behavior.
+- Channel architecture: updated in `.agents/domains/channel.md` for ownership, wire formats, uploads, ordering, and typed partial failures.
+- Package contracts: updated in both Feishu package READMEs; no directory `CLAUDE.md` contract required a change.
+- Config maintenance: updated `builtin-feishu.md` with `card_mode` and reply media behavior in the same change.
+- Release notes: ordinary 0.x `minor` declarations exist for channel, transport, and Dreamux; no migration or upgrade blocker exists.
+- Glossary and root routing: N/A; no overloaded term or new task-routing domain was introduced.
+- Independent review: Devbox approved the corrected PR; all findings have recorded operator rulings and verified resolutions.
+
 ## Delivery
 
 - Pull request: [#492](https://github.com/excitedjs/dreamux/pull/492)
-- Knowledge closeout: Pending.
+- Knowledge closeout: Complete; affected owners are reconciled above.
+- Done confirmation: Granted by the operator on 2026-11-18 through the dedicated "确认 done (Recommended)" card. Merge authority was not part of that decision.
