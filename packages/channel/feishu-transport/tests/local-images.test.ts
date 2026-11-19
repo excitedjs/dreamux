@@ -19,12 +19,33 @@ function rewrite(body: string) {
 describe('actual local Markdown image sources', () => {
   it('keeps code, ordinary links, remote images, keys and protocol-relative URLs intact', () => {
     const examples =
-      '`![alt](/a.png)`\n\n```md\n![alt](/a.png)\n```\n\n    ![alt](/a.png)\n\n[link](/a.png) ![web](https://example.test/a.png) ![key](img_key) ![cdn](//example.test/a.png)';
+      '`![alt](/a.png)`\n\n```md\n![alt](/a.png)\n```\n\n    ![alt](/a.png)\n\n[link](/a.png) ![web](https://example.test/a.png) ![key](img_key) ![cdn](//example.test/a.png) ![relative](images/a.png) ![drive-relative](C:a.png) ![url](file:///a.png)';
     expect(rewrite(`${examples}\n\n![alt](/a.png "title")`)).toEqual({
       paths: ['/a.png'],
       text: `${examples}\n\n![alt](img_0 "title")`,
     });
   });
+  it.each([
+    'C:/images/shot.png',
+    String.raw`C:\images\shot.png`,
+    String.raw`C:\images with spaces\shot (1).png`,
+    String.raw`\\server\share\shot.png`,
+  ])(
+    'recognizes native Windows image paths without changing surrounding source: %s',
+    (path) => {
+      // Markdown escapes are decoded by marked before filesystem classification.
+      const destination = path.replaceAll('\\', '\\\\');
+      const body = `before\r\n![alt](<${destination}> "title")\r\nafter`;
+      expect(rewrite(body)).toEqual(
+        process.platform === 'win32'
+          ? {
+              paths: [path],
+              text: 'before\r\n![alt](<img_0> "title")\r\nafter',
+            }
+          : { paths: [], text: body },
+      );
+    },
+  );
   it('preserves nested links, alt/title text, escaped parentheses and CRLF', () => {
     const body =
       "[**![a [b]](</a b.png> 'title')**](https://example.test)\r\n![x](/a\\(b\\).png)\r\n";

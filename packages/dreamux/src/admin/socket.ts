@@ -2,8 +2,8 @@
  * The local admin IPC server: one adapter over the Core Command registry.
  *
  * One client gets one line-delimited NDJSON stream of requests; we reply with
- * one line per request. Permissions on the socket are 0600 to keep other local
- * users out (issue #2 §"管理接口").
+ * one line per request. Owner-only permissions keep other local users out:
+ * mode 0600 on Unix sockets or a private Windows pipe DACL (issue #2 §"管理接口").
  *
  * The adapter owns transport only. It frames a request, lifts the caller's
  * `dispatcher_id` out of the payload into the Command context, and maps a typed
@@ -139,8 +139,8 @@ export function createAdminSocketServer(
           netServer!.listen(adminSocketAddress(socketPath), () => res());
         });
 
-        // PR #3 review #2: chmod is a hard requirement, not best-effort —
-        // a 0666 admin socket exposes every admin Command to every local user.
+        // Owner-only access is required before admitting connections; a
+        // permissive endpoint would expose every admin Command to local users.
         try {
           if (process.platform === 'win32') {
             await restrictWindowsPipe(adminSocketAddress(socketPath));
@@ -148,9 +148,9 @@ export function createAdminSocketServer(
             await chmod(socketPath, 0o600);
           }
         } catch (e) {
-          const chmodErr = e instanceof Error ? e.message : String(e);
+          const permissionError = e instanceof Error ? e.message : String(e);
           throw new Error(
-            `admin socket ${socketPath} could not be locked down to 0600 (${chmodErr}); refusing to expose it on a permissive mode`,
+            `admin socket ${socketPath} could not be restricted to its owner (${permissionError}); refusing to expose a permissive endpoint`,
           );
         }
         discardPendingConnections();

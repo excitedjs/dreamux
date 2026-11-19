@@ -10,6 +10,10 @@ import {
   type SkillAdapterManifest,
 } from './skill-adapter.js';
 
+// Runtime instances in this server share the cache, but different roots do not
+// need to wait for one another. Entries exist only while publication is pending.
+const publications = new Map<string, Promise<void>>();
+
 /**
  * Materialize the Claude-compatible view of role-gated skills and return the
  * adapter root the child must be given, or null when this runtime has no
@@ -62,7 +66,7 @@ export async function materializeClaudeSkillAddDir(
     );
     await mkdir(dirname(root), { recursive: true });
     await testHooks.beforePublish?.();
-    await publish(tmpRoot, root, manifest);
+    await publishInOrder(tmpRoot, root, manifest);
   } catch (err) {
     await rm(tmpRoot, { recursive: true, force: true }).catch(() => undefined);
     throw err;
@@ -73,11 +77,34 @@ export async function materializeClaudeSkillAddDir(
 /**
  * Put the fresh view at `root`: whatever occupies the path (a stale view, a
  * manifest of the previous format, a half-written tree) is moved aside first
- * and removed once the swap is done. Two runtimes starting together may both
- * reach here; each swap leaves a complete view at the path, and the one whose
- * final rename finds the path already taken keeps the other's view when it
- * validates.
+ * and removed once the swap is done.
  */
+async function publishInOrder(
+  tmpRoot: string,
+  root: string,
+  manifest: SkillAdapterManifest,
+): Promise<void> {
+  const previous = publications.get(root) ?? Promise.resolve();
+  const attempt = previous.then(async () => {
+    // Another start may have published this inventory while we built the view.
+    if (await validateSkillAdapter(root, manifest)) {
+      await rm(tmpRoot, { recursive: true, force: true });
+      return;
+    }
+    await publish(tmpRoot, root, manifest);
+  });
+  const pending = attempt.then(
+    () => undefined,
+    () => undefined,
+  );
+  publications.set(root, pending);
+  try {
+    await attempt;
+  } finally {
+    if (publications.get(root) === pending) publications.delete(root);
+  }
+}
+
 async function publish(
   tmpRoot: string,
   root: string,

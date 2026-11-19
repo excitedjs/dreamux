@@ -143,7 +143,8 @@ Do not use per-package `npm install`; workspace dependencies use `workspace:*`.
 - **No runtime dependencies on dev tools:** bin launchers execute compiled
   `dist/` with plain `node`; do not reintroduce `tsx`.
 - **Launcher path handling:** new bin launchers must follow the
-  `/packages/dreamux/bin/dreamux` symlink-walk shape.
+  `/packages/dreamux/bin/dreamux` Node launcher shape: resolve their own real
+  installed path before locating the package entry.
 - **Path contracts:** host-owned path builders belong in
   `/packages/dreamux/src/platform/paths.ts`; volatile runtime socket allocation
   belongs in `/packages/dreamux/src/platform/runtime-sockets.ts`; runtime-owned

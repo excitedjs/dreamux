@@ -1,5 +1,34 @@
 # Complete-change review
 
+## PR failures and wording corrections, 2026-11-19
+
+The operator explicitly authorized investigating and fixing substantiated review
+findings through verification, review and push. The latest
+[review](https://github.com/excitedjs/dreamux/pull/488#pullrequestreview-5958445687)
+was checked against source and the complete Windows logs for both attempts of
+[the failing CI run](https://github.com/excitedjs/dreamux/actions/runs/44315193178).
+Each Windows attempt contains ten distinct reply-media failures, not the review's
+eight. Attempt 2 also contains one concurrent Claude publication failure. The
+logs do not identify the underlying rename error or actual publication ordering.
+
+| Finding | Adjudication and correction |
+| --- | --- |
+| Windows drive-path images are ignored and artifact schema rejects native paths | Accepted. The transport's POSIX-only image predicate omitted Windows paths; the artifact parser already supported native paths but its schema did not. Use native absolute-path classification and align the advertised schema, preserving `//` exclusion and existing media behavior. |
+| Concurrent Claude publication can remove another starter's valid view | Accepted. A later builder can move a valid winner aside while another starter validates it. Serialize publication within the shared host process and revalidate/reuse a same-inventory winner. A loser-only wait would not prevent subsequent removal. The reachable source schedule is not claimed as the observed CI interleaving. |
+| [4598236250](https://github.com/excitedjs/dreamux/pull/488#discussion_r4598236250): Windows permission failure described as 0600 | Accepted. Describe owner-only endpoint access; preserve Unix chmod, Windows DACL enforcement and refusal before admission. |
+| [4598241820](https://github.com/excitedjs/dreamux/pull/488#discussion_r4598241820): stale Bash launcher guidance | Accepted. Describe the current Node launcher's realpath mechanism without changing operating policy. |
+
+The Ubuntu attempt-1 list-projection assertion received the earlier intent and
+attempt 2 passed. This alone does not establish a flake or a cause; it is retained
+as separate evidence, with fresh complete-suite and CI results required.
+The complete eight-file code/test/instruction delta, seven current-owner
+documents, requirement/design/review additions, draft public replies and ignored
+isolation harness received independent static review without actionable findings.
+Final record consistency and executed gates are tracked separately in
+[verification](verification.md). No review certifies
+real platform sends, remote UNC access, interprocess publication or the existing
+deferred native acceptance items.
+
 ## PR comment adjudication, 2026-11-16
 
 The operator authorized rebasing PR #488, fixing actual issues and replying to

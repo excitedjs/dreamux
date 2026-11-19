@@ -1,5 +1,62 @@
 # Verification
 
+## Reply media and Claude publication correction, 2026-11-19
+
+The working branch fast-forwarded to the PR's updated branch, including
+[PR #492](https://github.com/excitedjs/dreamux/pull/492). The complete isolated
+test-isolation file passed six cases before broader execution. Focused native
+Windows runs passed 31 transport cases, 51 channel cases, seven Claude
+materializer cases and six admin IPC cases. Real local files, Markdown parsing,
+upload ordering and failure behavior remain exercised with platform SDK IO
+intercepted. The artifact checks exercise the actual exported schema pattern
+and parser; they are not a complete MCP SDK integration test. UNC coverage
+classifies path strings without accessing a network share.
+
+The Claude regressions use the real filesystem: a delayed publisher preserves
+the winner's marker, and a real invalid target fails before a later successful
+retry. Existing concurrent-start, version and inventory refresh cases remain.
+These tests establish the process-local correction, not an interprocess lock
+or a diagnosis of the unlogged CI interleaving.
+
+Unified build passed in 7.79 seconds, lint in 35.36 seconds and test-aware
+typechecking in 7.09 seconds. The unfiltered eight-package suite passed
+**3,365 cases / 26 skipped**, 3,391 total, in 150.3 seconds. Independent counting
+found exactly one Tests summary per package: types 81/0, utils 247/5, host
+1,380/21, transport 242/0, channel 891/0, Codex 243/0, Claude 270/0 and bootstrap
+11/0. Relevant whole files passed: local-images 11, reply-media 46,
+skill-materializer seven, admin IPC six and team-session-title seven. Host
+reported 111 passed files and four skipped files, with 127.07 seconds of Vitest
+duration. Model/live Codex and real Scheduler gates were explicitly excluded.
+The suite's outer check also passed unchanged-account and captured-root cleanup
+assertions; it does not cover the initial tool-cache residue described below.
+
+The first dependency update itself exited 0, but its outer isolation check
+failed because Rush bootstrapped a package-manager cache under the disposable
+account. The four original sentinels were unchanged. The harness now uses an
+explicit workspace-local Rush cache; the subsequent update passed in 5.39
+seconds with the synthetic account unchanged, no temporary children and captured
+root removal. Its pnpm junction no longer references the first disposable root.
+Automatic approval review rejected recursive removal of that initial root with
+`blocked by policy`; it remains retained and is not represented as cleaned up.
+Every subsequent completed focused/build/lint/typecheck outer run reported exit
+0, null signal, unchanged synthetic account, empty temporary children and
+captured-root removal. No operator installation or service was changed.
+
+Independent static review covers all eight code/test/instruction files, the
+seven affected current-owner documents, the requirement/design/review additions,
+two proposed inline replies, the public review summary and the synthetic
+harness; it found no actionable defect. Source review and local
+execution remain separate from fresh-head CI and deferred ordinary-permission,
+real Scheduler/UI/Password, cross-session and early-entry stop acceptance.
+
+The first KB check interpreted two inline Markdown image examples as repository
+links. Their KB wording now describes the angle-bracket destination without
+introducing a link; the public package examples remain intact. The next full
+check passed without exceptions: **66 task records / 428 reachable files**.
+Four package patch notes were generated through Rush and refined to their
+respective implementation scopes. Mandatory commit hooks and fresh-head CI
+remain delivery gates, not inferred from these local results.
+
 ## Rebase and PR-comment corrections, 2026-11-16
 
 The branch was rebased onto `next` including [PR #489](https://github.com/excitedjs/dreamux/pull/489). Independent range-diff review

@@ -1,5 +1,31 @@
 # Native process and filesystem boundaries
 
+## Reply media and concurrent skill publication, 2026-11-19
+
+The transport classifies decoded Markdown destinations with the host's native
+`node:path.isAbsolute`, retaining the explicit `//` URL exclusion. The channel's
+artifact schema now matches its existing native-path parser. Windows drive and
+backslash-root paths are accepted on Windows; Markdown escaping still applies,
+with angle-bracket forward-slash destinations suitable for paths containing
+spaces. UNC regression cases classify strings without accessing a share.
+No new media type, upload path or SDK boundary is introduced.
+
+Claude runtime instances share the host's adapter cache. The provider serializes
+publication per adapter root within that process, after independently preparing
+temporary views. Each queued publication revalidates the expected inventory and
+reuses a valid winner without moving it aside. Otherwise the existing stable-path
+refresh and collision handling apply. Each caller retains its own failure, later
+attempts can run after failure, and settled queue entries are released. This is
+not an interprocess lock or a transaction over changing source inventories.
+Real-filesystem regressions preserve a winner marker across a delayed publisher
+and demonstrate failure followed by successful retry; pending calls are joined
+before fixture cleanup.
+
+The admin endpoint diagnostic describes owner-only access across Unix modes and
+Windows DACLs. The root launcher instruction now follows Node realpath resolution.
+Neither correction changes endpoint identity, permission enforcement or launch
+behavior. See the [review rulings](../review.md) and [executed checks](../verification.md).
+
 ## PR review corrections, 2026-11-16
 
 Environment lookup accepts an explicit platform while retaining Node's sorted

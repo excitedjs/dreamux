@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Align reply artifact schemas with native absolute-path parsing on Windows, preserving protocol-relative URL exclusion and upload-before-send behavior.",
+      "type": "patch",
+      "packageName": "@excitedjs/feishu-channel"
+    }
+  ],
+  "packageName": "@excitedjs/feishu-channel"
+}

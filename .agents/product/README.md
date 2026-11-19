@@ -55,10 +55,14 @@ the same change that touches it.
   indivisible oversized table row produces a size error. Channel-authored
   notices, explicit cards, question/binding cards and COT stay interactive.
 - **Replies deliver local images and non-image artifacts.** Actual Markdown
-  images with local absolute destinations are uploaded and their destinations
-  replaced with image keys before either reply envelope is measured. Code
+  images with native local absolute destinations are uploaded and their
+  destinations replaced with image keys before either reply envelope is measured. Code
   examples, ordinary links, remote images and existing image keys are left
-  alone. Optional `artifacts` takes local absolute paths; all images and files
+  alone, including protocol-relative `//...` URLs on Windows. Windows drive
+  and backslash UNC paths are supported; Markdown escaping still applies, so
+  prefer an angle-bracket destination such as `<C:/images/shot (1).png>` for a
+  drive path with spaces.
+  Optional `artifacts` takes native local absolute paths; all images and files
   finish uploading before any chat message. Text parts send first, followed by
   downloadable native file messages in artifact order, including MP4 files
   without a media preview. All messages use the same resolved conversation;

@@ -9,12 +9,14 @@
 - Verification: [Checks and coverage](verification.md)
 - Review: [Complete-change review and rulings](review.md)
 - Blockers: Non-administrator adoption of legacy BA-owned logs remains unverified: the custom restricted-token fixture failed before product code, and this runner has no linked Limited token. Real fixed-account UI and Password registration also remain unverified. The reported Job access-denied call site and cause remain unknown. R5 remains explicitly deferred and unverified; R6's force-push metadata range defect remains unchanged.
-- Next action: Deliver the reviewed rebase and comment corrections to PR #488, verify fresh exact-head CI, then publish the fourteen adjudicated replies and resolve their threads. This slice does not reopen deferred native validation or authorize another local update, release or merge.
+- Next action: Deliver the verified Windows media/publication correction to the existing PR, reply to the accepted wording threads and evaluate fresh-head CI. GitHub owns delivery results; no release, installed-service operation or merge is included.
 - Coverage limit: The earlier installation failure is distinct from the later successful upgrade and recovery-callback retry. The operator reported an interrupted CoT card on that retry; it does not certify this subsequent source correction. Native credential storage, dialog behavior and general cross-session service operation still need independent acceptance; earlier CI results do not cover this revision.
 - Pull request: [Native Windows support](https://github.com/excitedjs/dreamux/pull/488); replaces [the closed original PR](https://github.com/excitedjs/dreamux/pull/476).
 - Related tasks: None.
 
 ## Development approval
+
+- On 2026-11-19 at 16:56 (UTC+08:00), the operator instructed: "修一下推上去好不好？为什么每次都需要我说？你看到这个评论之后，不就应该去调查一下是什么原因？然后如果是需要修复的问题，就直接修复吗？" (English translation: "Fix it and push it. Why do I have to say it every time? After seeing the comment, should you not investigate the cause and directly fix it if it is a real problem?") This explicitly authorizes investigation, correction, verification, independent review and delivery of the confirmed PR findings without repeated routine stage confirmations. The scope is Windows reply-media paths, concurrent Claude skill publication and the two wording corrections; it preserves existing capabilities and native acceptance limits. The prior merge pause remains in force.
 
 - On 2026-11-16 at 14:40 (UTC+08:00), the operator instructed: "rebase 一下，然后判断下 评论内容，如果是问题就修掉，不是问题就回复并关掉。" (English translation: "Rebase, then evaluate the comments; fix actual problems, otherwise reply and close them.") This authorizes rebasing PR #488 onto current `next`, evidence-based adjudication of its review comments, necessary corrections and verification, and public replies/resolution of nonissues. Existing delivery authority covers the resulting branch update; merging, release, installed-service changes and deferred native experiments remain outside this follow-up.
 
@@ -52,7 +54,21 @@
 
 ## Delivery
 
-The November 16 correction is submission-ready under the operator's explicit
+The November 19 correction implements native Windows reply-media paths and
+process-local Claude publication coordination, with the two accepted wording
+corrections. The complete eight-file source/test/instruction delta and seven
+current-owner documents have received independent static review. Build, lint,
+test-aware typechecking and the complete suite passed: 3,365 cases with 26
+explicit skips. The affected owners and task records are reconciled; four
+package patch notes describe the correction. `done` records submission readiness
+under the explicit November 19 fix-and-push instruction; mandatory commit gates,
+fresh-head CI and public comment replies belong to delivery. This does not
+authorize merging, release or installed-service changes.
+The full KB check passed without exceptions: 66 task records and 428 reachable
+files. The initial update's retained disposable cache and subsequent successful
+isolation checks are distinguished in the verification record.
+
+The November 16 correction was submission-ready under the operator's explicit
 rebase/fix/reply instruction and the existing delivery authority. Independent
 review covered the complete thirteen-file code/test delta, affected knowledge
 owners, two patch notes and fourteen proposed replies. Build, lint, test
@@ -153,14 +169,15 @@ the operator's running installation have not been performed.
 | Owner | Disposition and reason |
 | --- | --- |
 | Task requirement, final design, entry revision, review and verification | Updated: installation corrections, cooperative shutdown, complete follow-up review and executed evidence are reconciled with prior Task Data/entry migration, handoff and uninstall decisions. Native acceptance limits and deferred R5 remain explicit; past checkpoints are identified as historical. Review cites the release run that owns its exact baseline. |
-| [Product catalog](/.agents/product/README.md) | Updated: fixed-account installation, Task ownership, cooperative shutdown followed by forced cleanup, handoff reporting and uninstall boundaries. |
+| [Product catalog](/.agents/product/README.md) | Updated: native reply-media paths and protocol-relative URL exclusion, plus the earlier installation, shutdown, handoff and uninstall boundaries. |
 | [Current architecture](/.agents/domains/current-architecture.md) and [service topology](/.agents/domains/service-topology.md) | Updated: shared signal/admin process-exit owner, server command namespace, command admission and startup/shutdown sequencing. No new service tier or package was introduced. |
-| [Provider runtime](/.agents/domains/provider-runtime.md) | N/A for the follow-up: the runtime stop contract and neutral provider boundaries are unchanged. Existing native capability documentation remains applicable. |
+| [Provider runtime](/.agents/domains/provider-runtime.md) and Claude package README | Updated: process-local per-root publication coordination, same-inventory winner reuse and stable-path refresh; no interprocess or transactional freshness guarantee. |
+| [Channel](/.agents/domains/channel.md), channel/transport package READMEs and [built-in Feishu maintenance](/packages/dreamux/skills/dispatcher/dreamux-maintenance/references/builtin-feishu.md) | Updated: native media path recognition, matching artifact schema/parser, Markdown escaping and `//` exclusion. Upload ordering and failure behavior remain unchanged. |
 | [State/config/files](/.agents/domains/state-config-and-files.md) | Updated: fixed-account credentials, BA-owner adoption subject to OS authorization, query/control access, retained member identity and bounded cooperative shutdown. Task Data/root ownership and non-file TaskPath rules remain intact. |
 | [Repository operations](/.agents/domains/repository-operations-and-release.md) and [unit testing](/.agents/domains/unit-testing.md) | N/A for the follow-up: existing Node gates, email policy, Vitest isolation and permission-oracle ownership remain applicable. The failed launcher experiment adds no delivered testing mechanism. |
 | [Maintenance skill](/packages/dreamux/skills/dispatcher/dreamux-maintenance/SKILL.md) and [service lifecycle](/packages/dreamux/skills/dispatcher/dreamux-maintenance/references/service-lifecycle.md) | Updated owning reference: fixed-account password input, OS authorization, cooperative shutdown and acceptance/handoff versus completion. Skill routing is unchanged. Release-specific old-alpha migration remains in public upgrade docs and the change note. |
-| Public getting-started/operations and utils README | Updated: fixed-account installation, permission failures, query/control separation, cooperative cleanup and real-acceptance limits. Getting-started delegates stop details to operations. Public development and other package READMEs need no follow-up change because their contracts are unchanged. |
-| Root and host `CLAUDE.md` | Host map updated for `server/shutdown.ts`. Root and other directory rules are N/A: no global build, security, layering or persistence invariant changed. |
+| Public getting-started/operations and utils README | Earlier updates remain accurate: installation, permission failures, query/control separation and cooperative cleanup. November 19 needs no additional change to these owners. |
+| Root and host `CLAUDE.md` | Root launcher instruction now describes Node realpath resolution. Host's existing shutdown-owner map remains accurate; build, security, layering and approval policies are unchanged. |
 | [KB routing](/.agents/root.md), [contribution guide](/.agents/CONTRIBUTING.md), [domain index](/.agents/domains/README.md) | N/A for the follow-up: existing routes and checker guidance cover the changed owners; no new domain or task was introduced. |
 | [Glossary](/.agents/glossary.md) | N/A: no new overloaded Dreamux product term; Job and Task Data are platform concepts documented by their owners. |
 

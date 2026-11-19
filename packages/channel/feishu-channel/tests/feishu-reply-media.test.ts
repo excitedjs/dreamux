@@ -136,7 +136,7 @@ it('documents optional non-image artifacts and inline local images without an im
   };
   expect(schema.properties['artifacts']).toMatchObject({
     type: 'array',
-    items: { type: 'string', minLength: 1, pattern: '^/(?!/)' },
+    items: { type: 'string', minLength: 1, pattern: expect.any(String) },
   });
   expect(schema.properties).not.toHaveProperty('image');
   expect(schema.required).toEqual(['chat_id', 'text']);
@@ -147,13 +147,50 @@ it('documents optional non-image artifacts and inline local images without an im
 });
 
 it.each([
+  ['/tmp/archive.zip', true],
+  ['C:/exports/archive.zip', process.platform === 'win32'],
+  [String.raw`C:\exports\archive.zip`, process.platform === 'win32'],
+  [String.raw`\\server\share\archive.zip`, process.platform === 'win32'],
+  [String.raw`\exports\archive.zip`, process.platform === 'win32'],
+  ['C:archive.zip', false],
+  ['archive.zip', false],
+  ['https://example.test/archive.zip', false],
+  ['file:///tmp/archive.zip', false],
+  ['//example.test/archive.zip', false],
+] as const)(
+  'advertises and parses the same native artifact path boundary: %s',
+  (path, accepted) => {
+    const schema = replyDef.inputSchema as {
+      properties: { artifacts: { items: { pattern: string } } };
+    };
+    // Exercise the advertised JSON Schema pattern, not just the direct parser
+    // used by the channel fixture below. The production MCP SDK enforces it.
+    expect(
+      new RegExp(schema.properties.artifacts.items.pattern).test(path),
+    ).toBe(accepted);
+    const args = { chat_id: 'chat', text: 'text', artifacts: [path] };
+    if (accepted) {
+      expect(replyDef.parse(args)).toEqual({
+        chatId: 'chat',
+        text: 'text',
+        artifacts: [path],
+      });
+    } else {
+      expect(() => replyDef.parse(args)).toThrow('local absolute paths');
+    }
+  },
+);
+
+it.each([
   null,
   'a.zip',
   [null],
   [''],
   ['  '],
   ['a.zip'],
+  ['C:a.zip'],
   ['https://example.test/a.zip'],
+  ['file:///tmp/a.zip'],
   ['//example.test/a.zip'],
 ])('refuses invalid artifacts %s before any send', async (artifacts) => {
   const f = await fixture();
@@ -301,6 +338,7 @@ describe.each(['interactive', 'post'] as const)('reply media (%s)', (mode) => {
     'sends nothing on %s failure and reports the path',
     async (failure) => {
       const f = await fixture(mode);
+      // This is a native absolute drive path on Windows, not a POSIX-only fixture.
       const missing = join(f.root, 'missing');
       if (failure === 'image-upload')
         f.image.mockRejectedValueOnce(new Error('image denied'));
@@ -322,6 +360,10 @@ describe.each(['interactive', 'post'] as const)('reply media (%s)', (mode) => {
         message: expect.stringContaining(path),
       });
       expect(f.request).not.toHaveBeenCalled();
+      if (failure === 'image-read') {
+        expect(f.image).not.toHaveBeenCalled();
+        expect(f.file).not.toHaveBeenCalled();
+      }
     },
   );
   it('stops after a later file failure and reports earlier text/file ids and failed artifact', async () => {

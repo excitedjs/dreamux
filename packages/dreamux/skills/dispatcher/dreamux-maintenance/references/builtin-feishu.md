@@ -24,9 +24,14 @@ loading rather than being ignored.
 ## Reply Images and Artifacts
 
 Use `![alt](/absolute/path)` in reply Markdown to upload a daemon-readable
-local image inline; actual image nodes are rewritten to image keys before
+local image inline. Paths use the daemon's native platform, including Windows
+drive and backslash UNC paths. Markdown escaping applies: prefer
+`![alt](<C:/images/shot (1).png>)` for a Windows drive path with spaces, or escape
+backslashes in Markdown. Actual image nodes are rewritten to image keys before
 presentation/splitting. Code examples and remote/image-key references stay
-untouched. `reply.artifacts` optionally lists non-image local absolute paths.
+untouched, including `//...` protocol-relative URLs on Windows.
+`reply.artifacts` optionally lists non-image native local absolute paths;
+relative paths and `file:` URLs are not accepted.
 All uploads finish before any chat message; text sends first, then downloadable
 native file messages in array order, including MP4 without preview. MP4 and OPUS
 artifacts upload as `stream` to match native file delivery. The result's

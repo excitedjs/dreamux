@@ -14,6 +14,18 @@ should replace platform conditionals when they express the same contract.
 
 ## Scope and invariants
 
+The 2026-11-19 PR correction must restore native Windows reply-media behavior
+and reliable concurrent Claude runtime startup. Inline images and artifact
+validation must agree on host-native absolute paths; protocol-relative `//`
+URLs, drive-relative paths and `file:` URLs remain outside local-media handling.
+Preserve upload bytes, ordering, message splitting and failure-before-send
+behavior. Concurrent materialization of the same Claude inventory must reuse
+a valid published view instead of removing it, while preserving stable cache
+identity, inventory refresh, failure propagation and later retries. This scope
+also corrects platform-specific IPC wording and the stale launcher instruction.
+The operator explicitly requested investigation, fixes and push without repeated
+routine confirmations; merging and installed-service operations remain excluded.
+
 The 2026-11-16 PR follow-up rebases onto current `next` and adjudicates each
 review comment against actual callers. Environment construction must honor the
 explicit platform on every host. Windows Task Data is a captured override map:
