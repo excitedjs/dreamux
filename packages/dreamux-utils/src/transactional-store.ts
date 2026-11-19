@@ -23,6 +23,7 @@ import { mkdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { publishFileExclusive, writeFileAtomic } from './fs.js';
+import { ensureOwnerOnlyDir } from './os.js';
 
 export interface TransactionalStoreOptions<T> {
   /** Absolute path of the one file this store owns. */
@@ -31,7 +32,7 @@ export interface TransactionalStoreOptions<T> {
   load(): Promise<T>;
   /** Defaults to JSON with two-space indentation and a trailing newline. */
   encode?(value: T): string;
-  /** Mode for a parent directory the store has to create; omitted = process default. */
+  /** Parent directory mode; 0700 also enforces a private native Windows ACL. */
   dirMode?: number;
 }
 
@@ -160,7 +161,9 @@ export class TransactionalStore<T> {
 
   private async ensureDir(): Promise<void> {
     const dir = dirname(this.opts.path);
-    if (this.opts.dirMode !== undefined) {
+    if (this.opts.dirMode === 0o700) {
+      await ensureOwnerOnlyDir(dir);
+    } else if (this.opts.dirMode !== undefined) {
       await mkdir(dir, { recursive: true, mode: this.opts.dirMode });
     } else {
       await mkdir(dir, { recursive: true });

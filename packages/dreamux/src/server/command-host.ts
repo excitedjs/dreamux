@@ -7,6 +7,7 @@ import type { McpLeaseRegistry } from '../service/mcp/leases.js';
 
 /** Server's actual owners; its dispatchers accessor resolves the pre-start edge. */
 export interface CoreCommandHost extends DispatcherCommandHost<DispatcherService> {
+  requestShutdown(): void;
   configuredDispatcher(id: string): DispatcherConfig;
   readonly dispatchers: Dispatchers;
   readonly mcpLeases: McpLeaseRegistry;

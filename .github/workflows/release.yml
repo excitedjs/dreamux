@@ -158,10 +158,7 @@ jobs:
         # pinned, checksum-verified script a developer machine uses.
         env:
           GITLEAKS_INSTALL_DIR: ${{ runner.temp }}/gitleaks
-        run: |
-          set -euo pipefail
-          common/scripts/install-gitleaks.sh
-          echo "$GITLEAKS_INSTALL_DIR" >> "$GITHUB_PATH"
+        run: node common/scripts/install-gitleaks.mjs
 
       - name: Push version bump
         if: steps.version.outputs.changed == 'true'
@@ -340,7 +337,7 @@ jobs:
         # always has artifacts; zero tarballs means pack failed -> fail hard.
         run: |
           set -euo pipefail
-          rm -rf common/temp/prerelease-tarballs
+          node -e "require('node:fs/promises').rm('common/temp/prerelease-tarballs', { recursive: true, force: true })"
           node common/scripts/install-run-rush.js publish \
             --include-all \
             --publish \
@@ -370,9 +367,9 @@ jobs:
             # Public-repo red line: a published artifact must not carry internal
             # Feishu identifiers, the internal mount, or a builder/developer
             # home path. The patterns and the artifact allow-list have one
-            # owner, common/scripts/check-internal-content.sh, which also
+            # owner, common/scripts/check-internal-content.mjs, which also
             # guards the source tree; extend them there, never here.
-            if ! common/scripts/check-internal-content.sh --tarball "$tgz"; then
+            if ! node common/scripts/check-internal-content.mjs --tarball "$tgz"; then
               fail=1
             fi
           done

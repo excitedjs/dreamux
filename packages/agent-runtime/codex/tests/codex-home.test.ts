@@ -9,6 +9,8 @@ import {
 } from '../src/codex-home.js';
 import { resolveCodexHomeDir, codexSpawnEnv } from '../src/paths.js';
 import { unixSocketPathFitsBudget } from '@excitedjs/dreamux-utils';
+import { codexAgentRuntimeDiagnostic } from '../src/diagnostic.js';
+import { defaultDispatcherCodexConfig } from '../src/config.js';
 
 function validate(id: string, options: { env: Record<string, string> }) {
   const env = codexSpawnEnv(process.env, options.env);
@@ -24,7 +26,7 @@ describe('global Codex home doctor', () => {
   beforeEach(() => {
     runtimeDir = mkdtempSync(join(homedir(), '.dreamux-test-'));
     vi.stubEnv('HOME', join(runtimeDir, 'home'));
-    vi.stubEnv('CODEX_HOME', undefined);
+    vi.stubEnv('CODEX_HOME', join(runtimeDir, 'home', '.codex'));
     vi.stubEnv('OPENAI_API_KEY', undefined);
     vi.stubEnv('CODEX_API_KEY', undefined);
     vi.stubEnv('CODEX_ACCESS_TOKEN', undefined);
@@ -42,7 +44,10 @@ describe('global Codex home doctor', () => {
     const home = join(runtimeDir, 'home');
     const configuredHome = join(runtimeDir, 'configured-codex');
     for (const [env, expectedHome] of [
-      [{ HOME: home }, join(home, '.codex')],
+      [
+        { HOME: home },
+        join(process.platform === 'win32' ? homedir() : home, '.codex'),
+      ],
       [{ HOME: home, CODEX_HOME: configuredHome }, configuredHome],
     ] as const) {
       for (const runtimeId of ['flow-a', 'flow-b', '']) {
@@ -117,6 +122,36 @@ describe('global Codex home doctor', () => {
     expect(result.errors.join('\n')).toMatch(
       /app-server socket path is too long for Unix sockets/,
     );
+  });
+
+  it('accepts Windows runtime directories beyond the Unix socket path budget', async () => {
+    writeCodexHome();
+    vi.stubGlobal('process', { ...process, platform: 'win32' });
+    try {
+      const result = await codexAgentRuntimeDiagnostic.runDiagnostic(
+        {
+          runtime_id: 'windows-agent',
+          config: defaultDispatcherCodexConfig(),
+          scope: 'foreground',
+          env: process.env,
+          paths: {
+            cacheDir: () => runtimeDir,
+            logsDir: () => runtimeDir,
+            runtimeSocketDirs: () => [
+              join(runtimeDir, 'long-directory'.repeat(20)),
+            ],
+          },
+        },
+        {
+          check: async () => true,
+          capture: async () => 'codex-cli 0.137.0',
+        },
+      );
+      expect(result.ok).toBe(true);
+      expect(result.errors).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('requires auth environment variables to be non-empty and accepts CODEX_ACCESS_TOKEN', async () => {

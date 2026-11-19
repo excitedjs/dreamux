@@ -88,6 +88,11 @@ function printOnboardResult(result: OnboardRunResult): void {
     console.log(
       `dreamux onboard service: ${result.service.platform} ${result.service.unitPath}`,
     );
+    if (result.service.handedOff) {
+      console.log(
+        'dreamux onboard service: handed off to an external controller; completion is not yet confirmed',
+      );
+    }
     printServiceWarnings(result.service.lingerEnabled, result.service.warnings);
   }
 }

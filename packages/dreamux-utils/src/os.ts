@@ -9,6 +9,7 @@
  */
 
 import { access, chmod, lstat, mkdir, stat, unlink } from 'node:fs/promises';
+import { setWindowsOwnerOnlyAccess } from './windows-security.js';
 
 /** True when `pid` names a live process (EPERM counts as alive). */
 export function isProcessAlive(pid: number): boolean {
@@ -22,9 +23,11 @@ export function isProcessAlive(pid: number): boolean {
   }
 }
 
-/** True when a detached process group still exists (EPERM counts as alive). */
+/** Probe a POSIX process group (EPERM counts as alive). */
 export function isProcessGroupAlive(pgid: number): boolean {
   if (!Number.isFinite(pgid) || pgid <= 0) return false;
+  if (process.platform === 'win32')
+    throw new Error('Windows process trees require launch-owned Job handles');
   try {
     process.kill(-pgid, 0);
     return true;
@@ -36,12 +39,15 @@ export function isProcessGroupAlive(pgid: number): boolean {
   }
 }
 
-/** Signal an entire process group; only an already-absent group is ignored. */
-export function killProcessGroup(
+/** Signal a POSIX group. Windows trees are owned by SupervisedChild Job handles. */
+export async function killProcessGroup(
   pgid: number,
   signal: NodeJS.Signals | number,
-): void {
+): Promise<void> {
   if (!Number.isFinite(pgid) || pgid <= 0) return;
+  if (process.platform === 'win32') {
+    throw new Error('Windows process trees require launch-owned Job handles');
+  }
   try {
     process.kill(-pgid, signal);
   } catch (e) {
@@ -57,9 +63,8 @@ export interface EnsureOwnerOnlyDirOptions {
 }
 
 /**
- * Create/adopt a directory and guarantee the owner-only (0700) privacy
- * invariant regardless of who created it: reject a symlink leaf, fail loud on a
- * foreign-uid dir, and tighten any group/other permission bits.
+ * Create/adopt an owner-only directory: 0700 on POSIX, a protected current-user
+ * DACL on Windows. Reject symlink leaves and directories owned by another user.
  */
 export async function ensureOwnerOnlyDir(
   path: string,
@@ -79,8 +84,27 @@ export async function ensureOwnerOnlyDir(
         `not the current user (uid ${getuid()})`,
     );
   }
+  if (process.platform === 'win32') {
+    await setWindowsOwnerOnlyAccess(path, 'directory');
+    return;
+  }
   if ((info.mode & 0o077) !== 0) {
     await chmod(path, 0o700);
+  }
+}
+
+/** Tighten an existing regular file; never follow a symlink to another path. */
+export async function ensureOwnerOnlyFile(path: string): Promise<void> {
+  const info = await lstat(path);
+  if (info.isSymbolicLink() || !info.isFile()) {
+    throw new Error(
+      `refusing to use Dreamux private file ${path}: it is not a regular file`,
+    );
+  }
+  if (process.platform === 'win32') {
+    await setWindowsOwnerOnlyAccess(path, 'file');
+  } else {
+    await chmod(path, 0o600);
   }
 }
 

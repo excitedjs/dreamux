@@ -133,8 +133,14 @@ one Markdown element. Native posts use one `md` node. Both measure the same
 
 `localMarkdownImages` and `replaceLocalMarkdownImages` use marked's actual
 tokens and source positions to replace local destinations while retaining code,
-alt/title text and surrounding Markdown. The caller owns async local reads and
-upload/send order; this package knows no Dreamux config, routing or file roots.
+alt/title text and surrounding Markdown. Local means a native absolute path:
+Windows drive and backslash UNC paths are recognized on Windows, while `//...`
+always remains a protocol-relative URL. Relative paths, `file:` URLs and image
+keys are not local image paths. Markdown escapes are decoded before path
+classification; `![alt](<C:/images/shot (1).png>)` avoids backslash escapes and
+encloses spaces without changing the original surrounding source.
+The caller owns async local reads and upload/send order; this package knows no
+Dreamux config, routing or file roots.
 
 `uploadImage(bytes)` uses `im.v1.image.create` with `image_type: 'message'` and
 returns the SDK's direct `image_key`. `uploadFile({ fileName, bytes })` uses

@@ -32,5 +32,5 @@ common/autoinstallers/*/node_modules/
 # .agents/tasks/architecture/npm-package-split/requirement.md#install-model.
 
 # .agents/wip/ is local scratch (design notes, plans) — never committed.
-# It is orphan-checked by .agents/scripts/check.sh and must stay out of the KB.
+# It is orphan-checked by .agents/scripts/check.mjs and must stay out of the KB.
 .agents/wip/

@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-utils",
+      "comment": "Retain a verified Windows Job member process for bounded exit observation without requiring process control rights.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils"
+}

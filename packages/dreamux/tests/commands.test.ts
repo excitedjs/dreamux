@@ -1,4 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import yargs from 'yargs';
+import { createDaemonCommand } from '../src/cli/commands/daemon.js';
+import { createOnboardCommand } from '../src/cli/commands/onboard.js';
+import * as serviceInstall from '../src/daemon/install.js';
+import * as onboarding from '../src/onboard/run.js';
+import * as onboardWizard from '../src/onboard/wizard.js';
 import { ExecaCommandRunner } from '../src/platform/command-runner.js';
 import {
   adminContext,
@@ -16,6 +22,109 @@ const inventoryChannels = [
     config: { marker: 'private', identity: 'secondary-identity' },
   },
 ];
+
+describe('service installation handoff output', () => {
+  it.each([true, false])(
+    'reports daemon install completion as unconfirmed only for handoff (%s)',
+    async (handedOff) => {
+      const install = vi
+        .spyOn(serviceInstall, 'runDaemonInstall')
+        .mockResolvedValue({
+          files: [],
+          service: {
+            platform: 'windows',
+            unitPath: '\\Dreamux-fixture',
+            registered: true,
+            started: !handedOff,
+            handedOff,
+            lingerEnabled: null,
+            warnings: [],
+          },
+        });
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await yargs()
+          .exitProcess(false)
+          .command(createDaemonCommand())
+          .parseAsync(['daemon', 'install']);
+        expect(install).toHaveBeenCalledWith({
+          startService: true,
+          dryRun: false,
+        });
+        expect(output.mock.calls).toEqual([
+          ['dreamux daemon install file ledger:'],
+          ['dreamux daemon install service: windows \\Dreamux-fixture'],
+          ...(handedOff
+            ? [
+                [
+                  'dreamux daemon install: handed off to an external controller; completion is not yet confirmed',
+                ],
+              ]
+            : []),
+        ]);
+      } finally {
+        output.mockRestore();
+        install.mockRestore();
+      }
+    },
+  );
+
+  it.each([true, false])(
+    'reports onboard completion as unconfirmed only for handoff (%s)',
+    async (handedOff) => {
+      const answers = {
+        dispatcherId: 'fixture',
+        dispatcherCwd: '/fixture',
+        agentRuntime: { id: 'fixture', provider: 'builtin:codex', config: {} },
+        channels: [],
+        registerService: true,
+        startService: true,
+        dreamuxBin: '/fixture/dreamux',
+        dryRun: false,
+      };
+      const collect = vi
+        .spyOn(onboardWizard, 'collectOnboardAnswers')
+        .mockResolvedValue(answers);
+      const onboard = vi.spyOn(onboarding, 'runOnboard').mockResolvedValue({
+        files: [],
+        doctor: { ok: true, detail: 'fixture', errors: [], reports: [] },
+        service: {
+          platform: 'windows',
+          unitPath: '\\Dreamux-fixture',
+          registered: true,
+          started: !handedOff,
+          handedOff,
+          lingerEnabled: null,
+          warnings: [],
+        },
+      });
+      const output = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await yargs()
+          .exitProcess(false)
+          .command(createOnboardCommand())
+          .parseAsync(['onboard']);
+        expect(onboard).toHaveBeenCalledWith({ answers });
+        expect(output.mock.calls).toEqual([
+          ['dreamux onboard file ledger:'],
+          ['dreamux onboard doctor: ok'],
+          ['dreamux onboard service: windows \\Dreamux-fixture'],
+          ...(handedOff
+            ? [
+                [
+                  'dreamux onboard service: handed off to an external controller; completion is not yet confirmed',
+                ],
+              ]
+            : []),
+        ]);
+      } finally {
+        output.mockRestore();
+        onboard.mockRestore();
+        collect.mockRestore();
+      }
+    },
+  );
+});
 function inventory(live: boolean) {
   return [
     {
@@ -149,6 +258,20 @@ describe('channel.list', () => {
 });
 
 describe('ExecaCommandRunner', () => {
+  it('pipes Unicode input through EOF without using the command line', async () => {
+    const input = '工具🔑'.repeat(20_000);
+    await expect(
+      new ExecaCommandRunner().capture(
+        process.execPath,
+        [
+          '-e',
+          "let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => input += chunk); process.stdin.on('end', () => process.stdout.write(input));",
+        ],
+        { input },
+      ),
+    ).resolves.toBe(input);
+  });
+
   let previousLeakEnv: string | undefined;
 
   beforeEach(() => {

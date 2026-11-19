@@ -207,9 +207,20 @@ describe('dreamux-utils depends on no Dreamux package at all', () => {
     (p) => p.packageName === '@excitedjs/dreamux-utils',
   )!;
 
-  it('has no runtime "dependencies" field at all', () => {
+  it('has no runtime dependency on another Dreamux workspace package', () => {
     const manifest = readManifest(project.projectFolder);
-    expect(manifest['dependencies']).toBeUndefined();
+    const workspaceNames = new Set(projects.map((entry) => entry.packageName));
+    for (const field of [
+      'dependencies',
+      'peerDependencies',
+      'optionalDependencies',
+    ]) {
+      const dependencies = Object.keys(manifest[field] ?? {});
+      expect(
+        dependencies.filter((name) => workspaceNames.has(name)),
+        field,
+      ).toEqual([]);
+    }
   });
 
   it('imports no Dreamux package in any module, not even a type', () => {

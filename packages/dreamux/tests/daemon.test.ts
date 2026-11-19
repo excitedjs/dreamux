@@ -1,4 +1,8 @@
-import { renderLaunchdPlist, renderSystemdUnit } from '../src/daemon/unit.js';
+import {
+  parseSystemdUnit,
+  renderLaunchdPlist,
+  renderSystemdUnit,
+} from '../src/daemon/unit.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { vi } from 'vitest';
 import * as filesystem from 'node:fs/promises';
@@ -20,6 +24,7 @@ import { runDaemonInstall, runDaemonUninstall } from '../src/daemon/install.js';
 import {
   managedServiceEnvironment,
   resolveServiceExecutable,
+  stableNodeCandidates,
   withUserLocalBinPath,
   type ServiceNodeProbe,
 } from '../src/daemon/environment.js';
@@ -254,6 +259,7 @@ describe('managed service working directory ownership', () => {
     oldHome = process.env['HOME'];
     oldConfigDir = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
@@ -367,6 +373,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
     oldHome = process.env['HOME'];
     oldConfigDir = process.env['DREAMUX_ROOT'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
@@ -383,10 +390,7 @@ describe('daemon install (stable service Node, issue #83)', () => {
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    const line = unit
-      .split('\n')
-      .find((l) => l.startsWith('Environment=DREAMUX_NODE_BIN='));
-    return line?.slice('Environment=DREAMUX_NODE_BIN='.length) ?? '';
+    return parseSystemdUnit(unit).environment?.['DREAMUX_NODE_BIN'] ?? '';
   }
 
   it('pins a stable system Node even when invoked from a version-manager Node', async () => {
@@ -457,13 +461,18 @@ const SESSION_PATH = SESSION_PATH_PARTS.join(delimiter);
 
 function writeFakeBinary(dir: string, name: string): string {
   mkdirSync(dir, { recursive: true });
-  const binPath = join(dir, name);
+  const binPath = join(
+    dir,
+    process.platform === 'win32' ? `${name}.CMD` : name,
+  );
   writeFileSync(
     binPath,
-    '#!/usr/bin/env node\n' +
-      'const a = process.argv.slice(1);\n' +
-      "if (a.includes('--version')) { console.log('v1.0.0'); process.exit(0); }\n" +
-      'process.exit(0);\n',
+    process.platform === 'win32'
+      ? '@echo off\r\necho v1.0.0\r\n'
+      : '#!/usr/bin/env node\n' +
+          'const a = process.argv.slice(1);\n' +
+          "if (a.includes('--version')) { console.log('v1.0.0'); process.exit(0); }\n" +
+          'process.exit(0);\n',
     { mode: 0o755 },
   );
   chmodSync(binPath, 0o755);
@@ -561,6 +570,26 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
     ]);
   });
 
+  it.each([
+    { SystemRoot: 'ignored', SYSTEMROOT: 'selected' },
+    { SYSTEMROOT: 'selected', SystemRoot: 'ignored' },
+    { SystemRoot: 'ignored', SYSTEMROOT: undefined },
+    { SYSTEMROOT: undefined, SystemRoot: 'ignored' },
+  ])(
+    'uses Windows duplicate-key precedence for system directories: %j',
+    (env) => {
+      expect(systemExecDirs('win32', env)).toEqual(
+        env.SYSTEMROOT === undefined
+          ? []
+          : [
+              'selected',
+              join('selected', 'System32'),
+              join('selected', 'System32', 'WindowsPowerShell', 'v1.0'),
+            ],
+      );
+    },
+  );
+
   it('standardExecDirs combines user-local + system in order', () => {
     const home = '/home/example';
     const dirs = standardExecDirs({
@@ -607,6 +636,18 @@ describe('userLocalBinDirs and systemExecDirs (explicit deterministic fallbacks)
 });
 
 describe('withUserLocalBinPath (resolve-time effective PATH)', () => {
+  it('uses the supplied platform for captured PATH lookup and replacement', () => {
+    const input = { Path: 'mixed', PATH: 'upper', OTHER: 'kept' };
+    expect(withUserLocalBinPath(input, [], 'win32')).toEqual({
+      PATH: 'upper',
+      OTHER: 'kept',
+    });
+    expect(withUserLocalBinPath(input, [], 'linux')).toEqual(input);
+    expect(
+      withUserLocalBinPath({ Path: 'mixed', PATH: undefined }, [], 'win32'),
+    ).toEqual({ PATH: '' });
+  });
+
   it('includes the captured session PATH ahead of fallbacks and never mutates process.env', () => {
     const home = '/home/example';
     const before = process.env['PATH'];
@@ -640,11 +681,15 @@ describe('withServicePath does not mutate process.env or the input env', () => {
   it('returns a fresh object and leaves process.env and the input env untouched', () => {
     const inputEnv = { PATH: '/usr/bin:/bin', FOO: 'bar' };
     const beforeProcess = process.env['PATH'];
-    const result = withServicePath(inputEnv, {
-      stableDirs: ['/opt/dreamux/bin'],
-      sessionPath: '/home/example/.nvm/versions/node/v22.7.0/bin',
-      fallbackDirs: ['/home/example/.local/bin'],
-    });
+    const result = withServicePath(
+      inputEnv,
+      {
+        stableDirs: ['/opt/dreamux/bin'],
+        sessionPath: '/home/example/.nvm/versions/node/v22.7.0/bin',
+        fallbackDirs: ['/home/example/.local/bin'],
+      },
+      process.platform,
+    );
 
     // Input env is not mutated.
     expect(inputEnv).toEqual({ PATH: '/usr/bin:/bin', FOO: 'bar' });
@@ -658,6 +703,25 @@ describe('withServicePath does not mutate process.env or the input env', () => {
       '/home/example/.local/bin',
     ]);
   });
+
+  it('replaces Windows PATH aliases but preserves distinct Unix variables', () => {
+    const env = { Path: 'ambient', PATH: 'old', OTHER: 'kept' };
+    const input = {
+      stableDirs: ['selected'],
+      sessionPath: '',
+      fallbackDirs: [],
+    };
+    expect(withServicePath(env, input, 'win32')).toEqual({
+      PATH: 'selected',
+      OTHER: 'kept',
+    });
+    expect(withServicePath(env, input, 'linux')).toEqual({
+      Path: 'ambient',
+      PATH: 'selected',
+      OTHER: 'kept',
+    });
+    expect(env).toEqual({ Path: 'ambient', PATH: 'old', OTHER: 'kept' });
+  });
 });
 
 describe('provider binary resolution from captured session PATH', () => {
@@ -670,6 +734,7 @@ describe('provider binary resolution from captured session PATH', () => {
     oldHome = process.env['HOME'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
   });
 
@@ -731,17 +796,62 @@ describe('captured session PATH appears in systemd and launchd service config', 
     };
   }
 
+  it('captures Windows keys using the requested platform rather than the host', () => {
+    const input = {
+      Path: 'captured-session',
+      SystemRoot: 'ignored',
+      SYSTEMROOT: 'selected-system',
+      COMSPEC: 'selected-command',
+      PROGRAMFILES: 'selected-programs',
+    };
+    const env = managedServiceEnvironment({
+      ...baseAnswers(input),
+      platform: 'win32',
+    });
+    expect(env).toMatchObject({
+      SystemRoot: 'selected-system',
+      ComSpec: 'selected-command',
+      ProgramFiles: 'selected-programs',
+      USERPROFILE: home,
+    });
+    expect(env['PATH']?.split(delimiter)).toContain('captured-session');
+    expect(stableNodeCandidates('win32', input)).toEqual([
+      join('selected-programs', 'nodejs', 'node.exe'),
+    ]);
+    const unix = managedServiceEnvironment({
+      ...baseAnswers(input),
+      platform: 'linux',
+    });
+    expect(unix).not.toHaveProperty('SystemRoot');
+    expect(unix['PATH']?.split(delimiter)).not.toContain('captured-session');
+  });
+
+  it('does not revive Windows aliases masked by an undefined selected key', () => {
+    const input = {
+      Path: 'ignored-session',
+      PATH: undefined,
+      SystemRoot: 'ignored-system',
+      SYSTEMROOT: undefined,
+      ProgramFiles: 'ignored-programs',
+      PROGRAMFILES: undefined,
+    };
+    const env = managedServiceEnvironment({
+      ...baseAnswers(input),
+      platform: 'win32',
+    });
+    expect(env).not.toHaveProperty('SystemRoot');
+    expect(env).not.toHaveProperty('ProgramFiles');
+    expect(env['PATH']?.split(delimiter)).not.toContain('ignored-session');
+    expect(stableNodeCandidates('win32', input)).toEqual([]);
+  });
+
   it('systemd Environment=PATH includes the captured session PATH entries', () => {
     const unit = renderSystemdUnit(
       baseAnswers({ PATH: SESSION_PATH }),
       '/tmp/stdout.log',
       '/tmp/stderr.log',
     );
-    const pathLine =
-      unit
-        .split('\n')
-        .find((l) => l.startsWith('Environment=PATH='))
-        ?.slice('Environment=PATH='.length) ?? '';
+    const pathLine = parseSystemdUnit(unit).environment?.['PATH'] ?? '';
     const parts = pathLine.split(delimiter);
     // Stable dirs lead.
     expect(parts[0]).toBe('/usr/local/bin'); // dirname(nodeBin)
@@ -788,6 +898,7 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
     oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     writeInstallConfig(join(root, 'config'));
@@ -805,10 +916,7 @@ describe('re-running daemon install refreshes the persisted service PATH', () =>
       join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
       'utf8',
     );
-    const line = unit
-      .split('\n')
-      .find((l) => l.startsWith('Environment=PATH='));
-    return line?.slice('Environment=PATH='.length) ?? '';
+    return parseSystemdUnit(unit).environment?.['PATH'] ?? '';
   }
 
   it('regenerates the unit PATH when the supplied session PATH changes', async () => {
@@ -912,6 +1020,7 @@ describe('normal CLI invocation captures ambient process.env PATH (options.env o
     oldPath = process.env['PATH'];
     oldCodexBin = process.env['CODEX_HOST_CODEX_BIN'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
     // Normal CLI use: the host codex binary is in the ambient environment.
@@ -1050,6 +1159,7 @@ describe('daemon install resolves bare provider bins and includes them in the se
     oldConfigDir = process.env['DREAMUX_ROOT'];
     oldPath = process.env['PATH'];
     process.env['HOME'] = join(root, 'home');
+    vi.stubEnv('USERPROFILE', join(root, 'home'));
     process.env['DREAMUX_ROOT'] = join(root, 'dreamux');
     process.env['DREAMUX_ROOT'] = join(root, 'config');
   });
@@ -1097,7 +1207,12 @@ describe('daemon install resolves bare provider bins and includes them in the se
     expect(
       servicePath.split(delimiter).filter((p) => p === localBin(home)),
     ).toHaveLength(1);
-    expect(binPath).toBe(join(localBin(home), 'local-agent'));
+    expect(binPath).toBe(
+      join(
+        localBin(home),
+        process.platform === 'win32' ? 'local-agent.CMD' : 'local-agent',
+      ),
+    );
   });
 });
 
@@ -1106,8 +1221,7 @@ function readUnitPathFrom(root: string): string {
     join(root, 'home', '.config', 'systemd', 'user', 'dreamux.service'),
     'utf8',
   );
-  const line = unit.split('\n').find((l) => l.startsWith('Environment=PATH='));
-  return line?.slice('Environment=PATH='.length) ?? '';
+  return parseSystemdUnit(unit).environment?.['PATH'] ?? '';
 }
 
 function writeInstallConfig(
@@ -1167,4 +1281,7 @@ beforeEach(() => {
     return actualAccess(path, mode);
   });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});

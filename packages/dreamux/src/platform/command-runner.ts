@@ -1,4 +1,5 @@
 import { execa } from 'execa';
+import { environmentValue } from '@excitedjs/dreamux-utils';
 
 /**
  * Abstraction over running a host shell command. Onboarding, service
@@ -32,6 +33,7 @@ export interface CommandRunner {
       cwd?: string;
       env?: NodeJS.ProcessEnv;
       dryRun?: boolean;
+      input?: string;
     },
   ): Promise<string>;
 }
@@ -73,11 +75,12 @@ export class ExecaCommandRunner implements CommandRunner {
   async capture(
     command: string,
     args: string[],
-    options: CommandOptions = {},
+    options: CommandOptions & { input?: string } = {},
   ): Promise<string> {
     if (options.dryRun) return '';
     const result = await execa(command, args, {
       ...execaEnvironment(options),
+      ...(options.input !== undefined ? { input: options.input } : {}),
     });
     return result.stdout;
   }
@@ -87,6 +90,7 @@ function execaEnvironment(options: CommandOptions): {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   extendEnv: boolean;
+  windowsHide: boolean;
 } {
   // Spreads the two fields conditionally rather than widening this return
   // type to `| undefined`: the result feeds execa's own `Options.cwd?: string
@@ -94,7 +98,24 @@ function execaEnvironment(options: CommandOptions): {
   // not just tolerated.
   return {
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
-    ...(options.env !== undefined ? { env: options.env } : {}),
+    ...(options.env !== undefined
+      ? { env: windowsCommandEnvironment(options.env) }
+      : {}),
     extendEnv: options.env === undefined,
+    windowsHide: true,
   };
+}
+
+function windowsCommandEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (process.platform !== 'win32') return env;
+  // A pinned service environment still needs the Windows loader and command
+  // interpreter locations. Do not inherit unrelated ambient settings.
+  const result = { ...env };
+  for (const key of ['SystemRoot', 'ComSpec']) {
+    if (environmentValue(result, key) === undefined) {
+      const value = environmentValue(process.env, key);
+      if (value !== undefined) result[key] = value;
+    }
+  }
+  return result;
 }

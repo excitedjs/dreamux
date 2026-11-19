@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
-import { chmod, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { open, rename, rm, stat } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import type { Readable } from 'node:stream';
 
-import { ensureOwnerOnlyDir } from '@excitedjs/dreamux-utils';
+import {
+  ensureOwnerOnlyDir,
+  ensureOwnerOnlyFile,
+  isPathWithin,
+} from '@excitedjs/dreamux-utils';
 
 import type {
   FeishuInboundEvent,
@@ -252,6 +256,11 @@ async function resolveAttachment(
       if (cachedSize > budget.remainingAggregateBytes) {
         return { ...base, reason: 'aggregate_limit' };
       }
+      await runFeishuInboundWork(
+        work,
+        () => ensureOwnerOnlyFile(path),
+        resourceDeadline,
+      );
       budget.remainingAggregateBytes -= cachedSize;
       return { ...base, status: 'downloaded', path };
     }
@@ -288,13 +297,18 @@ async function resolveAttachment(
     try {
       await runFeishuInboundWork(
         work,
-        () =>
-          writeFile(tmpPath ?? '', bytes, { mode: 0o600, signal: work.signal }),
-        resourceDeadline,
-      );
-      await runFeishuInboundWork(
-        work,
-        () => chmod(tmpPath ?? '', 0o600),
+        async () => {
+          const handle = await open(tmpPath ?? '', 'wx', 0o600);
+          try {
+            // Elevated Windows creation can default the owner to Administrators
+            // even in a private directory. Set ownership before writing bytes.
+            await ensureOwnerOnlyFile(tmpPath ?? '');
+            work.assertEnrichmentActive();
+            await handle.writeFile(bytes, { signal: work.signal });
+          } finally {
+            await handle.close();
+          }
+        },
         resourceDeadline,
       );
       await runFeishuInboundWork(
@@ -330,7 +344,7 @@ function attachmentPath(cacheRoot: string, resource: InboundResource): string {
     .slice(0, 16);
   const displayName = sanitizeFileName(resource.name ?? `${resource.type}.bin`);
   const path = resolve(cacheRoot, `${resource.type}-${digest}-${displayName}`);
-  if (!isInside(cacheRoot, path)) throw new CachePathError();
+  if (!isPathWithin(cacheRoot, path)) throw new CachePathError();
   return path;
 }
 
@@ -341,10 +355,6 @@ function sanitizeFileName(value: string): string {
     .replace(/^[-.]+/, '')
     .slice(0, 80);
   return safeBase === '' ? 'attachment.bin' : safeBase;
-}
-
-function isInside(root: string, path: string): boolean {
-  return path === root || path.startsWith(`${root}/`);
 }
 
 async function fileSize(path: string): Promise<number | null> {

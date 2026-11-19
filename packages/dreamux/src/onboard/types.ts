@@ -38,6 +38,7 @@ export interface OnboardRunResult {
     unitPath: string;
     registered: boolean;
     started: boolean;
+    handedOff?: boolean;
     lingerEnabled: boolean | null;
     warnings: string[];
   } | null;

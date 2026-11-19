@@ -41,6 +41,8 @@ async function initRepo(root: string): Promise<string> {
   const repo = join(root, 'repo');
   await mkdir(repo, { recursive: true });
   await git(repo, ['init', '-q']);
+  // This fixture asserts LF bytes; checkout conversion is the repository's Git policy.
+  await git(repo, ['config', 'core.autocrlf', 'false']);
   await git(repo, ['config', 'user.email', 'test@example.com']);
   await git(repo, ['config', 'user.name', 'test']);
   await writeFile(join(repo, 'a.txt'), 'hello\n');

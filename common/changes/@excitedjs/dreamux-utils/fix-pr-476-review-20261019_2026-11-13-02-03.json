@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Allow Administrators-owned private paths to be adopted when Windows grants owner and DACL write permissions, without requiring an enabled administrator group. Retain foreign-owner refusal with the affected path, and support query-only Job observation independently of control access.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux-utils"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils",
+  "email": "053700@gmail.com"
+}

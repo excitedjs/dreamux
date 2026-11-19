@@ -2,7 +2,7 @@
 
 The single current-shape tree: how Dreamux is built today, one page per area —
 ownership, contracts, invariants, and Regression Traps, with source pointers
-`check.sh` keeps alive. These pages describe what is and why; they are
+`check.mjs` keeps alive. These pages describe what is and why; they are
 evidence, never preservation orders. A refactor may overturn anything here to
 fit the current product scenario, knowingly: name what changes, why the
 recorded rationale no longer holds, and update the page in the same change.

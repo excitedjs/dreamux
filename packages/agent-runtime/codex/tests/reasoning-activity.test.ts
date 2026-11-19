@@ -6,8 +6,8 @@ import type {
 } from '@excitedjs/dreamux-types';
 import { TurnManager } from '../src/turn-manager.js';
 import { CodexReasoningEffort } from '../src/reasoning-effort.js';
-import type { CodexWsClient } from '../src/rpc.js';
-import { FakeCodexWsClient } from './helpers/codex-runtime-fakes.js';
+import type { CodexRpcClient } from '../src/rpc.js';
+import { FakeCodexRpcClient } from './helpers/codex-runtime-fakes.js';
 
 const managers: TurnManager[] = [];
 afterEach(async () => {
@@ -23,8 +23,8 @@ const logger: DreamuxLogger = {
 };
 
 async function harness() {
-  const client = new FakeCodexWsClient({ autoComplete: false });
-  const native = client as unknown as CodexWsClient;
+  const client = new FakeCodexRpcClient({ autoComplete: false });
+  const native = client as unknown as CodexRpcClient;
   const events: AgentRuntimeEvent[] = [];
   const manager = new TurnManager({
     threadId: 'thread',

@@ -14,9 +14,13 @@ Dispatcher-only concerns — channel sessions, restart-notice injection, role MC
 assembly, completion routing, the neutral conversation projection — stay on
 `DispatcherService`.
 
+The serving process's signal and accepted admin shutdown requests share one
+bounded process-exit owner in `server/shutdown.ts`.
+
 Key source:
 
 - `/packages/dreamux/src/server.ts`
+- `/packages/dreamux/src/server/shutdown.ts`
 - `/packages/dreamux/src/service/dispatchers/index.ts`
 - `/packages/dreamux/src/service/dispatcher-service/index.ts`
 
@@ -36,6 +40,13 @@ the rush path only.
 | `@excitedjs/feishu-channel` | `/packages/channel/feishu-channel/` | always-loaded built-in Feishu plugin: contributes the Channel provider behind `builtin:feishu` and publishes the Feishu extension api |
 | `@excitedjs/dreamux-plugin-bootstrap` | `/packages/plugins/bootstrap/` | built-in opt-in bootstrap plugin behind `builtin:bootstrap`: profile files from the Dispatcher cwd's `.workspace/` in the Dispatcher and TeamLeader launch prompts |
 | `@excitedjs/eslint-config` | `/packages/eslint-config/` | private shared ESLint flat config; single source of the sync-IO ban and the 700-line cap |
+
+Windows native capabilities live in `/packages/dreamux-utils/src/windows-job.ts`
+and `/packages/dreamux-utils/src/windows-security.ts`. Each owner loads Koffi
+and its ABI bindings only on the first capability call and shares initialization
+across concurrent callers. Importing utilities or host modules does not load
+the native addon. Job instances retain initialized bindings for synchronous
+handle release; platform-neutral callers keep their ordinary static imports.
 
 Inside `/packages/dreamux/src/`: `admin/` (socket transport), `channel/` and
 `agent-runtime/` (generic provider catalogs/loaders), `command/` (the one
@@ -87,7 +98,7 @@ Key source: `/packages/dreamux/src/registry/`,
 One `CoreCommandRegistry` holds every Command definition; the owner-only local
 `admin.sock` and a Channel's in-process `invoke` port are transport adapters
 over the same registry — no per-adapter table, allowlist, or exposure flag.
-Namespaces: `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
+Namespaces include `server.*`, `teammate.*`, `team.*`, `workflow.*`, `dispatcher.*`,
 `scheduler.cron.*`, plus the transport Commands `mcp.describe` / `mcp.toolcall`.
 Admin callers may pass validated `skill_sources` on `teammate.spawn` /
 `team.create`; bundled role skills cannot be shadowed. The remaining
@@ -96,7 +107,8 @@ are the one [active proposal](../proposals/admin-control-plane-surface.md).
 
 Key source: `/packages/dreamux/src/command/` (registry, schema/validation,
 `mustDispatcherId`), `/packages/dreamux/src/server/` (catalog composition,
-`CoreCommandHost`), `/packages/dreamux/src/admin/socket.ts`.
+`CoreCommandHost`), `/packages/dreamux/src/server-commands.ts` (process commands),
+`/packages/dreamux/src/admin/socket.ts`.
 
 The actual Server implements the command-host view; domain factories receive
 narrow structural views of it, not resolver closure bags. Its addressed lookup

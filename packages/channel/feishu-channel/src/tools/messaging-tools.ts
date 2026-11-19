@@ -40,7 +40,7 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
     'Send a message to a Feishu chat from this channel. Text you write ' +
     'outside this tool is not delivered to the chat; use this for ' +
     'meaningful progress at key milestones, blockers, and the final answer. ' +
-    'Inline local images use ![alt](/absolute/path); artifacts sends non-image ' +
+    'Inline local images use ![alt](/absolute/path) or ![alt](<C:/absolute/path>) on Windows; artifacts sends non-image ' +
     'local attachments as downloadable files, including videos.',
   callers: ['dispatcher', 'team_leader'],
   inputSchema: closedObjectSchema(
@@ -59,7 +59,13 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
       },
       artifacts: {
         type: 'array',
-        items: { ...nonEmptyString, pattern: '^/(?!/)' },
+        items: {
+          ...nonEmptyString,
+          pattern:
+            process.platform === 'win32'
+              ? /^(?:[A-Za-z]:[\\/]|\\|\/(?!\/))/.source
+              : '^/(?!/)',
+        },
         description:
           'Non-image attachments as local absolute paths, sent after text in array order. Every attachment, including MP4, is a file message.',
       },
@@ -67,7 +73,7 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
         ...nonEmptyString,
         description:
           "Markdown message body, using this channel's configured card_mode. " +
-          'Use ![alt](/absolute/path) to upload a local image inline. ' +
+          'Use ![alt](/absolute/path) or ![alt](<C:/absolute/path>) on Windows to upload a local image inline. ' +
           'To @-mention someone, write the tag where you want it, for example ' +
           '<at user_id="ou_example">Example</at>. In a group or other broad ' +
           'audience, keep secrets, tokens, private identifiers, hidden ' +

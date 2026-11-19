@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Describe admin IPC permission failures as owner-only access across Unix sockets and Windows pipes. Clarify native Windows reply-media path syntax in maintenance guidance.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

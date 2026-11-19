@@ -18,9 +18,13 @@ tool. Other Channel notices, explicit cards, question/binding cards and COT
 stay interactive. Width does not change; invalid values fail config loading.
 
 In either mode, `![alt](/absolute/path)` uploads a local image and replaces its
-Markdown destination with the image key. Code examples, ordinary links,
-remote images and existing keys stay untouched. Optional `reply.artifacts`
-is an array of non-empty local absolute paths for non-image attachments.
+Markdown destination with the image key. Paths follow the daemon's native
+platform, including Windows drive and backslash UNC paths. Markdown escaping
+still applies; prefer `![alt](<C:/images/shot (1).png>)` to enclose spaces and
+avoid backslash escapes. Code examples, ordinary links, remote images and
+existing keys stay untouched; `//...` remains a remote URL on Windows too.
+Optional `reply.artifacts` is an array of non-empty native local absolute paths
+for non-image attachments. Relative paths and `file:` URLs are not accepted.
 All local reads are async, and all uploads finish before the first chat
 message. Text parts send first, then native file messages in artifact order;
 MP4 is a downloadable file without a media preview. Every message uses the

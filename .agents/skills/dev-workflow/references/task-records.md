@@ -74,7 +74,7 @@ false while the file sits untouched?**
   states do not: `review` stops being true the moment a reviewer answers, and
   `implementation` stops being true when the branch is pushed. They are correct
   and expected on a working branch, which is a working copy — and they are a
-  lie the moment that branch merges. `.agents/scripts/check.sh` rejects them,
+  lie the moment that branch merges. `.agents/scripts/check.mjs` rejects them,
   so set `done`, `blocked`, or `intake` before opening the pull request.
   `done` means the work is finished and submitted; whether it merged is git's
   fact, not the record's.
@@ -207,6 +207,6 @@ python3 .agents/skills/dev-workflow/scripts/init_task.py check \
 ```
 
 Pass `--allow-in-flight` while the task is still on its branch; without it the
-check holds the record to what may land on the trunk. `.agents/scripts/check.sh`
+check holds the record to what may land on the trunk. `.agents/scripts/check.mjs`
 runs the same validation over every record in the repository and never passes
 that flag, which is what makes the rule binding rather than advisory.

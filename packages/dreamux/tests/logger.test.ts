@@ -8,18 +8,33 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
-import { createLogger, loggerToLevelFn } from '../src/platform/logger.js';
+import * as utils from '@excitedjs/dreamux-utils';
+
+import {
+  createLogger,
+  loggerToLevelFn,
+  prepareLogDirectory,
+  prepareLogFile,
+} from '../src/platform/logger.js';
+import {
+  expectOwnerOnlyPermissions,
+  makeWorldReadable,
+} from '../../../common/testing/test-permissions.mjs';
+
+vi.mock('@excitedjs/dreamux-utils', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@excitedjs/dreamux-utils')>();
+  return {
+    ...actual,
+    publishFileExclusive: vi.fn(actual.publishFileExclusive),
+  };
+});
 
 function captureSink(): { sink: Writable; text: () => string } {
   const chunks: string[] = [];
@@ -39,16 +54,20 @@ describe('logger factory', () => {
     dir = mkdtempSync(join(tmpdir(), 'dreamux-logger-'));
   });
   afterEach(() => {
+    vi.clearAllMocks();
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('creates the log dir and a 0600 file at an injected path', () => {
+  it('prepares an owner-only file and directory before synchronous logging', async () => {
+    await prepareLogDirectory(dir);
     const filePath = join(dir, 'nested', 'server.log');
+    await prepareLogFile(filePath);
+    await expectOwnerOnlyPermissions(join(dir, 'nested'), 0o700);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
     const logger = createLogger({ name: 'server', filePath, stderr: false });
     logger.info('hello');
 
-    const mode = statSync(filePath).mode & 0o777;
-    expect(mode).toBe(0o600);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
     const contents = readFileSync(filePath, 'utf8');
     expect(contents).toContain('"msg":"hello"');
     expect(contents).toContain('"name":"server"');
@@ -56,12 +75,76 @@ describe('logger factory', () => {
 
   it('tightens a pre-existing wider-permission file to 0600', async () => {
     const filePath = join(dir, 'pre.log');
-    writeFileSync(filePath, '', { mode: 0o644 });
+    writeFileSync(filePath, 'existing log line\n', { mode: 0o644 });
+    await makeWorldReadable(filePath, 0o644);
+    await prepareLogDirectory(dir);
+    await prepareLogFile(filePath);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
     const logger = createLogger({ filePath, stderr: false });
     logger.info('x');
-    // The defensive re-tighten is a fire-and-forget async chmod (createLogger
-    // stays synchronous, the gate bans *Sync), so poll until it lands.
-    await vi.waitFor(() => expect(statSync(filePath).mode & 0o777).toBe(0o600));
+    const contents = readFileSync(filePath, 'utf8');
+    expect(contents).toContain('existing log line\n');
+    expect(contents).toContain('"msg":"x"');
+  });
+
+  it('prepares an existing log directly without temporary publication', async () => {
+    const filePath = join(dir, 'existing.log');
+    writeFileSync(filePath, 'existing log line\n');
+    await makeWorldReadable(dir, 0o755);
+    await makeWorldReadable(filePath, 0o644);
+
+    await prepareLogFile(filePath);
+
+    expect(utils.publishFileExclusive).not.toHaveBeenCalled();
+    await expectOwnerOnlyPermissions(dir, 0o700);
+    await expectOwnerOnlyPermissions(filePath, 0o600);
+    expect(readFileSync(filePath, 'utf8')).toBe('existing log line\n');
+  });
+
+  it('verifies a concurrent creation winner without replacing its log', async () => {
+    const filePath = join(dir, 'racing.log');
+    const actual = await vi.importActual<
+      typeof import('@excitedjs/dreamux-utils')
+    >('@excitedjs/dreamux-utils');
+    let published: boolean | undefined;
+    vi.mocked(utils.publishFileExclusive).mockImplementationOnce(
+      async (path, data, options) => {
+        // Another writer publishes after the missing-file check.
+        await actual.publishFileExclusive(path, 'concurrent log line\n');
+        await makeWorldReadable(path, 0o644);
+        published = await actual.publishFileExclusive(path, data, options);
+        return published;
+      },
+    );
+
+    await prepareLogFile(filePath);
+
+    expect(published).toBe(false);
+    expect(readFileSync(filePath, 'utf8')).toBe('concurrent log line\n');
+    await expectOwnerOnlyPermissions(filePath, 0o600);
+  });
+
+  it('rejects linked log entries without tightening the external target', async () => {
+    const logDir = join(dir, 'logs');
+    const external = join(dir, 'external');
+    await mkdir(logDir);
+    await mkdir(external);
+    await makeWorldReadable(external, 0o755);
+    const file = join(external, 'existing.log');
+    writeFileSync(file, 'unrelated data');
+    await makeWorldReadable(file, 0o644);
+    await symlink(
+      external,
+      join(logDir, 'linked'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(prepareLogDirectory(logDir)).rejects.toThrow(
+      /it is a symlink/,
+    );
+    await expect(expectOwnerOnlyPermissions(external, 0o700)).rejects.toThrow();
+    await expect(expectOwnerOnlyPermissions(file, 0o600)).rejects.toThrow();
+    expect(readFileSync(file, 'utf8')).toBe('unrelated data');
   });
 
   it('redacts credential fields by default', () => {
@@ -116,8 +199,10 @@ describe('logger factory', () => {
     }
   });
 
-  it('writes to both the file and stderr when filePath is set (foreground stays visible)', () => {
+  it('writes to both the file and stderr when filePath is set (foreground stays visible)', async () => {
+    await prepareLogDirectory(dir);
     const filePath = join(dir, 'dual.log');
+    await prepareLogFile(filePath);
     // We cannot easily capture fd 2 here; assert the file half of the dual
     // stream. The stderr half is exercised by foreground `serve` in practice.
     const logger = createLogger({ name: 'server', filePath });

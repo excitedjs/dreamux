@@ -209,8 +209,15 @@ split; a table header plus an indivisible oversized row fails explicitly.
 
 `FeishuOutbound.sendText` resolves the target once, asynchronously reads local
 absolute image paths, uploads bytes, and replaces only image destinations.
+Absolute-path recognition follows the daemon's native platform, including
+Windows drive paths and backslash UNC paths. Markdown escaping still applies;
+an angle-bracket destination such as `<C:/images/shot (1).png>` avoids backslash
+escapes and encloses spaces.
+The `artifacts` schema and parser accept the same native absolute-path forms.
 Remote/image-key sources, protocol-relative URLs and code examples stay
-untouched. It asynchronously reads/uploads `artifacts` before sending text,
+untouched; `//...` remains remote even on Windows. Relative paths and `file:`
+URLs are not local media inputs. It asynchronously reads/uploads `artifacts`
+before sending text,
 then sends native files in array order and aggregates all receipts. No local
 root allowlist or new core capability is involved. Transport's
 `transport/uploads.ts` accepts bytes and filenames, invokes SDK image/file

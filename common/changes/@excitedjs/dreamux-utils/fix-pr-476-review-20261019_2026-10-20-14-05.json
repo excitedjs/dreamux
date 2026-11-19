@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux-utils",
+      "comment": "Verify native service Job termination with both session-local and Global names.",
+      "type": "none"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux-utils"
+}

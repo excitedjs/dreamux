@@ -45,9 +45,10 @@ describe('real Codex live activity contracts', () => {
               entry.client === client &&
               entry.notification.method === 'turn/completed',
           );
+        const blockingCommand = `node -e "setTimeout(() => console.log('activity-live-done'), 3000)"`;
         const admission = await created.runtime.submit({
           text: [
-            'First call exec_command with cmd "sleep 3; echo activity-live-done" and wait for it.',
+            `First call exec_command with cmd ${JSON.stringify(blockingCommand)} and wait for it.`,
             'After it returns, reply with exactly the word done.',
           ].join(' '),
         });
@@ -61,7 +62,7 @@ describe('real Codex live activity contracts', () => {
 
         // Observe the real app-server starting the requested operation. The
         // activity evidence below comes from the provider's disk reader, not
-        // these WebSocket observations or a constructed rollout fixture.
+        // these native RPC observations or a constructed rollout fixture.
         await waitFor(
           () =>
             f.notifications.some((entry) => {

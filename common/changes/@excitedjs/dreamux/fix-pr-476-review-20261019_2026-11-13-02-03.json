@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Keep the current Windows account fixed in the service password dialog so installation asks only for its password, without account alias selection. Use query-only Job handles for service membership observations while retaining control permissions for stopping work.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "053700@gmail.com"
+}

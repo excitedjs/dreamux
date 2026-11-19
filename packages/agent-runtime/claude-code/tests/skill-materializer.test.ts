@@ -4,14 +4,14 @@ import {
   mkdtemp,
   readdir,
   readFile,
-  readlink,
+  realpath,
   rename,
   rm,
   symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -29,6 +29,26 @@ describe('Claude skill materialization', () => {
     );
   });
 
+  it('publishes one readable view for simultaneous runtime starts', async () => {
+    const fixture = await createFixture();
+    const target = await adapterRoot(fixture);
+    const published = await Promise.allSettled(
+      Array.from({ length: 4 }, () =>
+        materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
+      ),
+    );
+    expect(published).toEqual(
+      Array.from({ length: 4 }, () => ({
+        status: 'fulfilled',
+        value: target,
+      })),
+    );
+    expect(await realpath(join(target, '.claude', 'skills', 'review'))).toBe(
+      await realpath(fixture.skill),
+    );
+    await expectNoLeftovers(dirname(target));
+  });
+
   it('converges when a concurrent valid winner occupies the target directory', async () => {
     const fixture = await createFixture();
     const target = await adapterRoot(fixture);
@@ -44,18 +64,32 @@ describe('Claude skill materialization', () => {
         },
       },
     );
-    await firstReady.promise;
+    void first.catch(() => undefined);
+    try {
+      await Promise.race([
+        firstReady.promise,
+        first.then(() => {
+          throw new Error('first publication finished before the barrier');
+        }),
+      ]);
+      await materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources);
+      const marker = join(target, 'winner-marker');
+      await writeFile(marker, 'winner');
+      releaseFirst.resolve();
+      await expect(first).resolves.toBe(target);
 
-    await materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources);
-    releaseFirst.resolve();
-    await expect(first).resolves.toBe(target);
-
-    expect(await readlink(join(target, '.claude', 'skills', 'review'))).toBe(
-      fixture.skill,
-    );
-    await expect(
-      readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
-    ).resolves.toContain('"version": 2');
+      await expect(readFile(marker, 'utf8')).resolves.toBe('winner');
+      expect(await realpath(join(target, '.claude', 'skills', 'review'))).toBe(
+        await realpath(fixture.skill),
+      );
+      await expect(
+        readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
+      ).resolves.toContain('"version": 2');
+      await expectNoLeftovers(dirname(target));
+    } finally {
+      releaseFirst.resolve();
+      await Promise.allSettled([first]);
+    }
   });
 
   it('replaces a malformed target a concurrent writer left behind', async () => {
@@ -73,20 +107,49 @@ describe('Claude skill materialization', () => {
         },
       },
     );
-    await publishReady.promise;
-    await mkdir(target, { recursive: true });
-    await writeFile(
-      join(target, '.dreamux-skill-adapter.json'),
-      '{"version":1}\n',
-    );
-    releasePublish.resolve();
+    void materializing.catch(() => undefined);
+    try {
+      await Promise.race([
+        publishReady.promise,
+        materializing.then(() => {
+          throw new Error('publication finished before the barrier');
+        }),
+      ]);
+      await mkdir(target, { recursive: true });
+      await writeFile(
+        join(target, '.dreamux-skill-adapter.json'),
+        '{"version":1}\n',
+      );
+      releasePublish.resolve();
 
-    await expect(materializing).resolves.toBe(target);
+      await expect(materializing).resolves.toBe(target);
+      await expect(
+        readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
+      ).resolves.toContain('"version": 2');
+      expect(await realpath(join(target, '.claude', 'skills', 'review'))).toBe(
+        await realpath(fixture.skill),
+      );
+      await expectNoLeftovers(dirname(target));
+    } finally {
+      releasePublish.resolve();
+      await Promise.allSettled([materializing]);
+    }
+  });
+
+  it('allows a later start after publication fails', async () => {
+    const fixture = await createFixture();
+    const target = await adapterRoot(fixture);
     await expect(
-      readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
-    ).resolves.toContain('"version": 2');
-    expect(await readlink(join(target, '.claude', 'skills', 'review'))).toBe(
-      fixture.skill,
+      materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources, {
+        beforePublish: () => writeFile(target, 'not an adapter directory'),
+      }),
+    ).rejects.toThrow(`invalid Claude skill adapter directory at ${target}`);
+    await rm(target);
+    await expect(
+      materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
+    ).resolves.toBe(target);
+    expect(await realpath(join(target, '.claude', 'skills', 'review'))).toBe(
+      await realpath(fixture.skill),
     );
     await expectNoLeftovers(dirname(target));
   });
@@ -98,13 +161,13 @@ describe('Claude skill materialization', () => {
     await symlink(
       fixture.skill,
       join(target, '.claude', 'skills', 'stale-name'),
-      'dir',
+      process.platform === 'win32' ? 'junction' : 'dir',
     );
     await writeFile(
       join(target, '.dreamux-skill-adapter.json'),
       JSON.stringify({
         version: 1,
-        key: target.split('/').at(-1),
+        key: basename(target),
         sources: [{ name: 'review', path: fixture.source }],
       }),
     );
@@ -115,8 +178,8 @@ describe('Claude skill materialization', () => {
     await expect(
       readFile(join(target, '.dreamux-skill-adapter.json'), 'utf8'),
     ).resolves.toContain('"version": 2');
-    expect(await readlink(join(target, '.claude', 'skills', 'review'))).toBe(
-      fixture.skill,
+    expect(await realpath(join(target, '.claude', 'skills', 'review'))).toBe(
+      await realpath(fixture.skill),
     );
     await expect(
       lstat(join(target, '.claude', 'skills', 'stale-name')),
@@ -148,8 +211,8 @@ describe('Claude skill materialization', () => {
     await expect(
       materializeClaudeSkillAddDir(fixture.cacheDir, fixture.sources),
     ).resolves.toBe(root);
-    expect(await readlink(join(root, '.claude', 'skills', 'code-review'))).toBe(
-      renamedSkill,
+    expect(await realpath(join(root, '.claude', 'skills', 'code-review'))).toBe(
+      await realpath(renamedSkill),
     );
     await expect(
       lstat(join(root, '.claude', 'skills', 'review')),

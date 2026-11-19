@@ -80,7 +80,10 @@ The three-way rule, in one line each:
   so no `@types/node` ambient global (`NodeJS`, `Buffer`, and the rest) can
   appear in its declarations, keeping a host typings dependency out of every
   external provider package that compiles against it.
-- `@excitedjs/dreamux-utils` — pure helpers, depends on nothing.
+- `@excitedjs/dreamux-utils` — shared helpers and native process/filesystem
+  capabilities, with no Dreamux package dependency. Koffi provides Windows
+  kernel interfaces that Node does not expose; callers use the same shared
+  capability contracts on every platform.
 - Provider and plugin packages — depend on `dreamux-types` (and may use
   `dreamux-utils`), never on `@excitedjs/dreamux`.
 
@@ -420,7 +423,12 @@ Runtime packages own engine-specific application:
   records the child skill inventory found under each root, and a start whose
   inventory differs from the manifest (an in-place upgrade that renamed a
   bundled skill, a custom root that changed) rebuilds the view and swaps it
-  into the same path. A source root that cannot be read fails the start with
+  into the same path. Publication is serialized per adapter root within the
+  process; after waiting, a publisher reuses a valid same-inventory view.
+  An occupied-directory error while publishing, including Windows `EPERM`,
+  permits reuse only if the winner validates against that publisher's expected manifest. This is
+  neither interprocess coordination nor transactional freshness across source
+  changes and readers. A source root that cannot be read fails the start with
   an error naming the source and its path.
 
 `dreamux onboard` and dispatcher startup do not install bundled skills into a

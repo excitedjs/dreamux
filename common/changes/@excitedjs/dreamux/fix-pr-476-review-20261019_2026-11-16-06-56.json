@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "comment": "Use the supplied platform for service environment preparation and make captured Windows task values override inherited case variants. Preserve unrelated Scheduler settings, registered root and existing Job identity.",
+      "type": "patch",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

@@ -68,6 +68,7 @@ export async function resolveCodexRolloutRoots(
 ): Promise<CodexRolloutRoots> {
   const configured = env['CODEX_HOME'];
   if (
+    process.platform !== 'win32' &&
     configured === undefined &&
     (env['HOME'] === undefined || env['HOME'] === '')
   ) {

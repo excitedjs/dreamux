@@ -12,6 +12,7 @@
  * the platform receives.
  */
 
+import { isAbsolute } from 'node:path';
 import { marked, type Token, type Tokens } from 'marked';
 
 /**
@@ -283,7 +284,7 @@ export function localMarkdownImages(body: string): LocalMarkdownImage[] {
       const from = location?.[0] ?? cursor;
       const to = location?.at(-1) ?? end;
       if (token.type === 'image') {
-        if (token.href.startsWith('/') && !token.href.startsWith('//')) {
+        if (isAbsolute(token.href) && !token.href.startsWith('//')) {
           if (!located)
             throw new Error(
               `Cannot locate Markdown image source: ${token.href}`,
