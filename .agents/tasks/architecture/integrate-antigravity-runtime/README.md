@@ -66,5 +66,7 @@
 
 ## Delivery
 
-- Pull request: Not opened.
+- Pull request: [Draft PR #493](https://github.com/excitedjs/dreamux/pull/493),
+  opened for the operator-requested independent Devbox review; not approved for
+  merge.
 - Knowledge closeout: Pending.
