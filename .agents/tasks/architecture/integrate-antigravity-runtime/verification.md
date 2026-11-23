@@ -32,7 +32,12 @@ the candidate's canonical long path, and one profile assertion ignored JSON
 escaping of Windows path separators. The reader now canonicalizes its allowed
 root before the existing containment check, and the test asserts the actual JSON
 string. Package gates and then all four full-repository gates passed after the
-fix; Windows CI must verify that platform directly.
+fix; the second PR run's Windows Rush gate passed.
+
+The same second run failed nine tmux tests on macOS because the runner has no
+tmux binary. CI now installs tmux on macOS before `rush test`, matching the
+private-tmux integration tests' actual dependency rather than skipping them.
+That CI correction requires a subsequent run.
 
 ## Deterministic coverage
 
@@ -60,6 +65,8 @@ Read-only or isolated live probes using the existing authentication established:
   runtime rejects that fallback before ready;
 - process-local trusted-workspace settings reach native ready without editing
   shared configuration;
+- `agy --help` declares exactly `low|medium|high|xhigh|max` for `--effort`, which
+  is the source of the provider's config enum;
 - ACP `session/new` creates a native session before the first prompt;
 - ACP produces actual model output, exact `session/load` replays native content,
   continued generation works, and native cumulative usage was observed in the
@@ -80,7 +87,16 @@ private native transcripts were copied into the repository.
   eligibility failure while ACP succeeded with the same configured model label.
   No cause is asserted. Real TUI model admission, merged-turn completion,
   interruption, background/subagent terminals, and control-byte fidelity remain
-  unverified; their deterministic coverage is not live evidence.
+  unverified; their deterministic coverage is not live evidence. Following the
+  operator's native-queue ruling, busy news is no longer rejected locally, but
+  agy's real busy Enter behavior and preservation of the active answer/tool work
+  remain unverified under this eligibility blocker.
+- Tmux currently sends Escape because that is the implemented TUI convention,
+  not because a real agy 1.5.15 busy-turn probe succeeded. Its English
+  interrupted-viewport recognition and five-second confirmation are covered only
+  by fake-native tests. Escape may not be claimed as a verified native interrupt
+  key, and a real interrupt could still remain unsettled if the native evidence
+  differs.
 - ACP has no native interrupted-turn/result id for `turn.interrupted`. The
   implementation emits `turn.ended` and stopped settlements but does not invent
   an activity id. Tmux likewise cannot emit the marker without a native record
@@ -89,6 +105,11 @@ private native transcripts were copied into the repository.
   groups with id-less transcript chunks or multiple failed tools cannot always
   be associated by authoritative native identity. A bound native request error
   uses the existing transport-loss path rather than guessing group membership.
+  ACP settlement also depends on the current native full-transcript path and
+  record shapes: if a future agy change leaves RPC responsive but prevents
+  transcript membership, affected prompts can remain unsettled until stop. No
+  current-version occurrence has been observed, so no new timeout or recovery
+  mechanism was added under the operator's no-new-defensive-scenarios ruling.
 - Native transcript tool calls generally have no call id and GENERIC results
   have no back-reference. Cold tool-result pairing is native file-order FIFO;
   live tool activities without native ids are omitted.

@@ -174,11 +174,14 @@ implementation stops rather than writing shared global config.
   racing cancellation remains normal. Transport loss creates no result.
 - Every native terminal publishes its matching `turn.ended`; live-session
   teardown publishes one final interrupted end even if no display is open.
-- `trigger` is behavior. A busy `user` input may steer. A non-user input uses the
-  same prompt path only if agy preserves the in-flight answer and tool work;
-  otherwise a native append/inject capability must return `appended`. If agy has
-  neither non-interrupting steering nor append, the affected mode returns through
-  the operator gate rather than hiding news in a provider queue.
+- `trigger` is behavior. A busy `user` input may steer. On 2026-11-24 the
+  operator selected "走原生队列" after review exposed the loss caused by
+  rejecting busy news. Tmux therefore sends non-user input through the same
+  native paste/Enter path and exact-transcript admission while agy owns any busy
+  queueing. There is no provider queue, immediate Core-retry dependence, or
+  synthetic `appended` admission. Real non-truncating native queue behavior
+  remains a required live verification under the current eligibility blocker;
+  ACP still requires native prompt membership and non-user work preservation.
 - `stop` synchronously fences new input, converges all started admissions, stops
   owned native resources without waiting indefinitely for protocol close, and
   emits the required teardown end. Deliberate stop settles outstanding work

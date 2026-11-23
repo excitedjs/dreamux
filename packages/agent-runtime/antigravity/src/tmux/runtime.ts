@@ -100,7 +100,7 @@ export class TmuxRuntime implements AgentRuntime {
         this.session,
         transcript,
         () => this.observe(),
-        (input) => this.writeBlocker(input),
+        () => this.writeBlocker(),
         () => this.viewport?.busy === true,
         (error) => this.transportFailed(error),
       );
@@ -159,22 +159,13 @@ export class TmuxRuntime implements AgentRuntime {
     if (this.stopping || this.closed === null) return { status: 'stopped' };
     if (this.closed) return { status: 'failed', error: this.closed };
     if (!this.input) return { status: 'stopped' };
-    const blocked = this.writeBlocker(input);
+    const blocked = this.writeBlocker();
     if (blocked) return { status: 'failed', error: blocked };
     return this.input.submit(input);
   }
 
-  private writeBlocker(input: AgentRuntimeSubmissionInput): Error | undefined {
-    if (this.viewport?.blocker) return this.viewport.blocker;
-    if (
-      input.trigger &&
-      input.trigger !== 'user' &&
-      (this.terminal.active || this.viewport?.busy)
-    ) {
-      return new Error(
-        'Antigravity native TUI cannot confirm delivery of news without interrupting active work',
-      );
-    }
+  private writeBlocker(): Error | undefined {
+    return this.viewport?.blocker;
   }
 
   interrupt(): Promise<AgentRuntimeInterruptOutcome> {

@@ -11,10 +11,10 @@
 - Blockers: ACP supplies no native interrupted activity object id, and the real
   TUI model path is blocked by a native eligibility response. These limits need
   review and an operator ruling before full dual-transport readiness is claimed.
-- Next action: Resume at `review` when the requested PR review arrives, adjudicate
-  the complete implementation and its recorded coverage limits, then obtain the
-  required native interruption-identity ruling without inventing fallback
-  identifiers, hidden transport switching, or new defensive mechanisms.
+- Next action: Resume at `review` with the corrected PR, verify the native-queue
+  ruling and CI dependency fix, and adjudicate the remaining recorded coverage
+  limits without inventing fallback identifiers, hidden transport switching, or
+  new defensive mechanisms.
 - Related tasks: Builds on [Providerization Epic Records](/.agents/tasks/architecture/providerization-epic/README.md).
 
 ## Stage decisions
@@ -35,6 +35,13 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 implementation review: Devbox requested changes for busy-news loss,
+  unverified tmux Escape evidence, ACP transcript-coupled hanging, and two release
+  metadata/documentation nits. The operator selected "走原生队列", authorizing
+  removal of the tmux busy-news refusal in favor of agy's native input path with
+  no provider queue or synthetic `appended`. Escape and native queue behavior stay
+  explicitly unverified; the hypothetical future-format recovery mechanism was
+  rejected under the no-new-defensive-scenarios ruling. Re-review is pending.
 - 2026-11-24 review delivery: The operator instructed, "你开 PR 交给 devbox
   去 review", authorizing commit, push, and PR creation so the external reviewer
   can access the complete change. Because full readiness remains blocked by the

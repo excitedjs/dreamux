@@ -375,21 +375,23 @@ describe.skipIf(process.platform === 'win32')(
       );
     });
 
-    it('fences busy news and reports the missing native interrupt identity while preserving the conversation', async () => {
+    it('uses the native queue for busy news and reports the missing native interrupt identity while preserving the conversation', async () => {
       const fake = await setup();
       await fake.runtime.start();
       const active = requireSubmitted(
         await fake.runtime.submit({ text: 'interrupt me' }),
       );
-      const news = await fake.runtime.submit({
-        text: 'unproven busy news',
-        trigger: 'completion',
-      });
-      expect(news).toMatchObject({ status: 'failed' });
+      const news = requireSubmitted(
+        await fake.runtime.submit({
+          text: 'native queue busy news',
+          trigger: 'completion',
+        }),
+      );
       await expect(fake.runtime.interrupt()).rejects.toThrow(
         'without a native interrupted record ID',
       );
       await expect(active.settled).resolves.toEqual({ kind: 'stopped' });
+      await expect(news.settled).resolves.toEqual({ kind: 'stopped' });
       expect(results(fake.events)).toEqual([]);
       expect(fake.events).toContainEqual(
         expect.objectContaining({ kind: 'turn.ended', status: 'interrupted' }),

@@ -32,9 +32,7 @@ export class TmuxInput {
     private readonly session: TmuxSession,
     private readonly transcript: LiveTranscript,
     private readonly observe: () => Promise<void>,
-    private readonly canWrite: (
-      input: AgentRuntimeSubmissionInput,
-    ) => Error | undefined,
+    private readonly canWrite: () => Error | undefined,
     private readonly nativeBusy: () => boolean,
     private readonly ambiguous: (error: Error) => void,
   ) {}
@@ -131,7 +129,7 @@ export class TmuxInput {
     try {
       await this.observe();
       if (this.closed) return this.closed;
-      const blocked = this.canWrite(input);
+      const blocked = this.canWrite();
       if (blocked) return { status: 'failed', error: blocked };
       await this.session.loadInput(input.text);
       ({ offset } = await this.transcript.snapshot());
