@@ -8,13 +8,15 @@
 - Final solution: [Dual-transport Antigravity provider](/.agents/tasks/architecture/integrate-antigravity-runtime/technical-design/final.md)
 - Verification: [Local gates, native evidence, and coverage limits](/.agents/tasks/architecture/integrate-antigravity-runtime/verification.md)
 - Solution review Issue: Not created.
-- Blockers: ACP supplies no native interrupted activity object id, and the real
-  TUI model path is blocked by a native eligibility response. These limits need
-  review and an operator ruling before full dual-transport readiness is claimed.
-- Next action: Resume at `review` with the corrected PR, verify the native-queue
-  ruling and CI dependency fix, and adjudicate the remaining recorded coverage
-  limits without inventing fallback identifiers, hidden transport switching, or
-  new defensive mechanisms.
+- Blockers: Real TUI model admission remains blocked by the native eligibility
+  response. Busy native-queue non-truncation, Escape interruption, and merged-turn
+  completion still require live evidence; ACP still has no native interrupted
+  activity id for the optional display marker. Full dual-transport readiness is
+  not claimed.
+- Next action: Resume at `review` only when the three named TUI behaviors have
+  real native evidence. Implementation findings and CI are closed; do not invent
+  fallback identifiers, hidden transport switching, or new defensive mechanisms
+  while the environment blocker remains.
 - Related tasks: Builds on [Providerization Epic Records](/.agents/tasks/architecture/providerization-epic/README.md).
 
 ## Stage decisions
@@ -35,6 +37,12 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 independent review close: Devbox verified all five implementation
+  findings closed on [draft PR #493](https://github.com/excitedjs/dreamux/pull/493), including the Core completion-router and
+  scheduler outcomes of native-queue admission. The implementation review passed
+  with no remaining code finding. Full readiness remains blocked on the three
+  named real-TUI behaviors; all required CI passed after the runner-only retry.
+  No GitHub approval or merge was granted.
 - 2026-11-24 implementation review: Devbox requested changes for busy-news loss,
   unverified tmux Escape evidence, ACP transcript-coupled hanging, and two release
   metadata/documentation nits. The operator selected "走原生队列", authorizing

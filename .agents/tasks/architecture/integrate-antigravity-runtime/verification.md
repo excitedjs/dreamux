@@ -39,6 +39,14 @@ tmux binary. CI now installs tmux on macOS before `rush test`, matching the
 private-tmux integration tests' actual dependency rather than skipping them.
 That CI correction requires a subsequent run.
 
+The third PR run passed the complete Rush gate on Ubuntu, Windows, and macOS,
+including the private-tmux tests after the macOS dependency install. Its separate
+macOS repository-scripts job was cancelled after fifteen minutes without being
+assigned a runner (`steps: []`), not by a script or test failure; the independent
+retry passed, leaving every required PR check green. Independent Devbox review of
+[draft PR #493](https://github.com/excitedjs/dreamux/pull/493) closed all five
+implementation findings after rerunning package and full-repository gates.
+
 ## Deterministic coverage
 
 The package contains 77 focused tests across provider/config/version, native
