@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Add the external Antigravity CLI provider with config-selected native tmux and resident ACP v1 transports, exact native conversation resume, bounded activity reads, and provider diagnostics.",
+      "type": "patch",
+      "packageName": "@excitedjs/agent-runtime-antigravity"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-antigravity",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

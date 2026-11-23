@@ -75,6 +75,11 @@
       "shouldPublish": true
     },
     {
+      "packageName": "@excitedjs/agent-runtime-antigravity",
+      "projectFolder": "packages/agent-runtime/antigravity",
+      "shouldPublish": true
+    },
+    {
       "packageName": "@excitedjs/dreamux-plugin-bootstrap",
       "projectFolder": "packages/plugins/bootstrap",
       "shouldPublish": false

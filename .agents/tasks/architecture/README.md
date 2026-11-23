@@ -36,3 +36,4 @@
 - [Apply selected PR #453 review decisions](/.agents/tasks/architecture/apply-pr453-review-decisions/README.md) — Fix the selected PR #453 findings and remove core re-exports under the subsequent operator instruction
 - [Sync Codex session titles to Team intent](/.agents/tasks/architecture/sync-codex-session-title-to-team-intent/README.md) — Use native Codex title notifications to update Team intent shown by team listings, without extra leader work.
 - [Support native Windows execution](/.agents/tasks/architecture/native-windows-support/README.md) — Run Dreamux natively on Windows with CLI, local IPC, provider processes and managed service support; deliver a PR then publish an alpha from its branch.
+- [Integrate Antigravity runtime](/.agents/tasks/architecture/integrate-antigravity-runtime/README.md) — Support Antigravity CLI in one external provider through config-selected tmux and ACP modes, defaulting to tmux and using operator-authenticated agy installations.

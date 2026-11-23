@@ -1,0 +1,51 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  defaultAntigravityConfig,
+  readAntigravityConfig,
+} from '../src/config.js';
+
+const FILE = 'config.json';
+const PREFIX = 'agents[0].config.';
+
+describe('readAntigravityConfig', () => {
+  it('defaults to the native tmux transport', () => {
+    expect(defaultAntigravityConfig()).toMatchObject({
+      transport: 'tmux',
+      bin: 'agy',
+    });
+    expect(readAntigravityConfig({}, FILE, PREFIX).transport).toBe('tmux');
+  });
+
+  it('accepts resident ACP and native model settings', () => {
+    expect(
+      readAntigravityConfig(
+        {
+          transport: 'acp',
+          model: 'gemini-test',
+          effort: 'high',
+          extra_args: ['--flag'],
+          extra_env: { TEST_VALUE: 'value' },
+        },
+        FILE,
+        PREFIX,
+      ),
+    ).toEqual({
+      transport: 'acp',
+      bin: 'agy',
+      model: 'gemini-test',
+      effort: 'high',
+      extra_args: ['--flag'],
+      extra_env: { TEST_VALUE: 'value' },
+    });
+  });
+
+  it('rejects unknown transports and efforts', () => {
+    expect(() =>
+      readAntigravityConfig({ transport: 'headless' }, FILE, PREFIX),
+    ).toThrow(/transport must be tmux or acp/);
+    expect(() =>
+      readAntigravityConfig({ effort: 'maximum' }, FILE, PREFIX),
+    ).toThrow(/effort must be/);
+  });
+});

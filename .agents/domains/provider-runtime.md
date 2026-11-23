@@ -29,9 +29,10 @@ A provider any plugin contributes is addressed as `builtin:<name>`, with the
 same ref grammar and catalogs; the plugin mechanism is owned by
 [plugins](plugins.md).
 
-The three official package-root defaults implement the neutral provider factory
+The four official package-root defaults implement the neutral provider factory
 contracts, so configured bare `npm:@excitedjs/agent-runtime-codex`,
-`npm:@excitedjs/agent-runtime-claude-code` and `npm:@excitedjs/feishu-channel`
+`npm:@excitedjs/agent-runtime-claude-code`,
+`npm:@excitedjs/agent-runtime-antigravity` and `npm:@excitedjs/feishu-channel`
 refs load providers directly. Named bare constructors keep their own options.
 Each package also exports its explicit plugin factory (`createCodexPlugin`,
 `createClaudeCodePlugin`, `createFeishuPlugin`); builtin plugin composition
@@ -42,6 +43,7 @@ Source:
 
 - `/packages/agent-runtime/codex/src/index.ts`
 - `/packages/agent-runtime/claude-code/src/index.ts`
+- `/packages/agent-runtime/antigravity/src/index.ts`
 - `/packages/channel/feishu-channel/src/index.ts`
 - `/packages/dreamux/src/registry/builtins.ts`
 - `/packages/dreamux/src/registry/provider-loader.ts`
@@ -1254,6 +1256,36 @@ Source:
 - `/packages/dreamux/src/service/team/service.ts`
 - `/packages/agent-runtime/codex/src/runtime.ts`
 - `/packages/agent-runtime/claude-code/src/runtime.ts`
+
+## Antigravity External Provider
+
+`@excitedjs/agent-runtime-antigravity` is an external provider loaded through
+`npm:@excitedjs/agent-runtime-antigravity`; it is not a builtin plugin and Core
+has no Antigravity branch. Its `transport` config selects `tmux` (the default)
+or `acp`. The tmux adapter owns a private tmux server running the native agy
+TUI; the ACP adapter directly supervises one resident agy ACP v1 child through
+the official SDK. Neither transport falls back to the other. The provider uses
+the operator-authenticated agy installation and implements no login, OAuth,
+account pool, or rotation.
+
+The provider publishes agy's native conversation UUID as Core's opaque session
+id and exact-resumes that conversation. A stable server-owned role at
+`~/.gemini/config/agents/dreamux-<hash>/agent.md` is rebuilt at launch and
+retained at normal stop because native exact resume reloads the original named
+role; a missing-role native fallback is a readiness failure. Full native
+transcripts under `~/.gemini/antigravity-cli/brain/<conversation>/` supply live
+input/completion evidence and bounded cold activity reads. ACP activities are
+emitted only when agy supplies the required native object ids; it does not invent
+interrupted-turn, message, or cumulative-usage identities. Neutral
+`outputSchema` is rejected at provider creation.
+
+Source:
+
+- `/packages/agent-runtime/antigravity/src/provider.ts`
+- `/packages/agent-runtime/antigravity/src/native-profile.ts`
+- `/packages/agent-runtime/antigravity/src/tmux/runtime.ts`
+- `/packages/agent-runtime/antigravity/src/acp/runtime.ts`
+- `/packages/agent-runtime/antigravity/src/transcript/reader.ts`
 
 ## Invariants
 
