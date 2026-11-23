@@ -1,3 +1,5 @@
+import { realpath } from 'node:fs/promises';
+
 import type {
   AgentActivityPage,
   AgentActivityQuery,
@@ -99,9 +101,24 @@ export async function readAntigravityRecentActivity(
     ...context.config.extra_env,
   });
   const path = antigravityTranscriptPath(roots, query.sessionId);
+  let canonicalRoot: string;
+  try {
+    // Windows temp/home paths may use an 8.3 alias while realpath(candidate)
+    // returns the long form. Compare containment in the same canonical space.
+    canonicalRoot = await realpath(roots.appDataHome);
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    throw new ActivityError(
+      missing ? 'not_found' : 'unreadable',
+      missing
+        ? ANTIGRAVITY_ACTIVITY_FILE_MESSAGES.notFound
+        : ANTIGRAVITY_ACTIVITY_FILE_MESSAGES.unreadable,
+      { cause: error },
+    );
+  }
   const opened = await openActivityFile(
     path,
-    [roots.appDataHome],
+    [canonicalRoot],
     ANTIGRAVITY_ACTIVITY_FILE_MESSAGES,
   );
   try {

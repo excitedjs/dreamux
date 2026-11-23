@@ -21,9 +21,18 @@ next complete package run passed, followed by the green full-repository run.
 The failure is recorded rather than presented as a consistently reproduced
 native defect.
 
-`node .agents/scripts/check.mjs` found no content error other than the expected
-rule that an in-flight `implementation` task record cannot be submitted to the
-trunk. Task state must advance through the workflow before PR submission.
+`node .agents/scripts/check.mjs` and
+`rush change --verify --no-fetch --target-branch next` pass with the task in its
+explicit `blocked` review-delivery state.
+
+The first PR CI run passed its Linux Rush gate, change declaration, KB,
+internal-content, gitleaks, and metadata checks. Windows `rush test` failed 19
+Antigravity tests: 18 cold-reader cases compared a short 8.3 native root against
+the candidate's canonical long path, and one profile assertion ignored JSON
+escaping of Windows path separators. The reader now canonicalizes its allowed
+root before the existing containment check, and the test asserts the actual JSON
+string. Package gates and then all four full-repository gates passed after the
+fix; Windows CI must verify that platform directly.
 
 ## Deterministic coverage
 

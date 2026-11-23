@@ -28,7 +28,7 @@ describe('prepareNativeProfile', () => {
     expect(profile).toContain('disabledTools: ["ask_question","schedule"]');
     expect(profile).toContain('"command":"core-mcp"');
     expect(profile).toContain('"DREAMUX_MCP_LEASE":"synthetic-lease"');
-    expect(profile).toContain(join(dir, 'skills', 'one'));
+    expect(profile).toContain(JSON.stringify(join(dir, 'skills', 'one')));
     expect(profile.endsWith('replacement instructions\n')).toBe(true);
   });
 
