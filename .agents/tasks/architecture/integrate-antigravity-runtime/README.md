@@ -3,20 +3,17 @@
 ## Current state
 
 - Goal: Support Antigravity CLI in one external Dreamux provider through config-selected tmux and ACP modes, defaulting to tmux and using operator-authenticated agy installations
-- State: `blocked`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/architecture/integrate-antigravity-runtime/requirement.md)
 - Final solution: [Dual-transport Antigravity provider](/.agents/tasks/architecture/integrate-antigravity-runtime/technical-design/final.md)
 - Verification: [Local gates, native evidence, and coverage limits](/.agents/tasks/architecture/integrate-antigravity-runtime/verification.md)
 - Solution review Issue: Not created.
-- Blockers: Real TUI model admission remains blocked by the native eligibility
-  response. Busy native-queue non-truncation, Escape interruption, and merged-turn
-  completion still require live evidence; ACP still has no native interrupted
-  activity id for the optional display marker. Full dual-transport readiness is
-  not claimed.
-- Next action: Publish and install the Neon-corrected alpha, obtain focused review
-  of its lifecycle fixes, then obtain the three named real-TUI behaviors when the
-  native eligibility environment permits. Do not invent fallback identifiers,
-  hidden transport switching, or new defensive mechanisms.
+- Known limitations: Real TUI model admission, busy native-queue non-truncation,
+  Escape interruption, and merged-turn completion still lack live evidence; ACP
+  has no native interrupted activity id for the optional display marker. The
+  operator accepted these limits when moving the task to merge readiness.
+- Next action: Obtain final merge authorization and squash-merge PR #493 after
+  required checks. No unverified native capability is claimed.
 - Related tasks: Builds on [Providerization Epic Records](/.agents/tasks/architecture/providerization-epic/README.md).
 
 ## Stage decisions
@@ -37,6 +34,10 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-25 merge readiness: The operator selected "转 Ready" after requesting
+  "解除 draft，准备合入了", accepting the documented native evidence limits and
+  authorizing task completion and removal of Draft status. Final merge is a
+  separate authorization still pending.
 - 2026-11-24 final lifecycle review: Neon verified the trailing-drain correction
   and all four immediate terminal races, including a held in-progress read with
   exactly one coalesced trailing read. No code or documentation findings remain
@@ -135,7 +136,6 @@
 
 ## Delivery
 
-- Pull request: [Draft PR #493](https://github.com/excitedjs/dreamux/pull/493),
-  opened for the operator-requested independent Devbox review; not approved for
-  merge.
-- Knowledge closeout: Pending.
+- Pull request: [PR #493](https://github.com/excitedjs/dreamux/pull/493), Ready
+  for final merge authorization; merge not yet performed.
+- Knowledge closeout: Complete.
