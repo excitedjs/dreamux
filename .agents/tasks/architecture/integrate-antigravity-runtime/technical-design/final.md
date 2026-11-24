@@ -378,7 +378,7 @@ is not waived by a fixture or patched with hidden Core behavior.
 
 Verification includes:
 
-- pure config/customization/record/cursor/tool-display tests plus deterministic cold-
+- pure config/customization/record/cursor/native-activity tests plus deterministic cold-
   reader fixtures for intra-record pages, growing files, and decode bounds;
 - shared runtime tests for multi-send, user steering versus news, native
   admission/membership, exact completion identity/order, unbound native turns,

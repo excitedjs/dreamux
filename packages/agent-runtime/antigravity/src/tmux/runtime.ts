@@ -136,6 +136,7 @@ export class TmuxRuntime implements AgentRuntime {
   }
 
   private async observeConversation(): Promise<void> {
+    if (this.sessionId !== undefined) return;
     const log = await readFile(this.options.nativeLogPath, 'utf8');
     const id = [...log.matchAll(CONVERSATION_LOG)].at(-1)?.[1];
     if (!id || this.sessionId === id) return;

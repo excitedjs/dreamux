@@ -37,6 +37,12 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 default-agent review: Devbox independently verified the lazy-id Core
+  loop, byte-zero first transcript binding, admission ordering, and cache shapes;
+  implementation review passed. Its low-severity full-log polling finding was
+  accepted and fixed by skipping `observeConversation()` once the id is
+  published. The TUI eligibility coverage blockers and `disabledTools` ruling
+  remain as recorded.
 - 2026-11-24 default-agent and lazy-identity ruling: The operator ruled,
   "当然不要完全和 codex/claude code 一致啊，这都不是一个工具，设计思想，架构也
   肯定会有差异，只要在 Dreamux core 里他们的行为能够闭环就够了". Both
