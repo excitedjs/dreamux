@@ -37,6 +37,12 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 live ACP toolbox diagnosis: A new Carbon Team created its session
+  and preloaded five MCP servers, but agy rejected `reply.artifacts.items.pattern`
+  `^/(?!/)` because Go/RE2 has no lookahead support, aborting toolbox
+  construction. The Feishu schema now uses the behavior-preserving RE2-compatible
+  `^/(?:$|[^/])` form on POSIX and the equivalent Windows alternative, with a
+  regression assertion forbidding lookaheads. Path semantics are unchanged.
 - 2026-11-24 default-agent review: Devbox independently verified the lazy-id Core
   loop, byte-zero first transcript binding, admission ordering, and cache shapes;
   implementation review passed. Its low-severity full-log polling finding was

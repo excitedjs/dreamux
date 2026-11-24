@@ -58,6 +58,10 @@ Dreamux custom-agent profile. Synthetic public probes established:
   with `--add-dir` were both present in model context;
 - provider-cache `.agents/rules/dreamux.md` (`trigger: always_on`) produced
   `RULE-OK` through the default agent;
+- a real Carbon Team preloaded five MCP servers but agy rejected the Feishu reply
+  schema's `^/(?!/)` pattern as unsupported Perl syntax, aborting toolbox
+  construction. The schema now uses RE2-compatible alternation with identical
+  absolute-path semantics and a regression assertion forbidding lookaheads;
 - a real default TUI `/mcp` panel discovered the cache
   `.agents/mcp_config.json` server and its `probe_echo` tool;
 - a real default TUI `/skills` panel discovered the cache skill while retaining

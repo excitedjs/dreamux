@@ -148,6 +148,7 @@ it('documents optional non-image artifacts and inline local images without an im
 
 it.each([
   ['/tmp/archive.zip', true],
+  ['/', true],
   ['C:/exports/archive.zip', process.platform === 'win32'],
   [String.raw`C:\exports\archive.zip`, process.platform === 'win32'],
   [String.raw`\\server\share\archive.zip`, process.platform === 'win32'],
@@ -165,6 +166,8 @@ it.each([
     };
     // Exercise the advertised JSON Schema pattern, not just the direct parser
     // used by the channel fixture below. The production MCP SDK enforces it.
+    // Go/RE2 consumers such as agy reject Perl lookaheads at toolbox build.
+    expect(schema.properties.artifacts.items.pattern).not.toContain('(?!');
     expect(
       new RegExp(schema.properties.artifacts.items.pattern).test(path),
     ).toBe(accepted);
