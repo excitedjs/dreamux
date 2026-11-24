@@ -1,4 +1,5 @@
 import type {
+  PromptResponse,
   SessionNotification,
   ToolCall,
   ToolCallUpdate,
@@ -6,6 +7,7 @@ import type {
 import type {
   AgentRuntimeEventSink,
   JsonValue,
+  RuntimeCompletion,
   RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
@@ -20,6 +22,37 @@ export class AcpActivity {
   private currentMessage: string | null = null;
 
   constructor(private readonly events: AgentRuntimeEventSink) {}
+
+  finishTurn(
+    reason: PromptResponse['stopReason'],
+    resultText: string | null,
+  ): RuntimeCompletion | null {
+    if (reason === 'cancelled') {
+      this.events({
+        kind: 'turn.ended',
+        occurredAt: Date.now(),
+        status: 'interrupted',
+        reason: null,
+      });
+      return null;
+    }
+    const completion: RuntimeCompletion = Object.freeze(
+      reason === 'end_turn'
+        ? { status: 'completed', resultText }
+        : {
+            status: 'failed',
+            error: new Error(`Antigravity ACP stopped: ${reason}`),
+          },
+    );
+    this.events({ kind: 'turn.result', completion });
+    this.events({
+      kind: 'turn.ended',
+      occurredAt: Date.now(),
+      status: completion.status,
+      reason: completion.status === 'failed' ? completion.error.message : null,
+    });
+    return completion;
+  }
 
   update(notification: SessionNotification): string | null {
     const update = notification.update;

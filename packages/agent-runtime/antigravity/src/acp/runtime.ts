@@ -21,7 +21,6 @@ import type {
   AgentRuntimeStatus,
   AgentRuntimeSubmissionInput,
   RuntimeAdmission,
-  RuntimeCompletion,
   RuntimeSubmissionSettlement,
 } from '@excitedjs/dreamux-types';
 import { RuntimeStateFence, SupervisedChild } from '@excitedjs/dreamux-utils';
@@ -422,6 +421,13 @@ export class AcpRuntime implements AgentRuntime {
     }
     this.admit(prompt);
     if (!prompt.admitted) return;
+    if (prompt.group === null && reason !== 'end_turn') {
+      if (this.prompts.size === 1) this.activity.finishMessages();
+      this.finishNativeTerminal([prompt], reason, null);
+      this.completeGroups();
+      void this.readTranscript();
+      return;
+    }
     prompt.response = reason;
     prompt.responseOrder = ++this.responseOrder;
     this.completeGroups();
@@ -519,36 +525,24 @@ export class AcpRuntime implements AgentRuntime {
       if (this.prompts.size === group.members.length)
         this.activity.finishMessages();
       if (group.hasTool) this.activity.clearFailedTools();
-      if (reason === 'cancelled') {
-        this.context.events({
-          kind: 'turn.ended',
-          occurredAt: Date.now(),
-          status: 'interrupted',
-          reason: null,
-        });
-        for (const member of group.members)
-          this.finish(member, { kind: 'stopped' }, reason);
-        continue;
-      }
-      const completion: RuntimeCompletion = Object.freeze(
-        reason === 'end_turn'
-          ? { status: 'completed', resultText: group.text }
-          : {
-              status: 'failed',
-              error: new Error(`Antigravity ACP stopped: ${reason}`),
-            },
-      );
-      this.context.events({ kind: 'turn.result', completion });
-      this.context.events({
-        kind: 'turn.ended',
-        occurredAt: Date.now(),
-        status: completion.status,
-        reason:
-          completion.status === 'failed' ? completion.error.message : null,
-      });
-      for (const member of group.members)
-        this.finish(member, { kind: 'completion', completion }, reason);
+      this.finishNativeTerminal(group.members, reason, group.text);
     }
+  }
+
+  private finishNativeTerminal(
+    members: readonly Prompt[],
+    reason: Terminal,
+    resultText: string | null,
+  ): void {
+    const completion = this.activity.finishTurn(reason, resultText);
+    for (const member of members)
+      this.finish(
+        member,
+        completion === null
+          ? { kind: 'stopped' }
+          : { kind: 'completion', completion },
+        reason,
+      );
   }
 
   private onRequestError(prompt: Prompt, error: Error): void {
@@ -581,6 +575,7 @@ export class AcpRuntime implements AgentRuntime {
     this.prompts.delete(prompt.params);
     prompt.end(terminal);
     prompt.settle(settlement);
+    if (this.prompts.size === 0) this.activity.reset();
   }
 
   async interrupt(): Promise<AgentRuntimeInterruptOutcome> {

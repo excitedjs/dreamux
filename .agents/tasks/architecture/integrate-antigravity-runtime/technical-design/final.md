@@ -44,10 +44,10 @@ packages/agent-runtime/antigravity/
       input.ts               serial native writes and full-transcript admission
       viewport.ts            ready/busy/interrupted native screen evidence
       terminal.ts            transcript + viewport terminal state machine
+      activity.ts            native transcript to neutral live activity
     acp/
       runtime.ts             AgentRuntime, prompt membership and lifecycle
-      session.ts             direct SupervisedChild + official-SDK ACP v1 client
-      events.ts              native updates to neutral live activity
+      activity.ts            native updates to neutral live activity
     transcript/
       records.ts             native full-JSONL record decoding
       live.ts                tmux incremental native observation
@@ -87,8 +87,8 @@ The initial config is deliberately limited to:
 - `extra_env`: native process environment additions.
 
 There is no login, account, rotation, web-terminal, fork, ACP-process-per-turn,
-or arbitrary timeout configuration. Onboarding collects only `bin` and
-`transport`. Diagnostics check `agy`, the 1.5.15 minimum, the selected mode,
+or arbitrary timeout configuration. Onboarding collects only `bin`; transport is
+selected explicitly in provider config and defaults to `tmux` when omitted. Diagnostics check `agy`, the 1.5.15 minimum, the selected mode,
 `tmux` when selected, socket placement, and platform support. They add no
 bespoke authentication check or login prompt.
 
@@ -128,14 +128,17 @@ workspace copy is written.
 ACP passes Core's MCP descriptors directly in `session/new` / `session/load`
 and uses the native `_meta.antigravity.systemPrompt.append` extension. Tmux uses
 the same cache view for `.agents/mcp_config.json` and
-`.agents/rules/dreamux.md` (`trigger: always_on`). Real probes confirmed default
-ACP prompt append and MCP calls, cache/workspace skill coexistence, a real TUI
-MCP panel and skill panel, and a cache rule returning `RULE-OK`.
+`.agents/rules/dreamux.md` (`trigger: always_on`). Default ACP probes confirmed
+prompt append, MCP calls, cache/workspace skill coexistence, and a cache rule
+returning `RULE-OK`. Separate real TUI probes verified the MCP and skill panels
+only; no TUI model-turn rule validation is claimed.
 
 Native `disabledTools` compatibility is explicitly out of scope: no tool filter
-is applied and no prompt-only substitute pretends to enforce one. Prompt
-replacement is rejected because the default-agent paths are additive; Core's
-append fragments retain their order. No profile is required for exact resume.
+is applied and no prompt-only substitute pretends to enforce one. A pure prompt
+replacement with no append alternative is rejected because the default-agent
+paths are additive; when Core supplies both alternate forms, the provider
+applies only the append representation in fragment order. No profile is required
+for exact resume.
 
 The cache view is rebuilt at each launch and retained as rebuildable cache. A
 hard crash may leave it behind for the next launch to replace; this is ordinary
@@ -256,10 +259,12 @@ establishes:
 - interrupted native evidence can release a dangling tool transcript, while a
   normal final racing interrupt remains normal.
 
-The interrupt key is selected by live probe, not tmux convention. Interrupt
-preserves the conversation and must supply a real native interrupted-record id,
-including after multiple inputs join one turn. If agy has no such identity, the
-mode returns for a neutral-contract decision rather than synthesizing one.
+The current interrupt key is Escape, an implementation convention still lacking
+real busy-turn evidence. Interrupt preserves the conversation and returns
+`interrupted` when native evidence confirms the stop. `turn.interrupted` is
+emitted only with a real native interrupted-record id; without one the optional
+display marker is omitted rather than failing the actual stop or synthesizing an
+identifier.
 
 ## ACP mode
 
@@ -406,7 +411,8 @@ Verification includes:
   without naming it in Core production source.
 - Update the product catalog, architecture/package map, provider-runtime
   ownership, state/path documentation, external-provider configuration example,
-  and `dreamux-maintenance` routing plus one owning Antigravity reference.
+  and `dreamux-maintenance` external-provider routing in `config-envelope.md`;
+  the package README owns the provider schema.
   Generated provider-cache customizations are server-owned and rebuildable;
   native agy authentication remains user-owned; no migration/Rebuild recipe is
   needed.

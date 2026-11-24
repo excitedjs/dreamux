@@ -47,7 +47,10 @@ export function createAntigravityAgentRuntimeProvider(): AgentRuntimeProvider<An
           'Antigravity does not support neutral structured output',
         );
       }
-      if (context.systemPrompt?.replace !== undefined) {
+      if (
+        context.systemPrompt?.replace !== undefined &&
+        context.systemPrompt.append === undefined
+      ) {
         throw unsupportedFeatureError(
           'systemPrompt.replace',
           'Antigravity default agents support prompt append, not replacement',

@@ -23,9 +23,9 @@ interface NativeTurn {
 
 const QUIET_MS = 750;
 
-export type NativeTurnEnd =
-  | { status: 'completed' | 'failed' }
-  | { status: 'interrupted'; hasIdentity: boolean };
+export interface NativeTurnEnd {
+  status: 'completed' | 'failed' | 'interrupted';
+}
 
 /** Membership is established only as an actual native USER_INPUT is folded. */
 export class TmuxTerminal {
@@ -187,8 +187,7 @@ export class TmuxTerminal {
     const turn = this.turn;
     if (turn && (header || task)) {
       if (task) turn.commands.delete(task);
-      // A subagent can send either its result or a request for guidance.
-      // A notification alone proves a wakeup, but lacks a terminal signal.
+      if (sender) turn.subagents.delete(sender);
       delete turn.candidate;
     }
   }
@@ -218,7 +217,7 @@ export class TmuxTerminal {
       reason: null,
     });
     this.settle(turn, { kind: 'stopped' });
-    this.ended(turn, { status: 'interrupted', hasIdentity: id !== null });
+    this.ended(turn, { status: 'interrupted' });
   }
 
   private settle(

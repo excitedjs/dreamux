@@ -47,9 +47,7 @@ export const antigravityAgentRuntimeDiagnostic: AgentRuntimeDiagnosticCapability
         context.config.transport === 'tmux' &&
         !context.paths
           .runtimeSocketDirs()
-          .some((dir) =>
-            unixSocketPathFitsBudget(join(dir, 'antigravity-doctor.sock')),
-          )
+          .some((dir) => unixSocketPathFitsBudget(join(dir, 'a-XXXXXX', 's')))
       ) {
         errors.push('No neutral runtime socket directory fits a tmux socket');
       }

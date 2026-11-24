@@ -110,7 +110,60 @@ describe.skipIf(process.platform === 'win32')(
         kind: 'session',
         sessionId: FRESH,
       });
+      await wrong.runtime.stop();
+      expect(wrong.events).toEqual([]);
       expect(await readdir(wrong.sockets)).toEqual([]);
+    });
+
+    it('emits no turn end when the ready state cannot be published', async () => {
+      const fake = await setup(null, '', 'ready');
+      await expect(fake.runtime.start()).rejects.toThrow(
+        'Could not publish ready',
+      );
+      await fake.runtime.stop();
+      expect(fake.events).toEqual([]);
+      expect(await readdir(fake.sockets)).toEqual([]);
+    });
+
+    it('retries owned socket cleanup after stop fails without sending another turn end', async () => {
+      const fake = await setup();
+      await fake.runtime.start();
+      const [owned] = await readdir(fake.sockets);
+      const obstruction = join(fake.sockets, owned!, 'obstruction');
+      await writeFile(obstruction, '');
+
+      try {
+        await expect(fake.runtime.stop()).rejects.toMatchObject({
+          code: 'ENOTEMPTY',
+        });
+        await expect(
+          fake.runtime.submit({ text: 'after failed stop' }),
+        ).resolves.toEqual({
+          status: 'stopped',
+        });
+      } finally {
+        await rm(obstruction);
+      }
+
+      await expect(fake.runtime.stop()).resolves.toBeUndefined();
+      expect(await readdir(fake.sockets)).toEqual([]);
+      expect(
+        fake.events.filter((event) => event.kind === 'turn.ended'),
+      ).toHaveLength(1);
+    });
+
+    it('confirms native teardown when writing the stopped state fails', async () => {
+      const fake = await setup(null, '', 'stopped');
+      await fake.runtime.start();
+      await expect(fake.runtime.stop()).resolves.toBeUndefined();
+      expect(fake.updates.at(-1)).toEqual({
+        kind: 'status',
+        status: 'stopped',
+      });
+      expect(await readdir(fake.sockets)).toEqual([]);
+      expect(
+        fake.events.filter((event) => event.kind === 'turn.ended'),
+      ).toHaveLength(1);
     });
 
     it('admits a complete literal long input from a missing transcript, then the same text again before final', async () => {
@@ -321,6 +374,55 @@ describe.skipIf(process.platform === 'win32')(
       ).toEqual([]);
     });
 
+    it('settles the native turn after a message from its subagent conversation', async () => {
+      const fake = await setup();
+      await fake.runtime.start();
+      const input = requireSubmitted(
+        await fake.runtime.submit({ text: 'start a subagent' }),
+      );
+      await fake.record(
+        {
+          type: 'GENERIC',
+          status: 'DONE',
+          content:
+            'Created the following subagent:\n{"conversationId":"synthetic-subagent"}',
+        },
+        {
+          type: 'SYSTEM_MESSAGE',
+          status: 'DONE',
+          content:
+            '<SYSTEM_MESSAGE>\n[Message] sender=runtime/task-other content=Task synthetic-subagent finished\n</SYSTEM_MESSAGE>',
+        },
+        {
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          content: 'Waiting for the subagent',
+        },
+      );
+      await fake.viewport('ready');
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      expect(results(fake.events)).toEqual([]);
+
+      await fake.record(
+        {
+          type: 'SYSTEM_MESSAGE',
+          status: 'DONE',
+          content:
+            '<SYSTEM_MESSAGE>\n[Message] sender=synthetic-subagent content=Review complete\n</SYSTEM_MESSAGE>',
+        },
+        {
+          type: 'PLANNER_RESPONSE',
+          status: 'DONE',
+          content: 'Final review',
+        },
+      );
+      await expect(input.settled).resolves.toEqual({
+        kind: 'completion',
+        completion: { status: 'completed', resultText: 'Final review' },
+      });
+      expect(results(fake.events)).toHaveLength(1);
+    });
+
     it('waits for real task DONE and ready for callback-less completion and reports unbound native failures', async () => {
       const fake = await setup();
       await fake.runtime.start();
@@ -368,7 +470,7 @@ describe.skipIf(process.platform === 'win32')(
       );
     });
 
-    it('uses the native queue for busy news and reports the missing native interrupt identity while preserving the conversation', async () => {
+    it('uses the native queue for busy news and confirms interruption without an activity id', async () => {
       const fake = await setup();
       await fake.runtime.start();
       const active = requireSubmitted(
@@ -380,9 +482,9 @@ describe.skipIf(process.platform === 'win32')(
           trigger: 'completion',
         }),
       );
-      await expect(fake.runtime.interrupt()).rejects.toThrow(
-        'without a native interrupted record ID',
-      );
+      await expect(fake.runtime.interrupt()).resolves.toEqual({
+        status: 'interrupted',
+      });
       await expect(active.settled).resolves.toEqual({ kind: 'stopped' });
       await expect(news.settled).resolves.toEqual({ kind: 'stopped' });
       expect(results(fake.events)).toEqual([]);
@@ -437,7 +539,11 @@ function requireSubmitted(admission: RuntimeAdmission) {
   return admission.submission;
 }
 
-async function setup(prior: string | null = null, mode = '') {
+async function setup(
+  prior: string | null = null,
+  mode = '',
+  rejectStatus?: 'ready' | 'stopped',
+) {
   const dir = await mkdtemp(join(tmpdir(), 'agy-tmux-test-'));
   cleanup.push(() => rm(dir, { recursive: true, force: true }));
   const sockets = join(dir, 'sockets');
@@ -464,6 +570,9 @@ async function setup(prior: string | null = null, mode = '') {
     state: {
       publish: async (update) => {
         updates.push(update);
+        if (update.kind === 'status' && update.status === rejectStatus) {
+          throw new Error('Could not publish ' + rejectStatus);
+        }
       },
     },
     events: (event) => events.push(event),

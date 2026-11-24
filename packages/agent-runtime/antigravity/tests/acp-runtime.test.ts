@@ -210,7 +210,11 @@ afterEach(async () => {
 function create(
   sessionId: string | null = null,
   overrides: Partial<AntigravityConfig> = {},
-  features: { prompt?: boolean; skillAddDir?: string | null } = {},
+  features: {
+    prompt?: boolean;
+    replace?: boolean;
+    skillAddDir?: string | null;
+  } = {},
 ): AcpRuntime {
   const config = {
     ...defaultAntigravityConfig(),
@@ -232,7 +236,12 @@ function create(
     ],
     skillSources: [],
     ...(features.prompt
-      ? { systemPrompt: { append: ['first fragment', 'second fragment'] } }
+      ? {
+          systemPrompt: {
+            ...(features.replace ? { replace: 'replacement-only text' } : {}),
+            append: ['first fragment', 'second fragment'],
+          },
+        }
       : {}),
     disabledFeatures: [],
     paths: {
@@ -331,9 +340,13 @@ describe('native ACP runtime', () => {
     });
   });
 
-  it('uses the default agent with cache skills and native prompt append', async () => {
+  it('uses native prompt append when replacement and append coexist', async () => {
     const skillAddDir = join(root, 'cache-skills');
-    const instance = create(null, {}, { prompt: true, skillAddDir });
+    const instance = create(
+      null,
+      {},
+      { prompt: true, replace: true, skillAddDir },
+    );
     await instance.start();
     expect(peer.launch).toMatchObject({
       args: [
@@ -530,6 +543,231 @@ describe('native ACP runtime', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ kind: 'turn.ended', status: 'interrupted' }),
     );
+  });
+
+  it('settles cancellation without a transcript input and accepts the next normal turn', async () => {
+    const instance = create();
+    await instance.start();
+    const cancelled = await submitted(
+      instance.submit({ text: 'CANCEL-BEFORE-INPUT' }),
+    );
+    await waitPrompts(1);
+    const client = peer.prompts[0]!.ctx.client;
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'abandoned-tool',
+        name: 'run_command',
+        title: 'Abandoned',
+        status: 'in_progress',
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'tool.call', id: 'abandoned-tool' }),
+      ),
+    );
+    peer.prompts[0]!.result.resolve({ stopReason: 'cancelled' });
+    await expect(cancelled.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
+    expect(events.filter((event) => event.kind === 'turn.ended')).toEqual([
+      expect.objectContaining({ status: 'interrupted' }),
+    ]);
+    expect(events.some((event) => event.kind === 'turn.result')).toBe(false);
+    const next = await submitted(instance.submit({ text: 'NEXT-NORMAL' }));
+    await waitPrompts(2);
+    await input('NEXT-NORMAL');
+    await record('PLANNER_RESPONSE', 'next answer');
+    peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+    await expect(next.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'next answer' },
+    });
+  });
+
+  it.each(['max_tokens', 'max_turn_requests', 'refusal'] as const)(
+    'settles %s before any native input and keeps the session usable',
+    async (reason) => {
+      const instance = create();
+      await instance.start();
+      const rejected = await submitted(instance.submit({ text: 'NO-INPUT' }));
+      await waitPrompts(1);
+      peer.prompts[0]!.result.resolve({ stopReason: reason });
+      const settled = await rejected.submission.settled;
+      expect(settled.kind).toBe('completion');
+      if (settled.kind !== 'completion') throw new Error('expected completion');
+      expect(settled.completion).toMatchObject({
+        status: 'failed',
+        error: expect.objectContaining({
+          message: expect.stringContaining(reason),
+        }),
+      });
+      expect(Object.isFrozen(settled.completion)).toBe(true);
+      expect(events).toContainEqual({
+        kind: 'turn.result',
+        completion: settled.completion,
+      });
+      const observed = events.find((event) => event.kind === 'turn.result');
+      expect(observed?.kind === 'turn.result' && observed.completion).toBe(
+        settled.completion,
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'turn.ended', status: 'failed' }),
+      );
+      const next = await submitted(instance.submit({ text: 'AFTER-FAILURE' }));
+      await waitPrompts(2);
+      await input('AFTER-FAILURE');
+      await record('PLANNER_RESPONSE', 'recovered');
+      peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+      await expect(next.submission.settled).resolves.toEqual({
+        kind: 'completion',
+        completion: { status: 'completed', resultText: 'recovered' },
+      });
+    },
+  );
+
+  it("clears a cancelled group's unfinished tool before the next turn", async () => {
+    const instance = create();
+    await instance.start();
+    const cancelled = await submitted(
+      instance.submit({ text: 'CANCEL-IN-GROUP' }),
+    );
+    await waitPrompts(1);
+    await input('CANCEL-IN-GROUP');
+    await record('PLANNER_RESPONSE', '', [{ name: 'run_command' }]);
+    await peer.prompts[0]!.ctx.client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'abandoned-group-tool',
+        name: 'run_command',
+        title: 'Abandoned',
+        status: 'in_progress',
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'tool.call',
+          id: 'abandoned-group-tool',
+        }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    peer.prompts[0]!.result.resolve({ stopReason: 'cancelled' });
+    await expect(cancelled.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
+    const next = await submitted(instance.submit({ text: 'NEXT-AFTER-GROUP' }));
+    await waitPrompts(2);
+    await input('NEXT-AFTER-GROUP');
+    await record('PLANNER_RESPONSE', 'next group answer');
+    peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+    await expect(next.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'next group answer' },
+    });
+  });
+
+  it("retains another in-flight group's running tool when one group is cancelled", async () => {
+    const instance = create();
+    await instance.start();
+    const first = await submitted(instance.submit({ text: 'CANCEL-A' }));
+    const second = await submitted(instance.submit({ text: 'RUNNING-B' }));
+    await waitPrompts(2);
+    await input('CANCEL-A');
+    await record('PLANNER_RESPONSE', 'first partial');
+    await input('RUNNING-B');
+    await record('PLANNER_RESPONSE', 'second answer');
+    await peer.prompts[1]!.ctx.client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'running-b',
+        name: 'run_command',
+        title: 'Still running',
+        status: 'in_progress',
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'tool.call', id: 'running-b' }),
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    peer.prompts[0]!.result.resolve({ stopReason: 'cancelled' });
+    await expect(first.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
+    let settled = false;
+    void second.submission.settled.then(() => {
+      settled = true;
+    });
+    peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(settled).toBe(false);
+    await peer.prompts[1]!.ctx.client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'running-b',
+        status: 'completed',
+      },
+    });
+    await expect(second.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'second answer' },
+    });
+  });
+
+  it('preserves another in-flight tool when an ungrouped prompt is cancelled', async () => {
+    const instance = create();
+    await instance.start();
+    const first = await submitted(instance.submit({ text: 'UNGROUPED-A' }));
+    const second = await submitted(instance.submit({ text: 'ACTIVE-B' }));
+    await waitPrompts(2);
+    await peer.prompts[1]!.ctx.client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'active-b',
+        name: 'run_command',
+        title: 'Active',
+        status: 'in_progress',
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({ kind: 'tool.call', id: 'active-b' }),
+      ),
+    );
+    peer.prompts[0]!.result.resolve({ stopReason: 'cancelled' });
+    await expect(first.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
+    await input('ACTIVE-B');
+    await record('PLANNER_RESPONSE', 'B answer');
+    let done = false;
+    void second.submission.settled.then(() => {
+      done = true;
+    });
+    peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(done).toBe(false);
+    await peer.prompts[1]!.ctx.client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'active-b',
+        status: 'completed',
+      },
+    });
+    await expect(second.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'B answer' },
+    });
   });
 
   it('answers permission callbacks immediately with an offered allow option', async () => {

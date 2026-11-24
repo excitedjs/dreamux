@@ -62,9 +62,10 @@
   configuration selects tmux. Both modes satisfy the same neutral runtime
   contract without Antigravity-specific Core code.
 - Desired behavior common to both modes:
-  - A fresh start uses the launcher-supplied `cwd`, obtains the native
-    conversation/session id without guessing the latest conversation, and
-    durably publishes that id before the runtime becomes ready.
+  - A fresh start uses the launcher-supplied `cwd` and obtains the native
+    conversation/session id without guessing the latest conversation. ACP
+    publishes it before ready; default TUI may publish it only after the first
+    real input, but always before reporting that input's native admission.
   - A non-null prior session id restores that exact native conversation. A bad
     or unavailable id fails loudly and never silently becomes a fresh session.
   - Submission admission distinguishes proven pre-admission failure from an
@@ -83,9 +84,9 @@
     conversation, returns a bounded page, and uses the full transcript rather
     than silently returning compact-log truncations.
   - Core-supplied role instructions, skill roots, MCP server descriptors and
-    lease environment, cwd, and disabled native features are applied on fresh
-    start and exact resume. One agent must not inherit another agent's MCP
-    servers or role skills through mutable global Antigravity configuration.
+    lease environment, and cwd are applied additively on fresh start and exact
+    resume without hiding existing user customizations. Native `disabledTools`
+    is explicitly not applied.
   - Session-bound `outputSchema` is either enforced natively for every turn or
     rejected with the neutral unsupported-feature error. Prompt text must not
     pretend to guarantee structured output.

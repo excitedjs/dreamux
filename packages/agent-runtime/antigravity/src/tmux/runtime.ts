@@ -52,6 +52,7 @@ export class TmuxRuntime implements AgentRuntime {
   private closing: Promise<void> | undefined;
   private stopping: Promise<void> | undefined;
   private closed: Error | null | undefined;
+  private ready = false;
   private interrupting: RuntimeInterrupt | undefined;
 
   constructor(
@@ -97,6 +98,7 @@ export class TmuxRuntime implements AgentRuntime {
       this.assertStarting();
       await this.publish({ kind: 'status', status: 'ready' });
       this.assertStarting();
+      this.ready = true;
       this.scheduleObservation();
       return {
         continuity:
@@ -139,15 +141,12 @@ export class TmuxRuntime implements AgentRuntime {
     if (this.sessionId !== undefined) return;
     const log = await readFile(this.options.nativeLogPath, 'utf8');
     const id = [...log.matchAll(CONVERSATION_LOG)].at(-1)?.[1];
-    if (!id || this.sessionId === id) return;
+    if (!id) return;
     const expected = this.context.identity.sessionId;
     if (expected !== null && id !== expected) {
       throw new Error(
         'Antigravity native resume selected a different conversation',
       );
-    }
-    if (this.sessionId !== undefined) {
-      throw new Error('Antigravity native conversation changed during runtime');
     }
     const roots = resolveAntigravityNativeRoots({
       ...process.env,
@@ -214,13 +213,9 @@ export class TmuxRuntime implements AgentRuntime {
           'Antigravity native TUI did not confirm interruption after Escape',
         );
       }
-      if (result.status !== 'interrupted') return { status: 'idle' };
-      if (!result.hasIdentity) {
-        throw new Error(
-          'Antigravity native TUI interrupted the turn without a native interrupted record ID',
-        );
-      }
-      return { status: 'interrupted' };
+      return {
+        status: result.status === 'interrupted' ? 'interrupted' : 'idle',
+      };
     } finally {
       deadline.abort();
     }
@@ -228,29 +223,43 @@ export class TmuxRuntime implements AgentRuntime {
 
   stop(): Promise<void> {
     if (this.stopping) return this.stopping;
-    const closing = this.closeNative();
-    return (this.stopping = this.stopRuntime(closing));
+    const stopping = this.stopRuntime(this.closeNative());
+    this.stopping = stopping;
+    void stopping.catch(() => {
+      if (this.stopping === stopping) this.stopping = undefined;
+    });
+    return stopping;
   }
 
   private async stopRuntime(closing: Promise<void>): Promise<void> {
     await closing;
     await this.launching?.catch(() => undefined);
     await this.observing?.catch(() => undefined);
-    await this.fence.terminated();
-    if (!this.fence.isFenced)
+    if (this.fence.isFenced) return;
+    try {
       await this.publish({ kind: 'status', status: 'stopped' });
+    } catch {
+      // The state fence owns publication failure. Native teardown completed.
+    }
   }
 
   private closeNative(error?: Error): Promise<void> {
     if (this.closing) return this.closing;
-    this.closed = error ?? null;
+    const wasReady = this.ready;
+    this.ready = false;
+    if (this.closed === undefined) this.closed = error ?? null;
     clearTimeout(this.poll);
     this.interrupting?.finish(undefined);
-    if (this.transcript) this.terminal.teardown(error);
-    const admissions = this.input?.close(error);
-    return (this.closing = Promise.all([this.session.stop(), admissions]).then(
+    if (wasReady) this.terminal.teardown(this.closed ?? undefined);
+    const admissions = this.input?.close(this.closed ?? undefined);
+    const closing = Promise.all([this.session.stop(), admissions]).then(
       () => undefined,
-    ));
+    );
+    this.closing = closing;
+    void closing.catch(() => {
+      if (this.closing === closing) this.closing = undefined;
+    });
+    return closing;
   }
 
   private scheduleObservation(): void {

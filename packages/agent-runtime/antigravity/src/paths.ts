@@ -9,7 +9,8 @@ export interface AntigravityNativeRoots {
 export function resolveAntigravityNativeRoots(
   env: NodeJS.ProcessEnv,
 ): AntigravityNativeRoots {
-  const geminiHome = join(env.HOME ?? homedir(), '.gemini');
+  const home = env.HOME === undefined || env.HOME === '' ? homedir() : env.HOME;
+  const geminiHome = join(home, '.gemini');
   return {
     geminiHome,
     appDataHome: join(geminiHome, 'antigravity-cli'),

@@ -13,8 +13,8 @@
   completion still require live evidence; ACP still has no native interrupted
   activity id for the optional display marker. Full dual-transport readiness is
   not claimed.
-- Next action: Independently review the default-agent redesign, publish and
-  install its new alpha, then obtain the three named real-TUI behaviors when the
+- Next action: Publish and install the Neon-corrected alpha, obtain focused review
+  of its lifecycle fixes, then obtain the three named real-TUI behaviors when the
   native eligibility environment permits. Do not invent fallback identifiers,
   hidden transport switching, or new defensive mechanisms.
 - Related tasks: Builds on [Providerization Epic Records](/.agents/tasks/architecture/providerization-epic/README.md).
@@ -37,6 +37,13 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 Neon review corrections: The independent Neon architect identified
+  prompt-alternate rejection, ACP cancellation/group-lifecycle hangs, tmux
+  subagent wait leakage, lifecycle/stop edge cases, and stale documentation.
+  The operator selected "修复并发布", authorizing those corrections, regression
+  tests, a new alpha, and installation. Subagent completion uses botmux's
+  existing sender-evidence rule; no new defensive mechanism or merge authority is
+  introduced.
 - 2026-11-24 live ACP toolbox diagnosis: A new Carbon Team created its session
   and preloaded five MCP servers, but agy rejected `reply.artifacts.items.pattern`
   `^/(?!/)` because Go/RE2 has no lookahead support, aborting toolbox

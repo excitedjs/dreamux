@@ -1,4 +1,11 @@
-import type { AgentRuntimeCreateContext } from '@excitedjs/dreamux-types';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import type {
+  AgentRuntimeCreateContext,
+  DreamuxLogger,
+} from '@excitedjs/dreamux-types';
 import { isUnsupportedFeatureError } from '@excitedjs/dreamux-utils';
 import { describe, expect, it } from 'vitest';
 
@@ -6,6 +13,16 @@ import { defaultAntigravityConfig } from '../src/config.js';
 import providerFactory, {
   createAntigravityAgentRuntimeProvider,
 } from '../src/index.js';
+import { antigravityRuntimeKey } from '../src/runtime-options.js';
+
+const logger: DreamuxLogger = {
+  info() {},
+  warn() {},
+  error() {},
+  debug() {},
+  trace() {},
+  child: () => logger,
+};
 
 describe('Antigravity provider', () => {
   it('exports the neutral provider factory and config reader', async () => {
@@ -50,4 +67,53 @@ describe('Antigravity provider', () => {
       isUnsupportedFeatureError(error, 'systemPrompt.replace'),
     );
   });
+
+  it.each(['acp', 'tmux'] as const)(
+    'accepts alternate replacement and append representations for %s',
+    async (transport) => {
+      const root = await mkdtemp(join(tmpdir(), 'antigravity-provider-'));
+      try {
+        const provider = createAntigravityAgentRuntimeProvider();
+        const context: AgentRuntimeCreateContext<
+          ReturnType<typeof defaultAntigravityConfig>
+        > = {
+          identity: { runtimeId: 'provider-test', sessionId: null },
+          config: { ...defaultAntigravityConfig(), transport },
+          cwd: root,
+          mcpServers: [],
+          skillSources: [],
+          disabledFeatures: [],
+          systemPrompt: {
+            replace: 'replacement-only text',
+            append: ['append text'],
+          },
+          paths: {
+            cacheDir: () => root,
+            logsDir: () => root,
+            runtimeSocketDirs: () => [],
+          },
+          state: { async publish() {} },
+          events: () => undefined,
+          logger,
+        };
+        await expect(provider.createRuntime(context)).resolves.toBeDefined();
+        if (transport === 'tmux') {
+          const file = join(
+            root,
+            'antigravity',
+            'native-customizations',
+            antigravityRuntimeKey(context),
+            '.agents',
+            'rules',
+            'dreamux.md',
+          );
+          const text = await readFile(file, 'utf8');
+          expect(text).toContain('append text');
+          expect(text).not.toContain('replacement-only text');
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

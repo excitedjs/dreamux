@@ -34,7 +34,7 @@ that read once `sessionId` is set. No new blocker was found.
 
 ## Deterministic coverage
 
-The current package has **80 passing tests** across provider/config/version,
+The current package has **95 passing tests** across provider/config/version,
 provider-cache customizations, native record decoding, cold activity pagination,
 ACP fake-peer behavior, private-tmux behavior, and incremental transcripts.
 
@@ -42,8 +42,11 @@ Coverage includes exact resume, lazy fresh-id publication before first native
 admission, registration and admission, shared frozen completions, Unicode and
 multiline input, busy native-queue input, transport failure and stop, native
 permission/tool outcomes, background terminals, malformed records, growing
-files, cursor boundaries, and read bounds. The transport suites exercise the
-same neutral runtime contract but remain separate fake-native suites rather
+files, cursor boundaries, and read bounds. Neon-review regressions also cover
+replace+append alternates, cancellation/failure before transcript input, stale
+cancelled tools and next-turn recovery, subagent sender completion, startup
+failure before ready, stop retry/status-write failure, and ID-free interruption.
+The transport suites exercise the same neutral runtime contract but remain separate fake-native suites rather
 than one shared parameterized suite.
 
 ## Current default-agent native evidence
@@ -57,11 +60,13 @@ Dreamux custom-agent profile. Synthetic public probes established:
 - an ordinary workspace skill and a provider-cache `.agents/skills` skill passed
   with `--add-dir` were both present in model context;
 - provider-cache `.agents/rules/dreamux.md` (`trigger: always_on`) produced
-  `RULE-OK` through the default agent;
+  `RULE-OK` through the default ACP agent; this was not a TUI model-turn probe;
 - a real Carbon Team preloaded five MCP servers but agy rejected the Feishu reply
   schema's `^/(?!/)` pattern as unsupported Perl syntax, aborting toolbox
   construction. The schema now uses RE2-compatible alternation with identical
-  absolute-path semantics and a regression assertion forbidding lookaheads;
+  absolute-path semantics and a regression assertion forbidding lookaheads.
+  A subsequent real Carbon ACP session built the toolbox and invoked the Feishu
+  `reply` tool successfully;
 - a real default TUI `/mcp` panel discovered the cache
   `.agents/mcp_config.json` server and its `probe_echo` tool;
 - a real default TUI `/skills` panel discovered the cache skill while retaining
@@ -114,6 +119,8 @@ private native transcripts were copied into the repository.
   have no back-reference. Cold tool-result pairing is native file-order FIFO;
   live tool activities without native ids are omitted.
 - Cross-transport resume and every real stop/restart terminal combination remain
-  unverified.
+  unverified. Default-agent ACP exact `session/load`, merged prompt membership,
+  and Windows ACP also remain to be revalidated separately from the earlier
+  custom-agent probes.
 
 These limits must not be described as full production readiness for both modes.
