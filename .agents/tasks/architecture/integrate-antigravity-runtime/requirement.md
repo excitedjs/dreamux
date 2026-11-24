@@ -173,9 +173,12 @@
 1. Provider config accepts exactly `tmux` and `acp`, defaults an omitted value to
    `tmux`, and rejects other values. The selected mode is visible to diagnostics;
    no failure path silently switches modes or retries input through the other.
-2. For both modes, fresh start publishes a real native id and ready state;
-   restart resumes that exact conversation with continuous model context. A
-   missing or invalid requested id fails instead of starting fresh.
+2. ACP fresh start publishes a real native id and ready state. Tmux fresh start
+   may become ready without an id because default agy creates conversations
+   lazily; its first submission must publish the real new id before reporting
+   native admission. Restart in either mode resumes the exact prior conversation
+   with continuous model context. A missing or invalid requested id fails
+   instead of starting fresh.
 3. For both modes, rapid user messages, scheduled/news submissions, and
    background native work are not lost, duplicated, or associated with the wrong
    completion. Non-user input does not truncate an active answer or tool work;
@@ -210,13 +213,14 @@
    ordinal without duplication or loss; an oversized single record fails through
    a bounded provider/activity error instead of unbounded allocation or silent
    truncation.
-9. Fresh and resumed Dispatcher/TeamLeader/TeamMate sessions in both modes
-   receive only their Core-selected role instructions, skills, and MCP tools.
-   MCP lease environment reaches the launched servers; an empty MCP list does
-   not inherit ambient global servers. Normal stop retains the stable
-   server-owned role required by agy exact resume and leaves other roles and
-   shared native configuration untouched. Disabled native user-question and
-   cron features cannot wedge unattended execution.
+9. Fresh and resumed Dispatcher/TeamLeader/TeamMate sessions in both modes use
+   agy's default agent, never a Dreamux custom-agent. Core-selected role
+   instructions, skills, and MCP tools are injected additively from provider
+   cache without writing user skill directories or hiding existing native
+   customizations. MCP lease environment reaches the launched servers; an empty
+   Core MCP list preserves ambient user configuration. Native `disabledTools`
+   compatibility is explicitly out of scope: the provider does not block agy's
+   user-question, schedule, or other native tools.
 10. A requested `outputSchema` works natively on every turn including resume, or
     runtime creation fails loudly with `outputSchema` unsupported. No silent
     prompt-only emulation is used; any mode-specific limitation is explicit.

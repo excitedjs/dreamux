@@ -18,7 +18,7 @@ import {
   resolveAntigravityNativeRoots,
 } from '../paths.js';
 import type { AntigravityRuntimeOptions } from '../runtime-options.js';
-import { LiveTranscript } from '../transcript/live.js';
+import { DeferredTranscript } from '../transcript/live.js';
 import { userInputText } from '../transcript/records.js';
 import { reportActivity } from './activity.js';
 import { deferred, errorFrom, TmuxInput } from './input.js';
@@ -42,7 +42,8 @@ export class TmuxRuntime implements AgentRuntime {
   private readonly session: TmuxSession;
   private readonly terminal: TmuxTerminal;
   private readonly fence: RuntimeStateFence;
-  private transcript: LiveTranscript | undefined;
+  private transcript: DeferredTranscript | undefined;
+  private sessionId: string | undefined;
   private input: TmuxInput | undefined;
   private viewport: TmuxViewport | undefined;
   private launching: Promise<AgentRuntimeStartOutcome> | undefined;
@@ -80,22 +81,8 @@ export class TmuxRuntime implements AgentRuntime {
       this.assertStarting();
       await this.publish({ kind: 'status', status: 'starting' });
       this.assertStarting();
-      await this.session.start();
-      this.assertStarting();
-      const sessionId = await this.waitForConversation();
-      const roots = resolveAntigravityNativeRoots({
-        ...process.env,
-        ...this.context.config.extra_env,
-      });
-      const transcript = await LiveTranscript.open(
-        antigravityTranscriptPath(roots, sessionId),
-      );
-      this.assertStarting();
+      const transcript = new DeferredTranscript();
       this.transcript = transcript;
-      await this.publish({ kind: 'session', sessionId });
-      this.assertStarting();
-      await this.publish({ kind: 'status', status: 'ready' });
-      this.assertStarting();
       this.input = new TmuxInput(
         this.session,
         transcript,
@@ -104,6 +91,12 @@ export class TmuxRuntime implements AgentRuntime {
         () => this.viewport?.busy === true,
         (error) => this.transportFailed(error),
       );
+      await this.session.start();
+      this.assertStarting();
+      await this.waitForComposer();
+      this.assertStarting();
+      await this.publish({ kind: 'status', status: 'ready' });
+      this.assertStarting();
       this.scheduleObservation();
       return {
         continuity:
@@ -117,42 +110,54 @@ export class TmuxRuntime implements AgentRuntime {
     }
   }
 
-  private async waitForConversation(): Promise<string> {
+  private async waitForComposer(): Promise<void> {
     const deadline = Date.now() + START_TIMEOUT_MS;
     const expected = this.context.identity.sessionId;
     while (Date.now() < deadline) {
       this.assertStarting();
-      const log = await readFile(this.options.nativeLogPath, 'utf8');
-      if (
-        /Resumed agent "[^"]+" not found, falling back to default/.test(log)
-      ) {
-        throw new Error(
-          'Antigravity native resume could not find the conversation’s original agent profile',
-        );
-      }
-      if (/\bAgent "[^"]+" not found, falling back to default/.test(log)) {
-        throw new Error(
-          'Antigravity native launch could not find the requested agent profile',
-        );
-      }
-      const id = [...log.matchAll(CONVERSATION_LOG)].at(-1)?.[1];
-      if (id && expected !== null && id !== expected) {
-        throw new Error(
-          'Antigravity native resume selected a different conversation',
-        );
-      }
+      await this.observeConversation();
       const viewport = parseViewport(await this.session.capture());
       if (viewport.blocker) throw viewport.blocker;
-      if (id && viewport.ready) {
+      if (
+        viewport.ready &&
+        (expected === null || this.sessionId === expected)
+      ) {
         this.viewport = viewport;
         this.terminal.viewport(viewport);
-        return id;
+        return;
       }
       await delay(POLL_MS);
     }
     throw new Error(
-      'Antigravity native TUI did not report a bound conversation at a ready composer',
+      expected === null
+        ? 'Antigravity native TUI did not reach a ready composer'
+        : 'Antigravity native TUI did not restore the requested conversation at a ready composer',
     );
+  }
+
+  private async observeConversation(): Promise<void> {
+    const log = await readFile(this.options.nativeLogPath, 'utf8');
+    const id = [...log.matchAll(CONVERSATION_LOG)].at(-1)?.[1];
+    if (!id || this.sessionId === id) return;
+    const expected = this.context.identity.sessionId;
+    if (expected !== null && id !== expected) {
+      throw new Error(
+        'Antigravity native resume selected a different conversation',
+      );
+    }
+    if (this.sessionId !== undefined) {
+      throw new Error('Antigravity native conversation changed during runtime');
+    }
+    const roots = resolveAntigravityNativeRoots({
+      ...process.env,
+      ...this.context.config.extra_env,
+    });
+    await this.transcript?.attach(
+      antigravityTranscriptPath(roots, id),
+      expected === null,
+    );
+    this.sessionId = id;
+    await this.publish({ kind: 'session', sessionId: id });
   }
 
   async submit(input: AgentRuntimeSubmissionInput): Promise<RuntimeAdmission> {
@@ -274,6 +279,8 @@ export class TmuxRuntime implements AgentRuntime {
   private async observeNative(): Promise<void> {
     if (this.closed !== undefined || !this.transcript) return;
     const capture = this.session.capture().then(parseViewport, errorFrom);
+    await this.observeConversation();
+    if (this.closed !== undefined) return;
     const records = await this.transcript.read();
     if (this.closed !== undefined) return;
     for (const entry of records) {

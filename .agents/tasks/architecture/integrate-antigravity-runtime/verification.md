@@ -12,120 +12,100 @@ The following commands passed against the complete current worktree:
 - `node common/scripts/install-run-rush.js typecheck:tests`
 
 The full test run retained the existing live-Codex warnings: native model cases
-were not enabled. No Antigravity live test was hidden behind those warnings.
-`git diff HEAD --check` also passed.
+were not enabled. `git diff HEAD --check`, `.agents` checking, and
+`rush change --verify --no-fetch --target-branch next` also passed.
 
-One earlier package-test run reported a transient private-tmux `server exited
-unexpectedly` failure in the fresh/resume case. The focused tmux suite and the
-next complete package run passed, followed by the green full-repository run.
-The failure is recorded rather than presented as a consistently reproduced
-native defect.
+Earlier PR runs found and fixed two platform issues: Windows activity-root
+containment now canonicalizes the allowed root before comparison, and macOS CI
+installs tmux for the private-tmux integration tests. The final all-platform
+Rush gates, repository scripts, KB, change declaration, internal-content,
+gitleaks, and metadata checks passed. A separate macOS repository-scripts job
+was twice cancelled without receiving a runner (`steps: []`); its independent
+retries passed.
 
-`node .agents/scripts/check.mjs` and
-`rush change --verify --no-fetch --target-branch next` pass with the task in its
-explicit `blocked` review-delivery state.
-
-The first PR CI run passed its Linux Rush gate, change declaration, KB,
-internal-content, gitleaks, and metadata checks. Windows `rush test` failed 19
-Antigravity tests: 18 cold-reader cases compared a short 8.3 native root against
-the candidate's canonical long path, and one profile assertion ignored JSON
-escaping of Windows path separators. The reader now canonicalizes its allowed
-root before the existing containment check, and the test asserts the actual JSON
-string. Package gates and then all four full-repository gates passed after the
-fix; the second PR run's Windows Rush gate passed.
-
-The same second run failed nine tmux tests on macOS because the runner has no
-tmux binary. CI now installs tmux on macOS before `rush test`, matching the
-private-tmux integration tests' actual dependency rather than skipping them.
-That CI correction requires a subsequent run.
-
-The third PR run passed the complete Rush gate on Ubuntu, Windows, and macOS,
-including the private-tmux tests after the macOS dependency install. Its separate
-macOS repository-scripts job was cancelled after fifteen minutes without being
-assigned a runner (`steps: []`), not by a script or test failure; the independent
-retry passed, leaving every required PR check green. Independent Devbox review of
-[draft PR #493](https://github.com/excitedjs/dreamux/pull/493) closed all five
-implementation findings after rerunning package and full-repository gates.
+Independent Devbox review closed the five implementation findings from the
+first review round on [draft PR #493](https://github.com/excitedjs/dreamux/pull/493).
+The default-agent redesign below happened afterward and requires a fresh review
+of its complete diff; the old approval is not inherited by the new architecture.
 
 ## Deterministic coverage
 
-The package contains 77 focused tests across provider/config/version, native
-profiles, native record decoding, cold activity pagination, ACP fake-peer
-behavior, private-tmux behavior, and incremental transcript reading. Coverage
-includes exact session ids, role-resume rejection, registration and admission,
-shared completion objects, Unicode/multiline input, transport failure and stop,
-native permission/tool outcomes, background terminals, malformed records,
-growing files, cursor boundaries, and read bounds.
+The current package has **80 passing tests** across provider/config/version,
+provider-cache customizations, native record decoding, cold activity pagination,
+ACP fake-peer behavior, private-tmux behavior, and incremental transcripts.
 
-The transport suites exercise the same neutral runtime contract but are
-currently separate fake-native suites rather than one shared parameterized
-suite. This remains an acceptance-criterion difference for review.
+Coverage includes exact resume, lazy fresh-id publication before first native
+admission, registration and admission, shared frozen completions, Unicode and
+multiline input, busy native-queue input, transport failure and stop, native
+permission/tool outcomes, background terminals, malformed records, growing
+files, cursor boundaries, and read bounds. The transport suites exercise the
+same neutral runtime contract but remain separate fake-native suites rather
+than one shared parameterized suite.
 
-## Real agy 1.5.15 evidence
+## Current default-agent native evidence
 
-Read-only or isolated live probes using the existing authentication established:
+All current launch paths use agy's default agent without `--agent` and without a
+Dreamux custom-agent profile. Synthetic public probes established:
 
-- fresh custom-agent TUI startup creates and reports a real conversation UUID
-  before ready;
-- exact TUI resume restores the same conversation and original role when the
-  stable generated profile remains present;
-- deleting the original profile makes agy fall back to its default role, so the
-  runtime rejects that fallback before ready;
-- process-local trusted-workspace settings reach native ready without editing
-  shared configuration;
-- `agy --help` declares exactly `low|medium|high|xhigh|max` for `--effort`, which
-  is the source of the provider's config enum;
-- ACP `session/new` creates a native session before the first prompt;
-- ACP produces actual model output, exact `session/load` replays native content,
-  continued generation works, and native cumulative usage was observed in the
-  probe even though no neutral per-turn identity exists for it;
-- concurrent ACP prompt responses can arrive early or out of order, and adjacent
-  native inputs can merge into one planner response; quiet-time debounce is not
-  valid terminal evidence;
-- raw leading-slash TUI probes opened native panels, but those probes bypassed
-  Dreamux's real Core XML envelope. The operator identified that incorrect
-  premise; ordinary provider input has no slash-specific branch.
+- ACP native `_meta.antigravity.systemPrompt.append` produced `APPEND-OK`;
+- a default ACP `session/new` MCP descriptor produced a real `probe_echo` call
+  and `SYNTHETIC-MCP-OK`;
+- an ordinary workspace skill and a provider-cache `.agents/skills` skill passed
+  with `--add-dir` were both present in model context;
+- provider-cache `.agents/rules/dreamux.md` (`trigger: always_on`) produced
+  `RULE-OK` through the default agent;
+- a real default TUI `/mcp` panel discovered the cache
+  `.agents/mcp_config.json` server and its `probe_echo` tool;
+- a real default TUI `/skills` panel discovered the cache skill while retaining
+  the user's existing 47-skill inventory;
+- default TUI did not create a conversation before the first model input, even
+  with `--prompt-interactive ""`. The approved lifecycle is therefore ready
+  without an id → first real input creates the conversation → provider publishes
+  the logged UUID before confirming native admission;
+- `agy --help` declares exactly `low|medium|high|xhigh|max` for `--effort`, the
+  source of the provider config enum;
+- earlier ACP probes established actual model output, exact `session/load`
+  content replay and continued generation, early/out-of-order prompt responses,
+  and merged native response groups. Quiet-time debounce is not valid terminal
+  evidence.
+
+A previous custom-agent implementation was removed after native probes showed
+that its empty ACP `mcpServers` blocked preloaded servers and that the default
+agent already supported the required prompt/MCP/skill paths. Native
+`disabledTools` is deliberately not applied; the provider does not claim to
+block `ask_question`, `schedule`, or other native tools.
 
 Live resources were private to the probes. No credentials, account details, or
 private native transcripts were copied into the repository.
 
 ## Coverage limits and unresolved native contracts
 
-- Ordinary model generation through the real TUI hit a native location/account
-  eligibility failure while ACP succeeded with the same configured model label.
-  No cause is asserted. Real TUI model admission, merged-turn completion,
+- Ordinary model generation through the real TUI hit Antigravity's native
+  account/location eligibility failure while ACP succeeded. No cause is
+  asserted. Real TUI first-input admission, merged-turn completion,
   interruption, background/subagent terminals, and control-byte fidelity remain
-  unverified; their deterministic coverage is not live evidence. Following the
-  operator's native-queue ruling, busy news is no longer rejected locally, but
-  agy's real busy Enter behavior and preservation of the active answer/tool work
-  remain unverified under this eligibility blocker.
-- Tmux currently sends Escape because that is the implemented TUI convention,
-  not because a real agy 1.5.15 busy-turn probe succeeded. Its English
-  interrupted-viewport recognition and five-second confirmation are covered only
-  by fake-native tests. Escape may not be claimed as a verified native interrupt
-  key, and a real interrupt could still remain unsettled if the native evidence
-  differs.
+  unverified; deterministic coverage is not live evidence. The lazy-id sequence
+  is covered by fake-native tests but has not completed a real model turn.
+- Busy non-user news uses the native input path instead of a provider refusal.
+  Real busy Enter behavior and preservation of the active answer/tool work are
+  still unverified under the eligibility blocker.
+- Tmux sends Escape as the implemented interrupt convention, not as a
+  real-busy-turn-proven key. English interrupted-viewport recognition and the
+  five-second confirmation have fake coverage only.
 - ACP has no native interrupted-turn/result id for `turn.interrupted`. The
   implementation emits `turn.ended` and stopped settlements but does not invent
   an activity id. Tmux likewise cannot emit the marker without a native record
-  id and currently reports that identity failure from `interrupt()`.
-- ACP session updates do not carry native turn/group ids. Complex overlapping
-  groups with id-less transcript chunks or multiple failed tools cannot always
-  be associated by authoritative native identity. A bound native request error
-  uses the existing transport-loss path rather than guessing group membership.
-  ACP settlement also depends on the current native full-transcript path and
-  record shapes: if a future agy change leaves RPC responsive but prevents
-  transcript membership, affected prompts can remain unsettled until stop. No
-  current-version occurrence has been observed, so no new timeout or recovery
-  mechanism was added under the operator's no-new-defensive-scenarios ruling.
+  id and reports that identity failure from `interrupt()`.
+- ACP session updates lack native turn/group ids. Complex overlapping groups
+  with id-less chunks or multiple failed tools cannot always be associated by
+  authoritative identity. A bound native request error uses the existing
+  transport-loss path rather than guessing membership. Settlement depends on
+  the current full-transcript path/record shapes; no future-format recovery
+  mechanism is added under the no-new-defensive-scenarios ruling.
 - Native transcript tool calls generally have no call id and GENERIC results
   have no back-reference. Cold tool-result pairing is native file-order FIFO;
   live tool activities without native ids are omitted.
-- The generated role profile now declares `inheritMcp: false`, exact tmux MCP
-  descriptors, selected skill paths, and native `disabledTools` mappings for
-  `userInterrupt` and `cron`. Full live MCP/skill/disabled-tool isolation has not
-  been certified because the real TUI model path is blocked as described above.
-- Cross-transport resume, all real stop/restart terminal combinations, and the
-  complete live role matrix remain unverified.
+- Cross-transport resume and every real stop/restart terminal combination remain
+  unverified.
 
 These limits must not be described as full production readiness for both modes.

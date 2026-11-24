@@ -1269,20 +1269,23 @@ the operator-authenticated agy installation and implements no login, OAuth,
 account pool, or rotation.
 
 The provider publishes agy's native conversation UUID as Core's opaque session
-id and exact-resumes that conversation. A stable server-owned role at
-`~/.gemini/config/agents/dreamux-<hash>/agent.md` is rebuilt at launch and
-retained at normal stop because native exact resume reloads the original named
-role; a missing-role native fallback is a readiness failure. Full native
-transcripts under `~/.gemini/antigravity-cli/brain/<conversation>/` supply live
-input/completion evidence and bounded cold activity reads. ACP activities are
-emitted only when agy supplies the required native object ids; it does not invent
-interrupted-turn, message, or cumulative-usage identities. Neutral
-`outputSchema` is rejected at provider creation.
+id and exact-resumes that conversation. ACP publishes fresh ids during start;
+the default TUI can create a conversation lazily, so tmux publishes a fresh id
+on first input before reporting admission. Both modes use agy's default agent.
+Core-selected skills, MCP descriptors, and append-only role instructions are
+materialized additively in a provider-cache `.agents` view or passed through ACP
+session setup; no custom-agent profile or user skill-directory write exists.
+Native `disabledTools` is not applied. Full native transcripts under
+`~/.gemini/antigravity-cli/brain/<conversation>/` supply live input/completion
+evidence and bounded cold activity reads. ACP activities are emitted only when
+agy supplies the required native object ids; it does not invent interrupted-turn,
+message, or cumulative-usage identities. Neutral `outputSchema` is rejected at
+provider creation.
 
 Source:
 
 - `/packages/agent-runtime/antigravity/src/provider.ts`
-- `/packages/agent-runtime/antigravity/src/native-profile.ts`
+- `/packages/agent-runtime/antigravity/src/native-customizations.ts`
 - `/packages/agent-runtime/antigravity/src/tmux/runtime.ts`
 - `/packages/agent-runtime/antigravity/src/acp/runtime.ts`
 - `/packages/agent-runtime/antigravity/src/transcript/reader.ts`

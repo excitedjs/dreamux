@@ -37,4 +37,17 @@ describe('Antigravity provider', () => {
       isUnsupportedFeatureError(error, 'outputSchema'),
     );
   });
+
+  it('rejects prompt replacement on the append-only ACP protocol', async () => {
+    const provider = createAntigravityAgentRuntimeProvider();
+    const context = {
+      config: { ...defaultAntigravityConfig(), transport: 'acp' },
+      systemPrompt: { replace: 'replacement' },
+    } as unknown as AgentRuntimeCreateContext<
+      ReturnType<typeof defaultAntigravityConfig>
+    >;
+    await expect(provider.createRuntime(context)).rejects.toSatisfy((error) =>
+      isUnsupportedFeatureError(error, 'systemPrompt.replace'),
+    );
+  });
 });

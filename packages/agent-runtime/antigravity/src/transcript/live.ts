@@ -50,12 +50,14 @@ export class LiveTranscript {
     this.discardPartial = discardPartial;
   }
 
-  static async open(path: string): Promise<LiveTranscript> {
+  static async open(path: string, fromStart = false): Promise<LiveTranscript> {
     const file = await openTranscript(path);
     if (!file)
       return new LiveTranscript(path, { kind: 'missing', offset: 0 }, false);
     try {
-      const baseline = await snapshot(file);
+      const baseline = fromStart
+        ? ({ kind: 'missing', offset: 0 } as const)
+        : await snapshot(file);
       const last = Buffer.alloc(1);
       if (baseline.offset > 0) {
         await file.read(last, 0, 1, baseline.offset - 1);
@@ -166,6 +168,32 @@ export class LiveTranscript {
 async function snapshot(file: FileHandle): Promise<ExistingBaseline> {
   const { dev: device, ino: inode, size: offset } = await file.stat();
   return { kind: 'existing', device, inode, offset };
+}
+
+export interface TranscriptCursor {
+  snapshot(): Promise<TranscriptBaseline>;
+  read(): Promise<readonly LiveTranscriptRecord[]>;
+}
+
+/** A cursor whose native conversation is allocated by the first TUI input. */
+export class DeferredTranscript implements TranscriptCursor {
+  private inner: LiveTranscript | undefined;
+
+  async attach(path: string, fromStart: boolean): Promise<void> {
+    if (this.inner) return;
+    this.inner = await LiveTranscript.open(path, fromStart);
+  }
+
+  snapshot(): Promise<TranscriptBaseline> {
+    return (
+      this.inner?.snapshot() ??
+      Promise.resolve({ kind: 'missing', offset: 0 } as const)
+    );
+  }
+
+  read(): Promise<readonly LiveTranscriptRecord[]> {
+    return this.inner?.read() ?? Promise.resolve([]);
+  }
 }
 
 async function openTranscript(path: string): Promise<FileHandle | undefined> {

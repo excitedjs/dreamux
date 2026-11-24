@@ -140,8 +140,9 @@ export class AcpRuntime implements AgentRuntime {
         'acp',
         '--stdio',
         '--dangerously-skip-permissions',
-        '--agent',
-        this.options.agentName,
+        ...(this.options.skillAddDir === null
+          ? []
+          : ['--add-dir', this.options.skillAddDir]),
         '--log-file',
         this.options.nativeLogPath,
         ...this.context.config.extra_args,
@@ -239,7 +240,22 @@ export class AcpRuntime implements AgentRuntime {
           value,
         })),
       }));
-      const setup: NewSessionRequest = { cwd: this.context.cwd, mcpServers };
+      const promptAppend = (this.context.systemPrompt?.append ?? []).join(
+        '\n\n',
+      );
+      const setup: NewSessionRequest = {
+        cwd: this.context.cwd,
+        mcpServers,
+        ...(promptAppend === ''
+          ? {}
+          : {
+              _meta: {
+                antigravity: {
+                  systemPrompt: { append: promptAppend },
+                },
+              },
+            }),
+      };
       let session: {
         sessionId?: string;
         configOptions?: Array<{ id: string; currentValue: unknown }> | null;

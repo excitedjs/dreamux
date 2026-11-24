@@ -13,10 +13,10 @@
   completion still require live evidence; ACP still has no native interrupted
   activity id for the optional display marker. Full dual-transport readiness is
   not claimed.
-- Next action: Resume at `review` only when the three named TUI behaviors have
-  real native evidence. Implementation findings and CI are closed; do not invent
-  fallback identifiers, hidden transport switching, or new defensive mechanisms
-  while the environment blocker remains.
+- Next action: Independently review the default-agent redesign, publish and
+  install its new alpha, then obtain the three named real-TUI behaviors when the
+  native eligibility environment permits. Do not invent fallback identifiers,
+  hidden transport switching, or new defensive mechanisms.
 - Related tasks: Builds on [Providerization Epic Records](/.agents/tasks/architecture/providerization-epic/README.md).
 
 ## Stage decisions
@@ -37,6 +37,28 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 default-agent and lazy-identity ruling: The operator ruled,
+  "当然不要完全和 codex/claude code 一致啊，这都不是一个工具，设计思想，架构也
+  肯定会有差异，只要在 Dreamux core 里他们的行为能够闭环就够了". Both
+  transports therefore use agy's default agent and provider-cache `.agents`
+  customizations. A fresh tmux runtime may be ready without a native id; its
+  first real submission publishes agy's newly created id before admission.
+  `disabledTools` is out of scope. This supersedes the earlier custom-agent and
+  prompt-free-id design.
+- 2026-11-24 additive customizations ruling: The operator clarified,
+  "这个事情其实就只是在不污染用户的 Skill 目录的情况下，给 Dispatcher 或者是
+  Team leader 单独注入一些技能" and challenged whether existing skills were
+  being hidden. The requirement and profile changed from exact/ambient-blocking
+  configuration to additive injection. A real ACP probe found both an ordinary
+  workspace skill and the injected skill in model context; `inheritMcp: true`
+  preserves ambient MCP while Core descriptors are added.
+- 2026-11-24 ACP MCP correction: A real TeamLeader session and a separate
+  synthetic ACP probe proved that `session/new` preloaded Core MCP servers while
+  the generated role's empty `mcpServers` made them unavailable. The operator
+  instructed, "ok，修一下，然后发新的 alpha 出来，安装上，我再测试一下",
+  authorizing the descriptor fix, a new alpha publish, and installation. The fix
+  removes the ACP-only empty-list branch; it adds no architecture or merge
+  authority.
 - 2026-11-24 independent review close: Devbox verified all five implementation
   findings closed on [draft PR #493](https://github.com/excitedjs/dreamux/pull/493), including the Core completion-router and
   scheduler outcomes of native-queue admission. The implementation review passed

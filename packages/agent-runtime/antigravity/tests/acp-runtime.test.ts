@@ -210,6 +210,7 @@ afterEach(async () => {
 function create(
   sessionId: string | null = null,
   overrides: Partial<AntigravityConfig> = {},
+  features: { prompt?: boolean; skillAddDir?: string | null } = {},
 ): AcpRuntime {
   const config = {
     ...defaultAntigravityConfig(),
@@ -230,6 +231,9 @@ function create(
       },
     ],
     skillSources: [],
+    ...(features.prompt
+      ? { systemPrompt: { append: ['first fragment', 'second fragment'] } }
+      : {}),
     disabledFeatures: [],
     paths: {
       cacheDir: () => root,
@@ -250,8 +254,8 @@ function create(
     logger,
   };
   runtime = new AcpRuntime(context, {
-    agentName: 'public-profile',
     nativeLogPath: join(root, 'native.log'),
+    skillAddDir: features.skillAddDir ?? null,
   });
   return runtime;
 }
@@ -321,11 +325,34 @@ describe('native ACP runtime', () => {
         'acp',
         '--stdio',
         '--dangerously-skip-permissions',
-        '--agent',
-        'public-profile',
         '--log-file',
         join(root, 'native.log'),
       ],
+    });
+  });
+
+  it('uses the default agent with cache skills and native prompt append', async () => {
+    const skillAddDir = join(root, 'cache-skills');
+    const instance = create(null, {}, { prompt: true, skillAddDir });
+    await instance.start();
+    expect(peer.launch).toMatchObject({
+      args: [
+        'acp',
+        '--stdio',
+        '--dangerously-skip-permissions',
+        '--add-dir',
+        skillAddDir,
+        '--log-file',
+        join(root, 'native.log'),
+      ],
+    });
+    expect((peer.launch as { args: string[] }).args).not.toContain('--agent');
+    expect(peer.setup).toMatchObject({
+      _meta: {
+        antigravity: {
+          systemPrompt: { append: 'first fragment\n\nsecond fragment' },
+        },
+      },
     });
   });
 

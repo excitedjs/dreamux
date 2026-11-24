@@ -35,9 +35,9 @@ packages/agent-runtime/antigravity/
     provider.ts              provider capabilities and the one transport switch
     config.ts                provider-owned config reader/defaults
     diagnostic.ts            selected-mode binary/version/platform checks
-    paths.ts                 native home, generated profiles, logs, tmux socket
-    native-profile.ts        per-runtime native agent.md and declarative tools
-    tool-display.ts          Antigravity native tool projection
+    paths.ts                 native home/transcript paths
+    native-customizations.ts provider-cache .agents skills/MCP/rules and logs
+    runtime-options.ts       per-runtime cache key and launch options
     tmux/
       runtime.ts             AgentRuntime, native admission and turn membership
       session.ts             private tmux server/session lifecycle
@@ -64,9 +64,10 @@ only asynchronous filesystem/process APIs.
 `paths.ts` resolves native roots consistently for launch, diagnostics, and cold
 reads from the native environment plus `config.extra_env`:
 `~/.gemini/antigravity-cli` owns native history/conversations and
-`~/.gemini/config` owns generated custom-agent discovery. Volatile tmux sockets
-remain under neutral `runtimeSocketDirs`; no durable rendezvous or provider
-ownership document is invented.
+`~/.gemini/config` remains the user's native configuration, not a Dreamux write
+target. Generated `.agents` customizations live only in provider cache. Volatile
+tmux sockets remain under neutral `runtimeSocketDirs`; no durable rendezvous or
+provider ownership document is invented.
 
 The two modes implement `AgentRuntime` separately. Native admission, steering,
 and result membership remain in the mode that has the evidence. They reuse
@@ -115,45 +116,30 @@ Normal `AgentRuntime.stop()`, managed graceful restart, and failed-start rollbac
 are required and tested. Strong hard-crash containment for all providers would
 be a separate generic platform capability and operator-approved task.
 
-## Native role profile
+## Default-agent customizations
 
-`native-profile.ts` renders one stable native main-agent profile per host/runtime
-from the immutable create context. Both modes explicitly select it with `--agent`.
-The profile carries:
+Both modes launch agy's default agent without `--agent` and without generating a
+custom-agent profile. `native-customizations.ts` rebuilds one provider-cache
+`.agents` view per runtime. Core-selected skills are linked under
+`.agents/skills` and passed with `--add-dir`, preserving all ordinary user skill
+and MCP discovery. No user skill directory, shared native configuration, or
+workspace copy is written.
 
-- the selected `systemPrompt` representation, preserving append-fragment order;
-- direct absolute skill paths enumerated from Core's `skillSources`;
-- explicit native `skills` and `mcpServers` lists, including empty lists, so
-  role capabilities do not come from mutable ambient configuration;
-- declarative native disabling of `ask_question` for `userInterrupt` and the
-  whole native `schedule` tool group for `cron`, including one-shot reminders.
-  The profile capability probe must establish this native configuration before
-  implementation; no hook fallback is pre-planned;
-- for tmux only, exact Core-selected stdio `mcpServers`, including args and lease
-  environment. ACP instead passes its MCP list in session setup.
+ACP passes Core's MCP descriptors directly in `session/new` / `session/load`
+and uses the native `_meta.antigravity.systemPrompt.append` extension. Tmux uses
+the same cache view for `.agents/mcp_config.json` and
+`.agents/rules/dreamux.md` (`trigger: always_on`). Real probes confirmed default
+ACP prompt append and MCP calls, cache/workspace skill coexistence, a real TUI
+MCP panel and skill panel, and a cache rule returning `RULE-OK`.
 
-`excludeDefaultComponents` is not used to simulate prompt replacement because
-it also removes built-in tools. Where Core supplies replace and append as
-alternatives, the adapter applies at most one. A required instruction that
-native configuration cannot apply fails start.
+Native `disabledTools` compatibility is explicitly out of scope: no tool filter
+is applied and no prompt-only substitute pretends to enforce one. Prompt
+replacement is rejected because the default-agent paths are additive; Core's
+append fragments retain their order. No profile is required for exact resume.
 
-Profiles use one stable server-owned name per host cache identity and
-`runtimeId`:
-`~/.gemini/config/agents/dreamux-<host-id>-<runtime-id>/agent.md`.
-Each launch rewrites that exact file with owner-only permissions. It persists on
-normal stop because agy exact-resume reloads the original named role: a native
-probe proved that removing the file restores the same conversation id but falls
-back to the default agent, while restoring the file brings the role back. Start
-must reject native missing-role fallback rather than claiming ready. No
-later-launch sweep, generation cleanup, or cleanup of another role is introduced.
-Shared `settings.json`, `mcp_config.json`, `hooks.json`, and discovery manifests
-are never edited. HOME/XDG redirection and credential copying are not used.
-
-Live probes with two concurrent roles in each mode must prove explicit `--agent`
-selection (older agy could warn and fall back), role prompt/skills, empty MCP
-inheritance, exact MCP lease env, no ambient role inheritance, and disabled
-features. If the native profile cannot provide capability isolation,
-implementation stops rather than writing shared global config.
+The cache view is rebuilt at each launch and retained as rebuildable cache. A
+hard crash may leave it behind for the next launch to replace; this is ordinary
+cache ownership, not a new cleanup mechanism.
 
 ## Common runtime semantics
 
@@ -208,14 +194,14 @@ that agy ignores a caller-supplied fresh id and that `--conversation` is only an
 existing-conversation lookup, so the provider does not generate its own session
 UUID or probe that path as a proposed creation mechanism.
 
-Fresh start may be lazy: botmux observed no native conversation/transcript until
-the first prompt, while agy's `--log-file` later reports the authoritative
-`Streaming conversation <uuid>` line. Entry probing must find a prompt-free
-native action that publishes a real id before ready. The provider never invents
-an id, guesses the latest conversation, calls ACP as a hidden allocator, or
-sends a synthetic model prompt. If no such action exists, implementation returns
-for the explicitly approved neutral-contract amendment required by the
-requirement; it does not silently delay the id on its own.
+Fresh start deliberately uses agy's lazy native creation. The default TUI can be
+ready without a conversation id. On the first real submission, agy creates the
+conversation and logs `Streaming conversation <uuid>`; the provider attaches the
+full transcript from byte zero and durably publishes that id before reporting
+native admission. It never invents an id, guesses the latest conversation, calls
+ACP as a hidden allocator, or sends a synthetic model prompt. The Core-visible
+loop is therefore start/ready → first input → durable native id → admitted
+submission → ordinary completion, with exact resume on later launches.
 
 ### Literal input and admission
 
@@ -278,7 +264,7 @@ mode returns for a neutral-contract decision rather than synthesizing one.
 ## ACP mode
 
 One `SupervisedChild` directly runs resident
-`agy acp --stdio --agent <generated-profile>`. The official SDK's stable v1
+`agy acp --stdio` with the provider-cache `--add-dir` when skills are present. The official SDK's stable v1
 client owns NDJSON/JSON-RPC framing and request types over child stdio. There is
 no owner child, byte relay, custom acknowledgement protocol, or process-per-turn.
 
@@ -377,12 +363,13 @@ matching Claude Code/Codex capability boundaries.
 
 Only architecture-changing native probes precede the full adapters:
 
-1. Fresh/exact session identity: a prompt-free real fresh native id before ready;
-   same-mode exact resume and bad-id failure; then cross-mode exact resume or
-   loud capability failure.
-2. Native role/protocol capabilities: generated profile selection and isolation,
-   disabled tools, MCP/env, model/effort, exact ACP load, busy steering/news,
-   literal TUI input, interruption identity, and background terminal evidence.
+1. Fresh/exact session identity: ACP native id before ready, tmux lazy id on
+   first input with durable publication before admission, same-mode exact resume
+   and bad-id failure, then cross-mode exact resume or loud capability failure.
+2. Default-agent protocol capabilities: prompt append, cache skills/MCP/rules,
+   model/effort, exact ACP load, busy steering/news, literal TUI input,
+   interruption identity, and background terminal evidence. `disabledTools` is
+   explicitly out of scope.
 
 After those probes, implement the direct ACP supervisor, private tmux session,
 and bounded reader, then the two native runtimes behind one shared behavioral
@@ -391,7 +378,7 @@ is not waived by a fixture or patched with hidden Core behavior.
 
 Verification includes:
 
-- pure config/profile/record/cursor/tool-display tests plus deterministic cold-
+- pure config/customization/record/cursor/tool-display tests plus deterministic cold-
   reader fixtures for intra-record pages, growing files, and decode bounds;
 - shared runtime tests for multi-send, user steering versus news, native
   admission/membership, exact completion identity/order, unbound native turns,
@@ -420,8 +407,9 @@ Verification includes:
 - Update the product catalog, architecture/package map, provider-runtime
   ownership, state/path documentation, external-provider configuration example,
   and `dreamux-maintenance` routing plus one owning Antigravity reference.
-  Generated native profiles are server-owned; native agy authentication remains
-  user-owned; no migration/Rebuild recipe is needed.
+  Generated provider-cache customizations are server-owned and rebuildable;
+  native agy authentication remains user-owned; no migration/Rebuild recipe is
+  needed.
 - Add ordinary Rush `minor` change files for the new package and affected
   published packages. There is no upgrade blocker and no `BREAKING:` note.
 - Preserve botmux MIT attribution for substantial adapted algorithms/code and

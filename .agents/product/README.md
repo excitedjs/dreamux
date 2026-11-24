@@ -408,6 +408,11 @@ The operator authenticates agy outside Dreamux, just as they install and
 maintain other native CLIs: Dreamux provides no Antigravity login, OAuth,
 account pool, or rotation. Existing conversations resume by their exact native
 conversation id, and recent activity remains readable after the runtime stops.
+Both modes use agy's default agent and additive provider-cache customizations,
+not a Dreamux custom-agent or a user skill-directory write. A fresh tmux session
+may be ready before agy allocates its conversation; the first real submission
+publishes that native id before confirming admission. Native `disabledTools` is
+not blocked.
 In tmux mode, busy non-user news uses agy's native input queue through the same
 admission path instead of being rejected by Dreamux; there is no provider-side
 news queue or synthetic `appended` result. Neutral structured output is

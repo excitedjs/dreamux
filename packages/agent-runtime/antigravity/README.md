@@ -36,11 +36,18 @@ OAuth, login, account pools, or rotation.
 `medium`, `high`, `xhigh`, or `max`. The provider never falls back to the other
 transport.
 
-Both transports restore Core's opaque native conversation id exactly. A stable
-Dreamux-managed native role is materialized under `~/.gemini/config/agents/`
-so agy resume reloads the same role, system instructions, skills, and applicable
-MCP configuration. The native full transcript supplies live evidence and bounded
-cold activity reads.
+Both transports use agy's default agent, not a generated custom-agent. ACP
+receives prompt append and MCP descriptors natively; tmux discovers Core-provided
+rules, skills, and MCP configuration from a provider-cache `.agents` directory
+through `--add-dir`. These additions preserve the user's existing native
+customizations and never write user skill directories. Native `disabledTools`
+is not emulated or blocked.
+
+Both transports restore Core's opaque native conversation id exactly. ACP
+publishes a fresh id during start; default TUI conversations can be lazy, so a
+fresh tmux runtime publishes its real id on first input before confirming native
+admission. The native full transcript supplies live evidence and bounded cold
+activity reads.
 
 The neutral `outputSchema` capability is unsupported and fails at runtime
 creation with `UnsupportedAgentRuntimeFeatureError`; no prompt-only emulation or

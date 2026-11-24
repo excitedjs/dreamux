@@ -33,7 +33,7 @@ export class TmuxSession {
     const bin = await resolveExecutableOnPath('tmux');
     if (!bin) throw new Error('Antigravity tmux binary was not found');
     const { config, cwd, paths, identity } = this.context;
-    const { agentName, nativeLogPath } = this.options;
+    const { nativeLogPath, skillAddDir } = this.options;
     const socketDir = paths
       .runtimeSocketDirs()
       .find((dir) => unixSocketPathFitsBudget(join(dir, 'a-XXXXXX', 's')));
@@ -54,8 +54,7 @@ export class TmuxSession {
     const args = [
       config.bin,
       '--dangerously-skip-permissions',
-      '--agent',
-      agentName,
+      ...(skillAddDir === null ? [] : ['--add-dir', skillAddDir]),
       '--log-file',
       nativeLogPath,
       '--settings',

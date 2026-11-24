@@ -5,8 +5,8 @@ import type {
 } from '@excitedjs/dreamux-types';
 
 import type {
-  LiveTranscript,
   LiveTranscriptRecord,
+  TranscriptCursor,
 } from '../transcript/live.js';
 import type { TmuxSession } from './session.js';
 
@@ -30,7 +30,7 @@ export class TmuxInput {
 
   constructor(
     private readonly session: TmuxSession,
-    private readonly transcript: LiveTranscript,
+    private readonly transcript: TranscriptCursor,
     private readonly observe: () => Promise<void>,
     private readonly canWrite: () => Error | undefined,
     private readonly nativeBusy: () => boolean,

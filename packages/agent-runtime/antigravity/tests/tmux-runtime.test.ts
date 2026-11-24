@@ -53,15 +53,20 @@ afterEach(async () => {
 describe.skipIf(process.platform === 'win32')(
   'Antigravity on a private tmux server',
   () => {
-    it('publishes a real fresh id before ready and exact-resumes the prior id', async () => {
+    it('publishes a lazy fresh id on first input and exact-resumes the prior id', async () => {
       const fresh = await setup();
       await expect(fresh.runtime.start()).resolves.toEqual({
         continuity: 'fresh',
       });
       expect(fresh.updates).toEqual([
         { kind: 'status', status: 'starting' },
-        { kind: 'session', sessionId: FRESH },
         { kind: 'status', status: 'ready' },
+      ]);
+      requireSubmitted(await fresh.runtime.submit({ text: 'first prompt' }));
+      expect(fresh.updates).toEqual([
+        { kind: 'status', status: 'starting' },
+        { kind: 'status', status: 'ready' },
+        { kind: 'session', sessionId: FRESH },
       ]);
       const args = JSON.parse(
         await readFile(join(fresh.dir, 'args.json'), 'utf8'),
@@ -69,8 +74,8 @@ describe.skipIf(process.platform === 'win32')(
       expect(args).toEqual(
         expect.arrayContaining([
           '--dangerously-skip-permissions',
-          '--agent',
-          'tmux-fake-role',
+          '--add-dir',
+          join(fresh.dir, 'native-customizations'),
           '--model',
           'test-model',
           '--effort',
@@ -79,6 +84,7 @@ describe.skipIf(process.platform === 'win32')(
         ]),
       );
       expect(args).not.toContain('--conversation');
+      expect(args).not.toContain('--agent');
       const resumed = await setup(OTHER);
       await resumed.record({
         type: 'PLANNER_RESPONSE',
@@ -95,7 +101,7 @@ describe.skipIf(process.platform === 'win32')(
       expect(results(resumed.events)).toEqual([]);
     });
 
-    it('fails a native resume that switches id or falls back to a different role and cleans the server', async () => {
+    it('fails a native resume that switches id and cleans the server', async () => {
       const wrong = await setup(OTHER, 'wrong-id');
       await expect(wrong.runtime.start()).rejects.toThrow(
         'different conversation',
@@ -105,19 +111,6 @@ describe.skipIf(process.platform === 'win32')(
         sessionId: FRESH,
       });
       expect(await readdir(wrong.sockets)).toEqual([]);
-      const role = await setup(OTHER, 'missing-role');
-      await expect(role.runtime.start()).rejects.toThrow(
-        'original agent profile',
-      );
-      expect(await readdir(role.sockets)).toEqual([]);
-      const freshMissing = await setup(null, 'missing-fresh-role');
-      await expect(freshMissing.runtime.start()).rejects.toThrow(
-        'requested agent profile',
-      );
-      expect(
-        freshMissing.updates.some((update) => update.kind === 'session'),
-      ).toBe(false);
-      expect(await readdir(freshMissing.sockets)).toEqual([]);
     });
 
     it('admits a complete literal long input from a missing transcript, then the same text again before final', async () => {
@@ -481,8 +474,8 @@ async function setup(prior: string | null = null, mode = '') {
     },
   };
   const runtime = new TmuxRuntime(context, {
-    agentName: 'tmux-fake-role',
     nativeLogPath: join(dir, 'native.log'),
+    skillAddDir: join(dir, 'native-customizations'),
   });
   cleanup.push(() => runtime.stop());
   const transcript = antigravityTranscriptPath(
@@ -534,9 +527,7 @@ const FAKE_NATIVE =
     'const log = args[args.indexOf("--log-file") + 1];',
     'const transcript = join(process.env.HOME, ".gemini", "antigravity-cli", "brain", id, ".system_generated", "logs", "transcript_full.jsonl");',
     'fs.writeFileSync(join(dir, "args.json"), JSON.stringify(args));',
-    'if (mode === "missing-role") fs.appendFileSync(log, \'Resumed agent "absent" not found, falling back to default\\n\');',
-    'if (mode === "missing-fresh-role") fs.appendFileSync(log, \'Agent "absent" not found, falling back to default\\n\');',
-    'fs.appendFileSync(log, "Streaming conversation " + id + "\\n");',
+    'if (prior >= 0) fs.appendFileSync(log, "Streaming conversation " + id + "\\n");',
     'let state = "";',
     'function render(next) {',
     '  if (next === state) return;',
@@ -579,6 +570,7 @@ const FAKE_NATIVE =
     '  wire = wire.slice(end + close.length + 1);',
     '  fs.appendFileSync(join(dir, "written.jsonl"), JSON.stringify(text) + "\\n");',
     '  if (fs.existsSync(join(dir, "drop"))) return;',
+    '  if (prior < 0) fs.appendFileSync(log, "Streaming conversation " + id + "\\n");',
     '  render("busy");',
     '  const exact = fs.existsSync(join(dir, "mismatch")) ? text + " altered" : text;',
     '  fs.mkdirSync(dirname(transcript), { recursive: true });',

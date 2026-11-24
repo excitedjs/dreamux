@@ -12,7 +12,7 @@ import {
   type AntigravityConfig,
 } from './config.js';
 import { antigravityAgentRuntimeDiagnostic } from './diagnostic.js';
-import { prepareNativeProfile } from './native-profile.js';
+import { prepareNativeCustomizations } from './native-customizations.js';
 import { resolveAntigravityNativeRoots } from './paths.js';
 import { TmuxRuntime } from './tmux/runtime.js';
 import { readAntigravityRecentActivity } from './transcript/reader.js';
@@ -47,7 +47,13 @@ export function createAntigravityAgentRuntimeProvider(): AgentRuntimeProvider<An
           'Antigravity does not support neutral structured output',
         );
       }
-      const options = await prepareNativeProfile(context);
+      if (context.systemPrompt?.replace !== undefined) {
+        throw unsupportedFeatureError(
+          'systemPrompt.replace',
+          'Antigravity default agents support prompt append, not replacement',
+        );
+      }
+      const options = await prepareNativeCustomizations(context);
       return context.config.transport === 'acp'
         ? new AcpRuntime(context, options)
         : new TmuxRuntime(context, options);
