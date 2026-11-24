@@ -37,6 +37,12 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 final lifecycle review: Neon verified the trailing-drain correction
+  and all four immediate terminal races, including a held in-progress read with
+  exactly one coalesced trailing read. No code or documentation findings remain
+  on [draft PR #493](https://github.com/excitedjs/dreamux/pull/493). Only the
+  separately recorded real-TUI, default-agent load/cross-transport, Dispatcher
+  smoke, and Windows evidence gaps remain.
 - 2026-11-24 ACP terminal-read race: Neon's re-review closed the earlier findings
   but proved that the first ungrouped-terminal fix could delete a prompt before
   its already-written USER_INPUT was drained, causing transport loss. The alpha
