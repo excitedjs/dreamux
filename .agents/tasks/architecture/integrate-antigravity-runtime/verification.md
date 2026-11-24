@@ -34,7 +34,7 @@ that read once `sessionId` is set. No new blocker was found.
 
 ## Deterministic coverage
 
-The current package has **95 passing tests** across provider/config/version,
+The current package has **100 passing tests** across provider/config/version,
 provider-cache customizations, native record decoding, cold activity pagination,
 ACP fake-peer behavior, private-tmux behavior, and incremental transcripts.
 
@@ -45,7 +45,9 @@ permission/tool outcomes, background terminals, malformed records, growing
 files, cursor boundaries, and read bounds. Neon-review regressions also cover
 replace+append alternates, cancellation/failure before transcript input, stale
 cancelled tools and next-turn recovery, subagent sender completion, startup
-failure before ready, stop retry/status-write failure, and ID-free interruption.
+failure before ready, stop retry/status-write failure, ID-free interruption, and
+terminal responses racing an already-written input or an in-progress transcript
+read. Terminal settlement now follows a complete coalesced transcript drain.
 The transport suites exercise the same neutral runtime contract but remain separate fake-native suites rather
 than one shared parameterized suite.
 

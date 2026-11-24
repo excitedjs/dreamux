@@ -95,6 +95,7 @@ export class AcpRuntime implements AgentRuntime {
   private transcript: LiveTranscript | null = null;
   private transcriptTimer: NodeJS.Timeout | null = null;
   private readingTranscript = false;
+  private readTranscriptAgain = false;
   private responseOrder = 0;
 
   constructor(
@@ -421,26 +422,33 @@ export class AcpRuntime implements AgentRuntime {
     }
     this.admit(prompt);
     if (!prompt.admitted) return;
-    if (prompt.group === null && reason !== 'end_turn') {
-      if (this.prompts.size === 1) this.activity.finishMessages();
-      this.finishNativeTerminal([prompt], reason, null);
-      this.completeGroups();
-      void this.readTranscript();
-      return;
-    }
     prompt.response = reason;
     prompt.responseOrder = ++this.responseOrder;
-    this.completeGroups();
     void this.readTranscript();
   }
 
   private async readTranscript(): Promise<void> {
-    if (this.readingTranscript || !this.ready || !this.transcript) return;
+    if (!this.ready || !this.transcript) return;
+    if (this.readingTranscript) {
+      this.readTranscriptAgain = true;
+      return;
+    }
     this.readingTranscript = true;
     try {
-      const records = await this.transcript.read();
-      if (!this.ready || this.stopped) return;
-      for (const { record } of records) this.observeRecord(record);
+      do {
+        this.readTranscriptAgain = false;
+        const records = await this.transcript.read();
+        if (!this.ready || this.stopped) return;
+        for (const { record } of records) this.observeRecord(record);
+        this.completeGroups();
+      } while (this.readTranscriptAgain);
+      for (const prompt of this.prompts.values()) {
+        const reason = prompt.response;
+        if (prompt.group !== null || reason === null || reason === 'end_turn')
+          continue;
+        if (this.prompts.size === 1) this.activity.finishMessages();
+        this.finishNativeTerminal([prompt], reason, null);
+      }
       this.completeGroups();
     } catch (error) {
       this.transportLost(asError(error));

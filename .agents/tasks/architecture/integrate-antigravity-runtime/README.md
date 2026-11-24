@@ -37,6 +37,13 @@
   confirmation card, approving the simplified direct-provider design and its
   no-new-defensive-scenarios boundary. This decision did not authorize
   implementation.
+- 2026-11-24 ACP terminal-read race: Neon's re-review closed the earlier findings
+  but proved that the first ungrouped-terminal fix could delete a prompt before
+  its already-written USER_INPUT was drained, causing transport loss. The alpha
+  from [PR #493](https://github.com/excitedjs/dreamux/pull/493) at that review
+  round is not being installed. Terminal settlement is being reordered
+  behind complete transcript drains with a trailing-read regression before a
+  replacement alpha is published.
 - 2026-11-24 Neon review corrections: The independent Neon architect identified
   prompt-alternate rejection, ACP cancellation/group-lifecycle hangs, tmux
   subagent wait leakage, lifecycle/stop edge cases, and stale documentation.

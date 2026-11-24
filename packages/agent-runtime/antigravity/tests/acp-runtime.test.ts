@@ -26,6 +26,7 @@ import {
   type AntigravityConfig,
 } from '../src/config.js';
 import { AcpRuntime } from '../src/acp/runtime.js';
+import { LiveTranscript } from '../src/transcript/live.js';
 
 const mock = vi.hoisted(() => ({ current: null as unknown }));
 
@@ -585,6 +586,117 @@ describe('native ACP runtime', () => {
       kind: 'completion',
       completion: { status: 'completed', resultText: 'next answer' },
     });
+  });
+
+  it.each(['cancelled', 'refusal', 'max_tokens', 'max_turn_requests'] as const)(
+    'consumes an immediately preceding input before settling %s',
+    async (reason) => {
+      const instance = create();
+      await instance.start();
+      const first = await submitted(
+        instance.submit({ text: 'FIRST-WITH-INPUT' }),
+      );
+      await waitPrompts(1);
+      await input('FIRST-WITH-INPUT');
+      peer.prompts[0]!.result.resolve({ stopReason: reason });
+      const outcome = await first.submission.settled;
+      if (reason === 'cancelled') expect(outcome).toEqual({ kind: 'stopped' });
+      else
+        expect(outcome).toMatchObject({
+          kind: 'completion',
+          completion: { status: 'failed' },
+        });
+      const second = await submitted(
+        instance.submit({ text: 'NEXT-AFTER-INPUT' }),
+      );
+      await waitPrompts(2);
+      await input('NEXT-AFTER-INPUT');
+      await record('PLANNER_RESPONSE', 'next answer');
+      peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+      await expect(second.submission.settled).resolves.toEqual({
+        kind: 'completion',
+        completion: { status: 'completed', resultText: 'next answer' },
+      });
+      expect(
+        states.filter(
+          (state) => state.kind === 'status' && state.status === 'degraded',
+        ),
+      ).toEqual([]);
+      expect(events.filter((event) => event.kind === 'turn.ended')).toEqual([
+        expect.objectContaining({
+          status: reason === 'cancelled' ? 'interrupted' : 'failed',
+        }),
+        expect.objectContaining({ status: 'completed' }),
+      ]);
+    },
+  );
+
+  it('drains once more when a terminal arrives during a transcript read', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const instance = create();
+    const snapshot = deferred<void>();
+    const release = deferred<void>();
+    const originalRead = LiveTranscript.prototype.read;
+    let hold = true;
+    const read = vi
+      .spyOn(LiveTranscript.prototype, 'read')
+      .mockImplementation(function (this: LiveTranscript) {
+        const result = originalRead.call(this);
+        if (!hold) return result;
+        hold = false;
+        return result.then(async (records) => {
+          snapshot.resolve();
+          await release.promise;
+          return records;
+        });
+      });
+    try {
+      await instance.start();
+      await peer.connection.client.notify('session/update', {
+        sessionId: 'native-session',
+        update: { sessionUpdate: 'usage_update', used: 0, size: 100 },
+      });
+      await snapshot.promise;
+      peer.holdPromptWrites = true;
+      const admission = instance.submit({ text: 'INPUT-DURING-READ' });
+      await waitPrompts(1);
+      await input('INPUT-DURING-READ');
+      peer.prompts[0]!.result.resolve({ stopReason: 'cancelled' });
+      const first = await submitted(admission);
+      expect(peer.held).toHaveLength(1);
+      expect(read).toHaveBeenCalledTimes(1);
+      release.resolve();
+      await expect(first.submission.settled).resolves.toEqual({
+        kind: 'stopped',
+      });
+      expect(read).toHaveBeenCalledTimes(2);
+      peer.release();
+      peer.holdPromptWrites = false;
+      const second = await submitted(
+        instance.submit({ text: 'NEXT-AFTER-DRAIN' }),
+      );
+      await waitPrompts(2);
+      await input('NEXT-AFTER-DRAIN');
+      await record('PLANNER_RESPONSE', 'still ready');
+      peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+      await expect(second.submission.settled).resolves.toEqual({
+        kind: 'completion',
+        completion: { status: 'completed', resultText: 'still ready' },
+      });
+      expect(
+        states.filter(
+          (state) => state.kind === 'status' && state.status === 'degraded',
+        ),
+      ).toEqual([]);
+      expect(events.filter((event) => event.kind === 'turn.ended')).toEqual([
+        expect.objectContaining({ status: 'interrupted' }),
+        expect.objectContaining({ status: 'completed' }),
+      ]);
+    } finally {
+      release.resolve();
+      read.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it.each(['max_tokens', 'max_turn_requests', 'refusal'] as const)(
