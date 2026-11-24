@@ -40,6 +40,17 @@ honored consistently everywhere Dreamux looks at Codex's home. Dreamux bundled
 skills are injected at runtime by role and are never installed into a
 dispatcher workspace.
 
+The external Antigravity provider owns a rebuildable `.agents` customization
+view below the host-supplied runtime cache directory. It contains symlinks to
+Core-selected skills, and for tmux the Core-selected `mcp_config.json` and
+append-only role rules. The view is rebuilt on each launch and passed through
+`--add-dir`; no Dreamux custom-agent profile is written and user skill/global
+configuration directories are not edited. Native conversations and full
+transcripts remain agy-owned under `~/.gemini/antigravity-cli/`, and Dreamux only
+reads the bound session's transcript. Antigravity launch logs live below the
+host-supplied runtime log directory, while private tmux sockets use the neutral
+volatile runtime socket directories.
+
 Not every file under `state/` is Core's. Each document names its owner below,
 and only that owner decides whether a field can be maintained externally.
 
@@ -54,6 +65,8 @@ Source:
 - `/packages/agent-runtime/codex/src/paths.ts`
 - `/packages/agent-runtime/codex/src/skill-roots.ts`
 - `/packages/agent-runtime/claude-code/src/args.ts`
+- `/packages/agent-runtime/antigravity/src/native-customizations.ts`
+- `/packages/agent-runtime/antigravity/src/paths.ts`
 
 ## Contracts
 

@@ -398,6 +398,27 @@ conversation. The reason is in the Dreamux log.` — and delivers nothing to
   materialized into a live object by startup, queries, or cleanup; the one door
   back is an explicit `send` that reopens a member.
 
+## Antigravity runtime provider
+
+An agent can select the external
+`npm:@excitedjs/agent-runtime-antigravity` provider. Its config chooses the
+native agy TUI through private tmux (the default) or one resident ACP v1
+session; an omitted transport means `tmux`, and failures never switch modes.
+The operator authenticates agy outside Dreamux, just as they install and
+maintain other native CLIs: Dreamux provides no Antigravity login, OAuth,
+account pool, or rotation. Existing conversations resume by their exact native
+conversation id, and recent activity remains readable after the runtime stops.
+Both modes use agy's default agent and additive provider-cache customizations,
+not a Dreamux custom-agent or a user skill-directory write. A fresh tmux session
+may be ready before agy allocates its conversation; the first real submission
+publishes that native id before confirming admission. Native `disabledTools` is
+not blocked.
+In tmux mode, busy non-user news uses agy's native input queue through the same
+admission path instead of being rejected by Dreamux; there is no provider-side
+news queue or synthetic `appended` result. Neutral structured output is
+unsupported and fails explicitly. (Task:
+[integrate Antigravity runtime](/.agents/tasks/architecture/integrate-antigravity-runtime/README.md).)
+
 ## Codex reasoning effort
 
 A submission containing `ultrathink` as a whole word, matched

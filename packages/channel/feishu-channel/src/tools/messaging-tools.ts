@@ -63,8 +63,8 @@ export const replyDef: FeishuToolDef<ReplyInput> = {
           ...nonEmptyString,
           pattern:
             process.platform === 'win32'
-              ? /^(?:[A-Za-z]:[\\/]|\\|\/(?!\/))/.source
-              : '^/(?!/)',
+              ? /^(?:[A-Za-z]:[\\/]|\\|\/(?:$|[^/]))/.source
+              : '^/(?:$|[^/])',
         },
         description:
           'Non-image attachments as local absolute paths, sent after text in array order. Every attachment, including MP4, is a file message.',

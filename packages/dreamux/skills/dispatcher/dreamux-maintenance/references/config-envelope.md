@@ -94,7 +94,8 @@ config: the Channel that offers the flow owns it, so it is set through that
 Channel's own surface rather than in this envelope.
 
 The official `npm:@excitedjs/agent-runtime-codex`,
-`npm:@excitedjs/agent-runtime-claude-code`, and `npm:@excitedjs/feishu-channel`
+`npm:@excitedjs/agent-runtime-claude-code`,
+`npm:@excitedjs/agent-runtime-antigravity`, and `npm:@excitedjs/feishu-channel`
 provider refs use the package-root default provider factories. The current
 builtin catalog selects named plugin factories for Codex, Claude Code and
 Feishu, and the default factory for `builtin:bootstrap`. Explicit official plugin refs still conflict

@@ -263,6 +263,9 @@ jobs:
       # Markdown are excluded via the script's own CLI args.
       - name: rush lint
         run: node common/scripts/install-run-rush.js lint
+      - name: install tmux for native transport tests
+        if: runner.os == 'macOS'
+        run: brew install tmux
       - name: install codex for live compatibility test
         run: |
           npm install --global @openai/codex@latest
