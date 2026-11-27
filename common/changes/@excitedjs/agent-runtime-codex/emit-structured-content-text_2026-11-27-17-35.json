@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Unwrap completed Codex mcpToolCall result envelopes to structuredContent or joined content text blocks for RuntimeActivity COT display.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}

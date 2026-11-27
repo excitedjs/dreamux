@@ -14,12 +14,14 @@ Do not scan task subtrees or load requirement, design, progress, or evidence fil
 merely to find a candidate. README-first discovery keeps intake bounded and
 prevents unrelated history from filling the context window.
 
-If one candidate matches, ask whether it is the task to continue. If several match,
-summarize the meaningful differences and ask the operator to choose. If none match,
-ask whether to create a new task. Put that choice on an `ask_user_question`
-card, and do not create or select a task implicitly.
+If one or more plausible candidates match (such as an unfinished task or a
+related task with ambiguous lineage), summarize the meaningful differences and
+ask the operator to choose on an `ask_user_question` card before creating or
+selecting a task. If no candidate matches and the request is clearly an
+independent new task, initialize the new task directly, enter `clarification`,
+and state the new task path in the next confirmation card.
 
-After the operator confirms a new task, have the TeamLeader run:
+When initializing a new task, have the TeamLeader run:
 
 ```bash
 python3 .agents/skills/dev-workflow/scripts/init_task.py create \

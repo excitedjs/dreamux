@@ -521,21 +521,49 @@ function argumentsFor(item: ThreadItem): JsonValue | null {
 }
 
 function resultFor(item: ThreadItem): JsonValue | null {
+  if (item.type === 'mcpToolCall')
+    return unwrapMcpToolCallResult(item['result']);
   const result = item['result'] ?? item['output'] ?? item['aggregatedOutput'];
   if (result !== undefined) return toJsonValue(result);
   if (item.type === 'dynamicToolCall')
-    return normalizeInputTextItems(item['contentItems']);
+    return normalizeTypedTextItems(item['contentItems'], 'inputText');
   return null;
 }
 
-function normalizeInputTextItems(value: unknown): JsonValue | null {
+/**
+ * Unwrap Codex's `McpToolCallResult` (`{ content, structuredContent, _meta }`)
+ * to the single payload a COT row should display: `structuredContent` when
+ * present, otherwise the joined `content` text blocks (or non-text `content`
+ * blocks), otherwise `null`.
+ */
+function unwrapMcpToolCallResult(value: unknown): JsonValue | null {
+  if (value == null) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    if (
+      record['structuredContent'] !== undefined &&
+      record['structuredContent'] !== null
+    ) {
+      return toJsonValue(record['structuredContent']);
+    }
+    if (Array.isArray(record['content'])) {
+      return normalizeTypedTextItems(record['content'], 'text');
+    }
+  }
+  return toJsonValue(value);
+}
+
+function normalizeTypedTextItems(
+  value: unknown,
+  expectedType: 'inputText' | 'text',
+): JsonValue | null {
   if (!Array.isArray(value)) return toJsonValue(value);
   if (value.length === 0) return null;
   const texts = value.map((entry) => {
     if (entry === null || typeof entry !== 'object' || Array.isArray(entry))
       return null;
     const record = entry as Record<string, unknown>;
-    return record['type'] === 'inputText' && typeof record['text'] === 'string'
+    return record['type'] === expectedType && typeof record['text'] === 'string'
       ? record['text']
       : null;
   });
@@ -546,7 +574,7 @@ function normalizeInputTextItems(value: unknown): JsonValue | null {
 
 function renderProviderError(value: unknown): string | null {
   if (value == null) return null;
-  const normalized = normalizeInputTextItems(value);
+  const normalized = normalizeTypedTextItems(value, 'inputText');
   if (normalized === null) return null;
   return typeof normalized === 'string'
     ? normalized

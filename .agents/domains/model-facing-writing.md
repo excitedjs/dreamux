@@ -51,9 +51,12 @@ Current source owners:
   relevant tool description. The TeamLeader prompt routes missing collaboration
   guidance to `teamwork`; its frontmatter repeats that condition. Another turn
   or handoff does not require rereading guidance already in context.
-- Per-engine visibility facts the writer must know: both engines prefer MCP
-  `structuredContent` over accompanying `content` text, so a result carrying a
-  reminder must use the content-only form described below. Codex renders
+- Per-engine visibility facts the writer must know: Codex and Claude Code prefer
+  MCP `structuredContent` over accompanying `content` text, so a result carrying
+  a reminder must use the content-only form described below; Antigravity (`agy`)
+  feeds only `content` to the model and reserves `structuredContent` for MCP Apps
+  UI rendering, so structured results without authored text carry both
+  `structuredContent` and a compact serialized JSON text block in `content`. Codex renders
   a `channel-<provider>` MCP server's tools as `channel_<provider>__…`
   (underscore-joined), never the hyphenated server name. Before a tool
   definition is fetched the engines also differ: Codex lists no Dreamux MCP
@@ -276,8 +279,9 @@ The shared MCP server emits nonempty success `text` verbatim as one `content`
 text block, without `structuredContent` or a serialized JSON copy. The tool
 owner writes every actionable fact and reminder into this complete result:
 actual created names and workspace facts, workflow run ids, or binding changes.
-Absent or empty text exposes the business value as `structuredContent` with
-`content: []`. The shim preserves text unchanged; only the final adapter selects
+Absent or empty text exposes the business value as `structuredContent` and also
+emits its compact serialized JSON in one `content` text block (following the MCP
+specification `SHOULD`). The shim preserves text unchanged; only the final adapter selects
 this representation, without trimming nonempty strings.
 Any tool that can return success text omits its published `outputSchema`, even
 when a particular invocation returns no text: the SDK requires structured

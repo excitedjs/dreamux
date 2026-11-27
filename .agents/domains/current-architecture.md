@@ -128,7 +128,8 @@ Every tool surface is an in-server delegate owned by its domain under
 publication and dispatch through `service/mcp/projection.ts`; their handlers
 still own admission and argument parsing. The final adapter emits nonempty
 tool-authored text as one content block without `structuredContent`; absent or
-empty text exposes the structured object with `content: []`. Create/send/workflow
+empty text exposes the structured object as `structuredContent` alongside its
+compact serialized JSON in `content`. Create/send/workflow
 text includes actionable facts and operation-local reminders
 (`/packages/dreamux/src/service/mcp/dispatch-reminders.ts`). The failure
 contract — `StatedFailure` three-part rendering, native messages passed

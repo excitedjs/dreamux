@@ -276,16 +276,19 @@ function buildMcpServer(
  * A result that carries nonempty model-facing text is emitted verbatim as
  * content only. The tool owns all actionable facts and reminders in that text;
  * this adapter adds no JSON copy and emits no `structuredContent`.
- * An engine reads structured content in preference to
+ * Some engines read structured content in preference to
  * content text, so keeping both would hide the text. The tool therefore
  * advertises no output schema — a schema would make the SDK require the very
  * structured content this shape omits.
  *
- * A result with absent or empty text keeps its value as structured content and an
- * empty content list. The projector also reports a tool failure whose text was
- * already authored for the model as an `isError` result, and reports every
- * other failure under its own code and message after logging the whole value
- * out of band.
+ * A result with absent or empty text keeps its value as `structuredContent` and
+ * also emits compact serialized JSON in one `content` text block (following the
+ * MCP specification's backwards-compatibility `SHOULD`), so clients whose model
+ * reads `content` (such as Antigravity) receive the structured result without
+ * any per-client branching. The projector also reports a tool failure whose
+ * text was already authored for the model as an `isError` result, and reports
+ * every other failure under its own code and message after logging the whole
+ * value out of band.
  */
 async function executeTool(
   tool: McpToolDefinition,
@@ -300,7 +303,7 @@ async function executeTool(
       };
     }
     return {
-      content: [],
+      content: [{ type: 'text', text: JSON.stringify(outcome.structured) }],
       structuredContent: outcome.structured,
     };
   } catch (err) {

@@ -8,13 +8,16 @@
 
 ## Settled rulings
 
-1. **Structured results are not duplicated into text blocks (operator ruling).**
-   The MCP tool specifications say a server SHOULD serialize structured results
-   into a text block for backward compatibility. Dreamux deliberately does not:
-   duplicate objects burn model context, and the supported clients (Codex,
-   Claude Code) read `structuredContent`. This is a documented exception for
-   Dreamux's supported-client contract, not a claim that the recommendation is
-   absent or mandatory.
+1. **Structured results also emit compact JSON text (superseded 2026-11-27).**
+   The original 2026-08 ruling omitted the MCP specification's backwards-compatibility
+   `SHOULD` (duplicating `structuredContent` as serialized JSON in `content`) under
+   the earlier Codex + Claude Code contract. That ruling was superseded on
+   2026-11-27 by [emit-structured-content-text](/.agents/tasks/mcp/emit-structured-content-text/README.md):
+   Antigravity (`agy`) reads only `content` for the model and reserves
+   `structuredContent` for MCP Apps UI rendering, so the shared MCP adapter now
+   follows the specification `SHOULD` and emits compact serialized JSON in one
+   `content` text block alongside `structuredContent` whenever a tool succeeds
+   without nonempty authored text.
 2. **The SDK's lenient legacy pre-init behavior is accepted (operator ruling).**
    `serveStdio({ legacy: 'serve' })` may serve `tools/list` before a standard
    legacy initialize completes. Dreamux adds no transport wrapper, prototype

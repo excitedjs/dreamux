@@ -682,10 +682,14 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   The tool writes actual names, workspace facts, workflow run ids or binding
   changes into its text. Nonempty text is forwarded verbatim in MCP `content`,
   without `structuredContent` or a serialized JSON copy. Tools that can carry
-  text publish no output schema. Absent or empty text keeps the structured
-  business value and an empty content list. Dispatch and Feishu notification
+  text publish no output schema. Absent or empty text emits the structured
+  business value as `structuredContent` alongside its compact serialized JSON
+  in `content`, so clients whose model reads `content` (including Antigravity)
+  as well as clients that read `structuredContent` (Codex, Claude Code) both
+  receive the result. Dispatch and Feishu notification
   reminders remain visible in the same result as the facts the model needs.
-  (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
+  (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md),
+  [emit structured content text](/.agents/tasks/mcp/emit-structured-content-text/README.md).)
 - **Every tool failure is model-visible and actionable.** A domain-authored
   failure renders its stable code, reason, and next step; any other thrown
   error keeps its own code (or `INTERNAL`) and carries its native message

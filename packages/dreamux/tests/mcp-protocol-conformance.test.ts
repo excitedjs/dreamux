@@ -194,7 +194,7 @@ describe('shared MCP protocol conformance', () => {
             version: '1.0.0',
           },
         },
-        content: [],
+        content: [{ type: 'text', text: JSON.stringify({ echoed: 'modern' }) }],
         structuredContent: { echoed: 'modern' },
       });
     } finally {
@@ -224,7 +224,9 @@ describe('shared MCP protocol conformance', () => {
         await expect(
           callTool(connection.client, 'echo', { value: version }),
         ).resolves.toEqual({
-          content: [],
+          content: [
+            { type: 'text', text: JSON.stringify({ echoed: version }) },
+          ],
           structuredContent: { echoed: version },
         });
       } finally {
@@ -390,7 +392,7 @@ describe('shared MCP protocol conformance', () => {
           value: 'quiet',
         }),
       ).resolves.toEqual({
-        content: [],
+        content: [{ type: 'text', text: JSON.stringify({ echoed: 'quiet' }) }],
         structuredContent: { echoed: 'quiet' },
       });
     } finally {
@@ -416,7 +418,7 @@ describe('shared MCP protocol conformance', () => {
           value: 'valid',
         }),
       ).resolves.toEqual({
-        content: [],
+        content: [{ type: 'text', text: JSON.stringify({ echoed: 'valid' }) }],
         structuredContent: { echoed: 'valid' },
       });
     } finally {

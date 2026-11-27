@@ -1,9 +1,9 @@
 # Knowledge Closeout
 
-Enter `knowledge-closeout` after implementation review, ratified corrections, and
-local verification are complete and the operator confirms the transition.
-Reconcile the final requirement, approved solution, complete diff, and evidence.
-Check that the development approval still covers the actual change.
+Enter `knowledge-closeout` once implementation review, any ratified corrections,
+and local verification are complete. Reconcile the final requirement, approved
+solution, complete diff, and evidence. Check that the recorded approval still
+covers the actual change.
 
 Update each affected knowledge owner once:
 
@@ -25,8 +25,7 @@ coverage limits, and residual risks. During closeout, validate the current task
 with `--allow-in-flight` as described in [task records](task-records.md); the trunk
 check rejects in-flight states.
 
-Once closeout is ready, request `done` through a stage-transition card and set that
-state after approval. Before committing, run:
+Once closeout is reconciled, set `State: done` and run:
 
 ```bash
 node .agents/scripts/check.mjs
@@ -34,4 +33,4 @@ git diff --check
 ```
 
 Include the completed task and knowledge changes in the PR. A check failure must
-be resolved before submission.
+be resolved before submission. Continue with [PR and merge](pr-gate.md).
