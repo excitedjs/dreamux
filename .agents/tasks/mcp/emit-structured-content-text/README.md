@@ -32,5 +32,5 @@
 
 ## Delivery
 
-- Pull request: Pending draft PR creation for Devbox review.
-- Knowledge closeout: Owners updated in working tree; final trunk validation pending review completion.
+- Pull request: [PR #495](https://github.com/excitedjs/dreamux/pull/495)
+- Knowledge closeout: Owners updated in working tree; final trunk validation (`State: done`) pending Devbox confirmation of the review-fix delta.

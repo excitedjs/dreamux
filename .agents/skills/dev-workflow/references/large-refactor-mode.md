@@ -14,6 +14,11 @@ and applicable routes in [the KB entry point](../../../root.md). Check that the
 recorded authorization still covers the next slice. Earlier approval does not
 cover a materially changed requirement, solution, or scope.
 
-Before advancing, reconcile the completed slice with its acceptance criteria,
-review dispositions, verification evidence, and affected knowledge owners. Present
-that evidence and the proposed next stage in the confirmation card.
+Before advancing to the next slice, reconcile the completed slice with its
+acceptance criteria, review dispositions, verification evidence, and affected
+knowledge owners. Mechanical stage boundaries within an already-approved slice
+(`implementation` -> `review` -> `knowledge-closeout` -> PR) advance directly;
+use interactive cards only for the gates enumerated in `SKILL.md` (per-slice
+solution/development authorization, unsettled scope decisions, review-finding
+rulings, material re-approval, merge, and Team dissolution), presenting the
+reconciled slice evidence in that card when authorizing the next slice.

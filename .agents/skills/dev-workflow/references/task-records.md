@@ -42,8 +42,9 @@ Keep these fields current and concise:
 - finite workflow state;
 - requirement and final-solution links;
 - public GitHub solution-review Issue link when one is used;
-- stage-transition decisions and the sent development-authorization card and
-  approving response, their times, and the approved boundary (public-safe
+- operator gate cards and responses (solution/development authorization,
+  unsettled scope decisions, review-finding rulings, material re-approval,
+  merge, and dissolution), their times, and the approved boundary (public-safe
   descriptions, never private transport IDs);
 - blockers and next action;
 - lineage and related-task links;
