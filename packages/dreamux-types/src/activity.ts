@@ -32,11 +32,19 @@ interface NativeActivity<K extends string> {
   readonly kind: K;
   readonly occurredAt: number;
   /**
-   * The provider's own id, taken whole without a prefix, suffix, or counter.
-   * It identifies the native object, not a unique activity: a tool's start
-   * and result share its call id; usage and interruption share a turn id.
-   * A consumer derives row identity from kind and this id, plus a tool's
-   * status or a reasoning part's native position where applicable.
+   * The provider's native object id, taken whole without a prefix, suffix, or
+   * counter whenever the native protocol supplies one. It identifies the
+   * native object, not a unique activity: a tool's start and result share its
+   * call id; usage and interruption share a turn id. A consumer derives row
+   * identity from kind and this id, plus a tool's status or a reasoning part's
+   * native position where applicable.
+   *
+   * When a runtime's live protocol structurally omits native message ids on
+   * streamed `assistant.message` or `assistant.reasoning` chunks (as opposed to
+   * an individual envelope missing a field that protocol normally supplies),
+   * the provider may allocate a monotonic process-local live display block id
+   * solely to group increments on the live surface; such display ids are never
+   * persisted and never used by {@link AgentRuntimeProvider.readRecentActivity}.
    */
   readonly id: string;
 }
@@ -60,7 +68,9 @@ export type RuntimeActivity =
       readonly text: string;
     })
   /**
-   * Append-only, live reasoning. `id` is the native item's/message's identity;
+   * Append-only, live reasoning. `id` is the native item's/message's identity
+   * (or a monotonic process-local live display block id when the runtime's live
+   * protocol structurally omits message ids on streamed reasoning chunks);
    * `partIndex` is its native content position, kept separate from that id.
    * `text` contains only new text, including a completed snapshot when the
    * provider received no increments for that part. Empty completions close

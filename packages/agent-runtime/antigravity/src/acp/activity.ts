@@ -1,25 +1,48 @@
 import type {
   PromptResponse,
   SessionNotification,
-  ToolCall,
-  ToolCallUpdate,
 } from '@agentclientprotocol/sdk';
 import type {
   AgentRuntimeEventSink,
   JsonValue,
   RuntimeCompletion,
-  RuntimeToolAction,
 } from '@excitedjs/dreamux-types';
 
-type NativeTool = ToolCall | ToolCallUpdate;
+import {
+  isCommandExitFailure,
+  toolDisplay,
+  toolResult,
+  type NativeTool,
+} from './tool-display.js';
 
-/** Live ACP objects only: their identifiers are supplied by the agent. */
+interface ReasoningBlock {
+  readonly id: string;
+  readonly nativeId: string | null;
+}
+
+interface MessageBlock {
+  readonly id: string;
+  readonly nativeId: string | null;
+  text: string;
+}
+
+/**
+ * Live ACP activity projection.
+ *
+ * Uses native identifiers whenever ACP supplies them (`toolCallId`,
+ * `compactionId`, `messageId`). When `agy` omits `messageId` on streamed
+ * `agent_thought_chunk` or `agent_message_chunk` updates, allocates one
+ * monotonic in-memory display block ID per contiguous block so live COT cards
+ * still render reasoning and assistant messages without touching cold reads.
+ */
 export class AcpActivity {
-  private readonly messages = new Map<string, string>();
   private readonly tools = new Map<string, NativeTool>();
+  private readonly startedTools = new Set<string>();
   private readonly runningTools = new Set<string>();
   private readonly failedTools = new Set<string>();
-  private currentMessage: string | null = null;
+  private currentMessage: MessageBlock | null = null;
+  private currentReasoning: ReasoningBlock | null = null;
+  private nextBlockId = 0;
 
   constructor(private readonly events: AgentRuntimeEventSink) {}
 
@@ -27,6 +50,11 @@ export class AcpActivity {
     reason: PromptResponse['stopReason'],
     resultText: string | null,
   ): RuntimeCompletion | null {
+    this.closeReasoning();
+    // Flush an anonymous (ID-less) message block at every native terminal so an
+    // overlapping follow-up prompt cannot append into the finished turn's text.
+    // Native-ID messages retain their existing overlapping-group flush timing.
+    if (this.currentMessage?.nativeId === null) this.flushCurrentMessage();
     if (reason === 'cancelled') {
       this.events({
         kind: 'turn.ended',
@@ -54,23 +82,19 @@ export class AcpActivity {
     return completion;
   }
 
-  update(notification: SessionNotification): string | null {
+  update(notification: SessionNotification): void {
     const update = notification.update;
     switch (update.sessionUpdate) {
-      case 'agent_message_chunk': {
-        if (update.content.type !== 'text') return null;
-        const id = update.messageId;
-        if (id) {
-          if (this.currentMessage && this.currentMessage !== id)
-            this.finishMessage(this.currentMessage);
-          this.currentMessage = id;
-          this.messages.set(
-            id,
-            (this.messages.get(id) ?? '') + update.content.text,
-          );
+      case 'agent_thought_chunk':
+        if (update.content.type === 'text' && update.content.text !== '') {
+          this.reasoningChunk(update.messageId ?? null, update.content.text);
         }
-        return update.content.text;
-      }
+        break;
+      case 'agent_message_chunk':
+        if (update.content.type === 'text' && update.content.text !== '') {
+          this.messageChunk(update.messageId ?? null, update.content.text);
+        }
+        break;
       case 'tool_call':
       case 'tool_call_update':
         this.tool(update);
@@ -92,22 +116,18 @@ export class AcpActivity {
       default:
         break;
     }
-    return null;
   }
 
   finishMessages(): void {
-    for (const id of this.messages.keys()) this.finishMessage(id);
-    this.currentMessage = null;
-  }
-
-  discardMessages(): void {
-    this.messages.clear();
-    this.currentMessage = null;
+    this.closeReasoning();
+    this.flushCurrentMessage();
   }
 
   reset(): void {
-    this.discardMessages();
+    this.closeReasoning();
+    this.currentMessage = null;
     this.tools.clear();
+    this.startedTools.clear();
     this.runningTools.clear();
     this.failedTools.clear();
   }
@@ -124,81 +144,137 @@ export class AcpActivity {
     this.failedTools.clear();
   }
 
-  private finishMessage(id: string): void {
-    const text = this.messages.get(id);
-    if (text)
+  private reasoningChunk(nativeId: string | null, text: string): void {
+    this.flushCurrentMessage();
+    const key = nativeId || null;
+    if (this.currentReasoning && this.currentReasoning.nativeId !== key) {
+      this.closeReasoning();
+    }
+    this.currentReasoning ??= {
+      id: key ?? `acp-reasoning-${++this.nextBlockId}`,
+      nativeId: key,
+    };
+    this.events({
+      kind: 'assistant.reasoning',
+      occurredAt: Date.now(),
+      id: this.currentReasoning.id,
+      partIndex: 0,
+      text,
+      status: 'streaming',
+    });
+  }
+
+  private closeReasoning(): void {
+    if (this.currentReasoning === null) return;
+    const id = this.currentReasoning.id;
+    this.currentReasoning = null;
+    this.events({
+      kind: 'assistant.reasoning',
+      occurredAt: Date.now(),
+      id,
+      partIndex: 0,
+      text: '',
+      status: 'completed',
+    });
+  }
+
+  private messageChunk(nativeId: string | null, text: string): void {
+    this.closeReasoning();
+    const key = nativeId || null;
+    if (this.currentMessage && this.currentMessage.nativeId !== key) {
+      this.flushCurrentMessage();
+    }
+    this.currentMessage ??= {
+      id: key ?? `acp-message-${++this.nextBlockId}`,
+      nativeId: key,
+      text: '',
+    };
+    this.currentMessage.text += text;
+  }
+
+  private flushCurrentMessage(): void {
+    if (this.currentMessage === null) return;
+    const { id, text } = this.currentMessage;
+    this.currentMessage = null;
+    if (text) {
       this.events({
         kind: 'assistant.message',
         occurredAt: Date.now(),
         id,
         text,
       });
-    this.messages.delete(id);
+    }
   }
 
   private tool(update: NativeTool): void {
     const id = update.toolCallId;
     if (!id) return;
     const previous = this.tools.get(id);
-    const current: NativeTool = { ...previous, ...update };
+    // ACP v1 specifies that omitted or null `name` on `tool_call_update`
+    // retains the previous name; keep cached display metadata (`title`,
+    // `rawInput`, `locations`) under the same null-preserving merge.
+    const current: NativeTool = {
+      ...previous,
+      ...update,
+      ...(update.name == null && previous?.name != null
+        ? { name: previous.name }
+        : {}),
+      ...(update.title == null && previous?.title != null
+        ? { title: previous.title }
+        : {}),
+      ...(update.rawInput == null && previous?.rawInput != null
+        ? { rawInput: previous.rawInput }
+        : {}),
+      ...(update.locations == null && previous?.locations != null
+        ? { locations: previous.locations }
+        : {}),
+    };
     this.tools.set(id, current);
+    // Keep settlement's permission-cancellation signal tied strictly to native
+    // ACP `status: 'failed'`, never ordinary shell exit codes.
     if (current.status === 'failed') this.failedTools.add(id);
     else this.failedTools.delete(id);
-    if (current.status === 'completed' || current.status === 'failed')
-      this.runningTools.delete(id);
+    const terminal =
+      current.status === 'completed' || current.status === 'failed';
+    if (terminal) this.runningTools.delete(id);
     else this.runningTools.add(id);
     const name = current.name;
     if (!name) {
-      if (!this.runningTools.has(id)) this.tools.delete(id);
+      if (terminal) {
+        this.tools.delete(id);
+        this.startedTools.delete(id);
+      }
       return;
     }
-    const status =
-      current.status === 'completed'
-        ? 'completed'
-        : current.status === 'failed'
-          ? 'failed'
-          : 'started';
-    const rawInput = current.rawInput ?? null;
-    const input =
-      typeof rawInput === 'object' &&
-      rawInput !== null &&
-      !Array.isArray(rawInput)
-        ? (rawInput as Record<string, unknown>)
-        : null;
-    const invocation =
-      typeof input?.['CommandLine'] === 'string' ? input['CommandLine'] : null;
+    if (!terminal) {
+      if (this.startedTools.has(id)) return;
+      this.startedTools.add(id);
+    }
+    this.closeReasoning();
+    this.flushCurrentMessage();
+    const status = !terminal
+      ? 'started'
+      : current.status === 'failed' || isCommandExitFailure(current)
+        ? 'failed'
+        : 'completed';
+    const result = status === 'started' ? null : toolResult(current);
     this.events({
       kind: 'tool.call',
       occurredAt: Date.now(),
       id,
       toolName: name,
-      action: actionFor(current.kind),
-      summary: current.title ?? null,
-      invocation,
-      items: (current.locations ?? []).map((location) => location.path),
+      ...toolDisplay(current),
       status,
-      arguments: rawInput as JsonValue,
-      result: (current.rawOutput ?? null) as JsonValue,
-      error:
-        status === 'failed' && typeof current.rawOutput === 'string'
-          ? current.rawOutput
-          : null,
+      arguments: (current.rawInput ?? null) as JsonValue,
+      result,
+      // Only plain string errors populate `error`; structured failures stay on
+      // `result` so Core redacts secret key names via `redactJson` and Feishu
+      // renders `event.error ?? event.result`.
+      error: status === 'failed' && typeof result === 'string' ? result : null,
     });
-    if (status !== 'started') this.tools.delete(id);
-  }
-}
-
-function actionFor(kind: NativeTool['kind']): RuntimeToolAction | null {
-  switch (kind) {
-    case 'read':
-      return 'read';
-    case 'search':
-      return 'search';
-    case 'edit':
-      return 'edit';
-    case 'execute':
-      return 'run';
-    default:
-      return null;
+    if (terminal) {
+      this.tools.delete(id);
+      this.startedTools.delete(id);
+    }
   }
 }

@@ -441,6 +441,20 @@ news queue or synthetic `appended` result. Neutral structured output is
 unsupported and fails explicitly. (Task:
 [integrate Antigravity runtime](/.agents/tasks/architecture/integrate-antigravity-runtime/README.md).)
 
+In ACP mode, live conversation display aligns Antigravity tool rows and streams
+with Claude Code and Codex: `read_file`, `write_file`, and `edit_file` show the
+file basename on the collapsed row while placing the raw path in `items` for
+Core redaction; `run_command` prefers `toolSummary` over the command's first
+line, extracts plain text from ACP `content` or `rawOutput.output` instead of
+raw JSON, and marks non-zero `exit_code` as failed without altering native turn
+settlement; MCP tools use `action: null` and `<toolName> · <toolSummary>` when
+`toolSummary` is present; streamed `agent_thought_chunk` and
+`agent_message_chunk` emit live `assistant.reasoning` and `assistant.message`
+using native `messageId` when supplied or monotonic process-local live display
+block ids when omitted; `token.usage` remains omitted because agy reports
+per-turn rather than cumulative counters. (Task:
+[align Antigravity COT display](/.agents/tasks/channel/align-antigravity-cot-display/README.md).)
+
 ## Codex reasoning effort
 
 A submission containing `ultrathink` as a whole word, matched
