@@ -174,7 +174,7 @@ export class DispatcherService implements Dispatcher {
       log: opts.log,
     });
 
-    const worktrees = new WorktreeManager();
+    const worktrees = new WorktreeManager({ log: opts.log });
     // The dispatcher composition root: every persistence root below is derived
     // once, here, and handed to the owner that keeps it. Nothing further down
     // rebuilds a path from ids, and no identity field ever selects one.

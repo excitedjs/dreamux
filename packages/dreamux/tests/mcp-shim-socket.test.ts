@@ -1,5 +1,10 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer, type Socket } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { InMemoryTransport } from '@modelcontextprotocol/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { AdminClientError } from '../src/admin/client.js';
 import { adminSocketAddress } from '../src/platform/paths.js';
@@ -365,6 +370,177 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
       expect(other.calls).toEqual([]);
     } finally {
       await admin.close();
+    }
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('runDreamuxMcp waits past the 10s handshake timeout for slow tool calls, while describe keeps its 10s default', async () => {
+    const harness = createCommandHarness();
+    const admin = await startHarnessAdminSocket(harness);
+    try {
+      let releaseTool!: () => void;
+      let toolStarted!: () => void;
+      const toolStartedPromise = new Promise<void>((resolve) => {
+        toolStarted = resolve;
+      });
+      const spy = spyDelegate({
+        call: async () => {
+          toolStarted();
+          await new Promise<void>((resolve) => {
+            releaseTool = resolve;
+          });
+          return { ok: true, structured: { done: true } };
+        },
+      });
+      const minted = harness.mcpLeases.mint(fakeLease(), spy.delegate)!;
+
+      const connection = await connectMcpClient(
+        serveShim({
+          lease: minted.token,
+          adminSocketPath: admin.socketPath,
+        }),
+      );
+      try {
+        // Fake only setTimeout/clearTimeout so real Unix socket I/O keeps running.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        let settled = false;
+        const calling = callTool(connection.client, 'echo_tool', {
+          value: 'slow',
+        }).then((res) => {
+          settled = true;
+          return res;
+        });
+
+        await toolStartedPromise;
+        // Advance past the 10s DEFAULT_TIMEOUT_MS: toolCore must NOT time out.
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(settled).toBe(false);
+
+        releaseTool();
+        const result = await calling;
+        expect(result.structuredContent).toEqual({ done: true });
+      } finally {
+        vi.useRealTimers();
+        await connection.close();
+      }
+    } finally {
+      await admin.close();
+    }
+
+    // Verify startup describe still honors the 10s default socket timeout against a silent server.
+    const silentDir = await mkdtemp(join(tmpdir(), 'dreamux-silent-admin-'));
+    const silentPath = join(silentDir, 'admin.sock');
+    const heldSockets: Socket[] = [];
+    const silentServer = createServer((sock) => {
+      heldSockets.push(sock);
+    });
+    await new Promise<void>((resolve, reject) => {
+      silentServer.once('error', reject);
+      silentServer.listen(adminSocketAddress(silentPath), () => resolve());
+    });
+    try {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const [clientTransport, serverTransport] =
+        InMemoryTransport.createLinkedPair();
+      void clientTransport;
+      const describing = runDreamuxMcp({
+        lease: 'any-token',
+        adminSocketPath: silentPath,
+        transport: serverTransport,
+        log: () => {},
+      });
+      const assertion = expect(describing).rejects.toThrow(
+        'admin socket request timed out after 10000ms',
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+      for (const sock of heldSockets) sock.destroy();
+      await new Promise<void>((resolve) => silentServer.close(() => resolve()));
+      await rm(silentDir, { recursive: true, force: true });
+    }
+  });
+
+  it('runDreamuxMcp aborts pending admin socket calls when the MCP transport closes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dreamux-abort-admin-'));
+    const socketPath = join(dir, 'admin.sock');
+    const openSockets: Socket[] = [];
+    let toolReceived!: () => void;
+    let toolSocketClosed!: () => void;
+    const toolReceivedPromise = new Promise<void>((resolve) => {
+      toolReceived = resolve;
+    });
+    const toolSocketClosedPromise = new Promise<void>((resolve) => {
+      toolSocketClosed = resolve;
+    });
+
+    const server = createServer((sock) => {
+      openSockets.push(sock);
+      let buf = '';
+      sock.setEncoding('utf8');
+      sock.on('data', (chunk) => {
+        buf += chunk;
+        const nl = buf.indexOf('\n');
+        if (nl === -1) return;
+        const req = JSON.parse(buf.slice(0, nl)) as {
+          id: string;
+          method: string;
+        };
+        if (req.method === 'mcp.describe') {
+          sock.end(
+            `${JSON.stringify({
+              id: req.id,
+              ok: true,
+              result: {
+                identity: { name: 'abort-test', version: '0.0.1' },
+                tools: [
+                  {
+                    name: 'echo_tool',
+                    inputSchema: {
+                      type: 'object',
+                      properties: { value: { type: 'string' } },
+                      additionalProperties: false,
+                    },
+                  },
+                ],
+              },
+            })}\n`,
+          );
+          return;
+        }
+        if (req.method === 'mcp.toolcall') {
+          sock.once('close', () => toolSocketClosed());
+          toolReceived();
+        }
+      });
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(adminSocketAddress(socketPath), () => resolve());
+    });
+
+    try {
+      const connection = await connectMcpClient(
+        serveShim({ lease: 'abort-lease', adminSocketPath: socketPath }),
+      );
+      const pendingCall = callTool(connection.client, 'echo_tool', {
+        value: 'slow',
+      }).catch(() => undefined);
+
+      await toolReceivedPromise;
+      await connection.close();
+      // Closing the MCP transport must immediately abort and close the pending admin socket.
+      await toolSocketClosedPromise;
+      await pendingCall;
+    } finally {
+      for (const sock of openSockets) sock.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

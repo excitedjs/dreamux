@@ -513,10 +513,34 @@ worktree; no git command runs, so the dispatcher cwd need not be a
 git repository. Managed worktrees are created only when the request explicitly
 asks for managed repo work. `.workspace/` self-ignores with `*`.
 
+When `WorktreeManager.prepare` creates a new managed checkout
+(`createdCheckout: true` — covering `team.create`, Dispatcher-root
+`teammate.spawn`, and reopening a closed managed TeamMate whose worktree was
+deleted), `worktree/setup.ts` reads and strictly validates
+`<sourceRepo>/.dreamux-worktree.json` before creating `.workspace/` directories
+or running `git worktree add`. Absent files, omitted/empty scripts, reused
+existing checkouts, `reuse-cwd`, and default workspaces are no-ops. Resolved
+`setup.script` (with optional `darwin`/`linux`/`win32` overrides and
+`background` defaulting to `false`) executes via the OS default shell in
+`runtimeCwd` under the Dreamux host user (not inside an agent sandbox) with
+`DREAMUX_SOURCE_REPO` and `DREAMUX_WORKTREE_PATH` in `env` and bounded output
+tail capture (`setEncoding('utf8')`). Foreground execution settles on direct
+child `exit` (with a brief pipe-flush window on non-zero/signal exit so
+open-pipe descendants do not block launch), blocks agent launch and first
+prompt until exit `0`, and rolls back the newly created checkout via
+`WorktreeManager`'s shared `removeRegisteredWorktree` helper on failure without
+deleting Git branches (on Windows, a failing script that leaves a descendant
+holding a `cwd` inside the checkout may cause immediate rollback removal to log
+an `EBUSY` warning while still surfacing the original setup failure). Background execution fails loud if triggering itself
+throws, otherwise returns immediately and logs asynchronous settlement; piped
+stdio preserves failure output tails and may terminate on daemon restart.
+Managed-service installations should account for non-interactive `PATH`.
+
 Source:
 
 - `/packages/dreamux/src/service/dispatcher-workspace.ts`
 - `/packages/dreamux/src/service/worktree/`
+- `/packages/dreamux/src/service/worktree/setup.ts`
 - `/packages/dreamux/src/config/config.ts`
 
 ### Regression Trap: management ancestry is not conversational reporting

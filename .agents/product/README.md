@@ -351,6 +351,28 @@ conversation. The reason is in the Dreamux log.` — and delivers nothing to
   remains selectable. Existing workspaces and canonical Command inputs keep
   their meaning.
   (Requirement: [remove-creation-repo-slug](/.agents/tasks/mcp/remove-creation-repo-slug/requirement.md).)
+- **Managed worktrees run an optional repository-root setup script.** When
+  Dreamux creates a new managed Git worktree (`team.create`, Dispatcher-root
+  `teammate.spawn`, or reopening a closed managed TeamMate whose checkout was
+  deleted), it reads `<sourceRepo>/.dreamux-worktree.json` if present (absent,
+  empty, or reused/non-managed workspaces are untouched). The JSON config
+  defines `setup.script`, optional `setup.background` (default `false`), and
+  optional OS overrides (`darwin`, `linux`, `win32`); malformed JSON, unknown
+  keys, or invalid types fail loud before creating `.workspace/` directories or
+  running `git worktree add`. The script runs via the OS default shell in the
+  new worktree root under the Dreamux host user (not inside an agent sandbox)
+  with `DREAMUX_SOURCE_REPO` and `DREAMUX_WORKTREE_PATH` set. Under
+  `background: false`, worktree creation waits for the direct shell to exit `0`
+  before any agent launches or receives its first prompt; a trigger or script
+  failure aborts creation loudly and rolls back the newly created checkout
+  without deleting Git branches or touching the source repository (even when
+  `cleanup: keep` was requested). Under `background: true`, a trigger failure
+  (`spawn()` throwing) still fails loud and rolls back, while once started the
+  agent launches immediately and runtime completion or failure is written to
+  Dreamux logs. Over the MCP stdio shim, `mcp.toolcall` waits without the 10s
+  handshake socket timer (aborting pending sockets when the MCP transport
+  closes) so legitimate foreground setup scripts are not cut short at 10s.
+  (Task: [add-worktree-setup-script](/.agents/tasks/workspace/add-worktree-setup-script/README.md).)
 - **`identity` shapes only the agent it is given to.** The `identity` passed
   to `team.create` guides the created TeamLeader alone; members do not inherit
   it — each member's identity comes from its own `teammate.spawn`.

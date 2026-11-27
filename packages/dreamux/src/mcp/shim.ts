@@ -66,31 +66,45 @@ export async function runDreamuxMcp(
   if (opts.lease === '') {
     throw new Error('the Dreamux MCP shim requires a lease token');
   }
-  const core = adminJsonInvoker(
+  const socketOption =
     opts.adminSocketPath !== undefined
       ? { socketPath: opts.adminSocketPath }
-      : {},
-  );
+      : {};
+  const describeCore = adminJsonInvoker(socketOption);
+  const toolAbort = new AbortController();
+  // Tool calls (such as `team_create` awaiting a foreground worktree setup
+  // script) can legitimately run longer than the 10s handshake default; local
+  // socket disconnects still fail immediately when the server goes away, and
+  // closing the MCP transport aborts pending sockets so the shim exits cleanly.
+  const toolCore = adminJsonInvoker({
+    ...socketOption,
+    timeoutMs: null,
+    signal: toolAbort.signal,
+  });
   // Fail loud before serving anything: a server that cannot learn its own
   // catalog must not come up advertising an empty one.
-  const description = await describe(core, opts.lease);
+  const description = await describe(describeCore, opts.lease);
   // Defensive, not authoritative — see the module note.
 
   const tools = validateMcpToolCatalog(
     description.tools,
     `${description.identity.name} tool catalog`,
   );
-  await runMcpServer({
-    identity: description.identity,
-    tools: tools.map((tool): McpToolDefinition => ({
-      ...tool,
-      handler: (args) => callTool(core, opts.lease, tool.name, args),
-    })),
-    input: opts.input,
-    output: opts.output,
-    transport: opts.transport,
-    log: opts.log,
-  });
+  try {
+    await runMcpServer({
+      identity: description.identity,
+      tools: tools.map((tool): McpToolDefinition => ({
+        ...tool,
+        handler: (args) => callTool(toolCore, opts.lease, tool.name, args),
+      })),
+      input: opts.input,
+      output: opts.output,
+      transport: opts.transport,
+      log: opts.log,
+    });
+  } finally {
+    toolAbort.abort();
+  }
 }
 
 async function describe(

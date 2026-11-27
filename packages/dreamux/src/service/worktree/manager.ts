@@ -8,6 +8,8 @@ import {
 } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 
+import type { DreamuxLogger } from '@excitedjs/dreamux-types';
+import { errorInfo } from '@excitedjs/dreamux-utils';
 import { execa } from 'execa';
 
 import { isNotFound } from '../../platform/fs-errors.js';
@@ -22,12 +24,17 @@ import {
   managedWorkspaceGitignorePath,
   managedWorktreePath,
 } from './paths.js';
+import { readWorktreeSetup, runWorktreeSetup } from './setup.js';
 import type {
   AgentEntityWorktreeCleanupState,
   AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
 import type { TeamMateSharedWorkspace } from '../agent/types.js';
 import type { TeamMateWorktreeRequest } from './types.js';
+
+export interface WorktreeManagerOptions {
+  log?: DreamuxLogger;
+}
 
 export type WorktreeCleanupBlockedReason = 'dirty' | 'unmerged';
 
@@ -80,6 +87,12 @@ export function reuseCwdWorktree(
 }
 
 export class WorktreeManager {
+  private readonly log: DreamuxLogger | undefined;
+
+  constructor(options: WorktreeManagerOptions = {}) {
+    this.log = options.log;
+  }
+
   async prepare(input: {
     dispatcherId: string;
     teammateName: string;
@@ -141,10 +154,11 @@ export class WorktreeManager {
       canonicalRepoRoot,
       slug,
     });
-    await this.ensureWorkspaceBoundary(dispatcherWorkspace);
-    await mkdir(dirname(path), { recursive: true });
     const exists = await pathExists(path);
     if (!exists) {
+      const setup = await readWorktreeSetup(sourceRepo);
+      await this.ensureWorkspaceBoundary(dispatcherWorkspace);
+      await mkdir(dirname(path), { recursive: true });
       const branchExists = await gitOk(sourceRepo, [
         'rev-parse',
         '--verify',
@@ -157,7 +171,21 @@ export class WorktreeManager {
         path,
         branchExists ? branch : baseRef,
       ]);
+      if (setup !== null) {
+        try {
+          await runWorktreeSetup({
+            setup,
+            sourceRepo,
+            worktreePath: path,
+            log: this.log,
+          });
+        } catch (error) {
+          await this.rollbackCreatedWorktree(sourceRepo, path);
+          throw error;
+        }
+      }
     } else {
+      await this.ensureWorkspaceBoundary(dispatcherWorkspace);
       await assertRegisteredWorktree({
         repo: sourceRepo,
         path,
@@ -236,21 +264,7 @@ export class WorktreeManager {
       if (assessment.status === 'blocked' && !force) return assessment.worktree;
       const repo =
         identity.source_repo ?? (await this.repoRoot(identity.source_cwd));
-      if (force) await assertRemovableWorktree({ repo, path: worktree.path });
-      // A recovered record can identify the checkout itself as its source.
-      // Run from the shared Git directory so removal never holds the checkout
-      // open as the subprocess cwd (Windows refuses to remove that directory).
-      const commonDir = await git(repo, [
-        'rev-parse',
-        '--path-format=absolute',
-        '--git-common-dir',
-      ]);
-      await git(commonDir.stdout.trim(), [
-        'worktree',
-        'remove',
-        ...(force ? ['--force'] : []),
-        worktree.path,
-      ]);
+      await this.removeRegisteredWorktree(repo, worktree.path, force);
       return { ...worktree, cleanup_state: 'deleted', cleanup_error: null };
     } catch (err) {
       // Git's non-forced removal is the final authority. Re-read the cheap
@@ -333,6 +347,53 @@ export class WorktreeManager {
     const gitignore = managedWorkspaceGitignorePath(dispatcherWorkspace);
     if (await boundaryGitignoreIsSafe(gitignore)) return;
     await writeFile(gitignore, BOUNDARY_GITIGNORE_CONTENT, 'utf8');
+  }
+
+  /**
+   * Remove a checkout just created by this `prepare()` call when its setup
+   * failed. Always removes the newly created checkout regardless of requested
+   * `cleanup` policy, and never touches the source repo or deletes Git branches.
+   */
+  private async rollbackCreatedWorktree(
+    sourceRepo: string,
+    path: string,
+  ): Promise<void> {
+    try {
+      await this.removeRegisteredWorktree(sourceRepo, path, true);
+    } catch (rollbackError) {
+      this.log?.warn(
+        {
+          source_repo: sourceRepo,
+          worktree_path: path,
+          err: errorInfo(rollbackError),
+        },
+        'failed to remove newly created worktree after setup failure',
+      );
+    }
+  }
+
+  /**
+   * Remove one registered worktree from the shared Git directory so removal
+   * never holds the checkout open as the subprocess cwd (Windows refuses to
+   * remove a directory in use).
+   */
+  private async removeRegisteredWorktree(
+    repo: string,
+    path: string,
+    force: boolean,
+  ): Promise<void> {
+    if (force) await assertRemovableWorktree({ repo, path });
+    const commonDir = await git(repo, [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ]);
+    await git(commonDir.stdout.trim(), [
+      'worktree',
+      'remove',
+      ...(force ? ['--force'] : []),
+      path,
+    ]);
   }
 
   private async repoRoot(cwd: string): Promise<string> {
