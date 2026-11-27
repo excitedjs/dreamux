@@ -529,7 +529,9 @@ child `exit` (with a brief pipe-flush window on non-zero/signal exit so
 open-pipe descendants do not block launch), blocks agent launch and first
 prompt until exit `0`, and rolls back the newly created checkout via
 `WorktreeManager`'s shared `removeRegisteredWorktree` helper on failure without
-deleting Git branches. Background execution fails loud if triggering itself
+deleting Git branches (on Windows, a failing script that leaves a descendant
+holding a `cwd` inside the checkout may cause immediate rollback removal to log
+an `EBUSY` warning while still surfacing the original setup failure). Background execution fails loud if triggering itself
 throws, otherwise returns immediately and logs asynchronous settlement; piped
 stdio preserves failure output tails and may terminate on daemon restart.
 Managed-service installations should account for non-interactive `PATH`.

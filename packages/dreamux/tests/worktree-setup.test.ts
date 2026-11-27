@@ -571,6 +571,42 @@ describe('WorktreeManager.prepare(): post-worktree setup script execution', () =
     );
   });
 
+  it('fails loud and rolls back when background: true throws synchronously during spawn()', async () => {
+    const repo = await initRepo(root);
+    const workspace = join(root, 'workspace');
+    await mkdir(workspace, { recursive: true });
+
+    // A NUL byte triggers a synchronous ERR_INVALID_ARG_VALUE from spawn() on
+    // every platform, exercising trigger failure distinct from post-launch exit.
+    await writeSetupConfig(repo, {
+      setup: {
+        background: true,
+        script: 'echo hi\0bad',
+      },
+    });
+
+    const manager = new WorktreeManager();
+    await expect(
+      manager.prepare({
+        dispatcherId: 'flow',
+        teammateName: 'bg-sync-spawn-fail',
+        cwd: repo,
+        dispatcherWorkspace: workspace,
+        request: { mode: 'managed' },
+      }),
+    ).rejects.toThrow();
+
+    expect(await git(repo, ['worktree', 'list', '--porcelain'])).not.toMatch(
+      /bg-sync-spawn-fail/,
+    );
+    expect(
+      (
+        await git(repo, ['branch', '--list', 'dreamux/bg-sync-spawn-fail'])
+      ).trim(),
+    ).toBe('dreamux/bg-sync-spawn-fail');
+    expect(await pathIsDirectory(repo)).toBe(true);
+  });
+
   it('does not run setup on existing worktree reuse, reuse-cwd, or default workspaces', async () => {
     const repo = await initRepo(root);
     const workspace = join(root, 'workspace');
