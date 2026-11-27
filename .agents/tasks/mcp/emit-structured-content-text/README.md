@@ -3,16 +3,16 @@
 ## Current state
 
 - Goal: Emit serialized JSON text alongside `structuredContent` so MCP clients that read `content` (including Antigravity) receive structured tool results, unwrap Codex `mcpToolCall` results for COT display, and streamline `dev-workflow` by removing `awaiting-development-approval` and mechanical stage-transition cards.
-- State: `review`
+- State: `done`
 - Requirement: [Current requirement](/.agents/tasks/mcp/emit-structured-content-text/requirement.md)
 - Final solution: [Technical solution](/.agents/tasks/mcp/emit-structured-content-text/technical-design/final.md)
-- Verification: [Local gates and coverage limits](/.agents/tasks/mcp/emit-structured-content-text/verification.md)
+- Verification: [Local gates, review adjudication, and coverage limits](/.agents/tasks/mcp/emit-structured-content-text/verification.md)
 - Solution review Issue: Not created.
-- Blockers: Independent Devbox review pending.
-- Next action: Obtain independent Devbox review on the draft PR, adjudicate any findings, then complete `knowledge-closeout` and set `done`.
+- Blockers: None.
+- Next action: Obtain operator merge authorization via interactive card after required CI on PR #495 passes.
 - Related tasks: Supersedes Ruling #1 of [MCP Protocol Conformance Rulings](/.agents/tasks/mcp/protocol-conformance/README.md); resolves the deferred Codex MCP result-envelope COT display item noted in [Feishu COT conversation cards](/.agents/tasks/channel/feishu-cot-conversation-cards/README.md); builds on [Simplify MCP results and preserve reminders](/.agents/tasks/mcp/simplify-mcp-results/README.md) and [Integrate Antigravity runtime](/.agents/tasks/architecture/integrate-antigravity-runtime/README.md).
 
-## Stage decisions
+## Operator decisions
 
 - Intake (2026-11-27): Sent interactive task-discovery card offering a new task under `mcp` vs reusing `mcp/protocol-conformance`; operator selected **新建任务 (Recommended)**, authorizing creation of `.agents/tasks/mcp/emit-structured-content-text` and entry into `clarification`.
 - Clarification scope update (2026-11-27): On the requirement-confirmation card, operator answered "一并处理 codex 的 cot 问题", expanding scope to also unwrap Codex `mcpToolCall` result envelopes in `packages/agent-runtime/codex` for COT display.
@@ -33,4 +33,5 @@
 ## Delivery
 
 - Pull request: [PR #495](https://github.com/excitedjs/dreamux/pull/495)
-- Knowledge closeout: Owners updated in working tree; final trunk validation (`State: done`) pending Devbox confirmation of the review-fix delta.
+- Independent review: Approved by Devbox on [PR #495](https://github.com/excitedjs/dreamux/pull/495#pullrequestreview-6086558605) after closing both `dev-workflow` documentation findings from [round 1](https://github.com/excitedjs/dreamux/pull/495#pullrequestreview-6086501373).
+- Knowledge closeout: Complete (`node .agents/scripts/check.mjs` passed). Updated `.agents/product/README.md`, `.agents/domains/model-facing-writing.md`, `.agents/domains/current-architecture.md`, `.agents/domains/channel.md`, `.agents/domains/dispatcher-orchestration.md`, `.agents/tasks/mcp/protocol-conformance/requirement.md`, `.agents/tasks/channel/simplify-feishu-replies/README.md`, and `.agents/skills/dev-workflow/`; glossary, root routing, directory `CLAUDE.md` files, and `dreamux-maintenance` are N/A (no new concept, route, local invariant, or persisted config/state change).
