@@ -411,19 +411,38 @@ describe('WorktreeManager.prepare(): post-worktree setup script execution', () =
     await mkdir(workspace, { recursive: true });
     const childPidPath = join(root, 'descendant.pid');
 
+    const descendantCode = `
+      const fs = require('node:fs');
+      fs.writeFileSync(${JSON.stringify(childPidPath)}, String(process.pid));
+      setTimeout(() => {}, 15000);
+    `;
+    const descendantEncoded = Buffer.from(descendantCode, 'utf8').toString(
+      'base64',
+    );
+
     await writeSetupConfig(repo, {
       setup: {
         background: false,
         script: nodeScript(`
           const fs = require('node:fs');
+          const os = require('node:os');
           const { spawn } = require('node:child_process');
           const descendant = spawn(
             process.execPath,
-            ['-e', 'setTimeout(() => {}, 15000)'],
-            { stdio: 'inherit' },
+            ['-e', "eval(Buffer.from('${descendantEncoded}','base64').toString())"],
+            {
+              cwd: os.tmpdir(),
+              detached: true,
+              stdio: ['ignore', 'inherit', 'inherit'],
+              windowsHide: true,
+            },
           );
-          fs.writeFileSync(${JSON.stringify(childPidPath)}, String(descendant.pid));
-          process.exit(0);
+          descendant.unref();
+          const poll = setInterval(() => {
+            if (!fs.existsSync(${JSON.stringify(childPidPath)})) return;
+            clearInterval(poll);
+            process.exit(0);
+          }, 15);
         `),
       },
     });
