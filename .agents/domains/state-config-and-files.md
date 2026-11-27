@@ -674,6 +674,7 @@ Source:
 - `/packages/plugins/bootstrap/src/index.ts`
 - `/packages/dreamux/src/service/worktree/paths.ts`
 - `/packages/dreamux/src/service/worktree/manager.ts`
+- `/packages/dreamux/src/service/worktree/setup.ts`
 - `/packages/dreamux/src/service/worktree/workspaces.ts`
 
 ### Native Private Files And Log Preparation

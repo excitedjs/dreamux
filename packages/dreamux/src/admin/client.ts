@@ -26,7 +26,10 @@ import type { AdminRequest, AdminResponse } from './protocol.js';
 
 export interface AdminInvokerOptions {
   socketPath?: string;
-  timeoutMs?: number;
+  /** Request timeout in milliseconds; `null` disables the socket timer. */
+  timeoutMs?: number | null;
+  /** Optional abort signal that closes any in-flight socket connection. */
+  signal?: AbortSignal;
 }
 
 /**
@@ -64,7 +67,9 @@ export function adminJsonInvoker(
   options: AdminInvokerOptions = {},
 ): JsonInvoker {
   const socketPath = options.socketPath ?? defaultAdminSocketPath();
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs =
+    options.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : options.timeoutMs;
+  const signal = options.signal;
   return {
     invoke(method: string, params: JsonValue): Promise<JsonValue> {
       const request: AdminRequest = {
@@ -74,7 +79,12 @@ export function adminJsonInvoker(
         params: params as Record<string, unknown>,
       };
       // Whatever came back crossed the wire as JSON and parsed as JSON.
-      return sendOne(socketPath, request, timeoutMs) as Promise<JsonValue>;
+      return sendOne(
+        socketPath,
+        request,
+        timeoutMs,
+        signal,
+      ) as Promise<JsonValue>;
     },
   };
 }
@@ -82,30 +92,48 @@ export function adminJsonInvoker(
 function sendOne(
   socketPath: string,
   request: AdminRequest,
-  timeoutMs: number,
+  timeoutMs: number | null,
+  signal: AbortSignal | undefined,
 ): Promise<unknown> {
+  if (signal?.aborted) {
+    return Promise.reject(
+      new TransportError('admin socket request aborted before connecting'),
+    );
+  }
   return new Promise((resolve, reject) => {
     let buf = '';
     let settled = false;
     let sock: Socket | null = null;
-    const timer = setTimeout(() => {
-      settle(
-        new TransportError(
-          `admin socket request timed out after ${timeoutMs}ms`,
-        ),
-      );
+    const destroySocket = (): void => {
       try {
         sock?.destroy();
       } catch {
         /* already gone */
       }
-    }, timeoutMs);
-    timer.unref();
+    };
+    const onAbort = (): void => {
+      settle(new TransportError('admin socket request aborted'));
+      destroySocket();
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    const timer =
+      timeoutMs !== null
+        ? setTimeout(() => {
+            settle(
+              new TransportError(
+                `admin socket request timed out after ${timeoutMs}ms`,
+              ),
+            );
+            destroySocket();
+          }, timeoutMs)
+        : null;
+    timer?.unref();
 
     function settle(value: unknown, isError = true): void {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer !== null) clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
       if (isError) reject(value);
       else resolve(value);
     }

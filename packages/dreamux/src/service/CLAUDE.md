@@ -321,8 +321,9 @@ the Team.
   or configuration schema changes.
 
 - **`worktree/`** — `WorktreeManager` (default work dir, reuse-cwd, and managed
-  modes), workspace resolution, and the repository-request reader that says
-  what a caller may ask for a working directory.
+  modes), repository-root `.dreamux-worktree.json` post-checkout setup script
+  execution (`setup.ts`), workspace resolution, and the repository-request
+  reader that says what a caller may ask for a working directory.
 - **`scheduler/`** — one directory, the per-domain template plus two
   scheduler-specific files. `index.ts` is `SchedulerService`, implementing
   `SchedulerCommands` directly (no `.commands` adapter object): it owns the
