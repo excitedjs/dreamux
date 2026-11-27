@@ -1231,4 +1231,204 @@ describe('native ACP runtime', () => {
     });
     await instance.stop();
   });
+
+  it('closes open reasoning before turn.ended on stop', async () => {
+    const instance = create();
+    await instance.start();
+    const admission = await submitted(instance.submit({ text: 'REASON' }));
+    await waitPrompts(1);
+    const client = peer.prompts[0]!.ctx.client;
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'working...' },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'assistant.reasoning',
+          status: 'streaming',
+          text: 'working...',
+        }),
+      ),
+    );
+    await instance.stop();
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'stopped',
+    });
+    const completedAt = events.findIndex(
+      (event) =>
+        event.kind === 'assistant.reasoning' && event.status === 'completed',
+    );
+    const endedAt = events.findIndex((event) => event.kind === 'turn.ended');
+    expect(completedAt).toBeGreaterThan(-1);
+    expect(endedAt).toBeGreaterThan(completedAt);
+  });
+
+  it('closes open reasoning before turn.ended on transport loss', async () => {
+    const instance = create();
+    await instance.start();
+    const admission = await submitted(instance.submit({ text: 'DROP-REASON' }));
+    await waitPrompts(1);
+    const client = peer.prompts[0]!.ctx.client;
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'mid-thought' },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          kind: 'assistant.reasoning',
+          status: 'streaming',
+          text: 'mid-thought',
+        }),
+      ),
+    );
+    peer.close();
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'failed',
+      error: expect.any(Error),
+    });
+    const completedAt = events.findIndex(
+      (event) =>
+        event.kind === 'assistant.reasoning' && event.status === 'completed',
+    );
+    const endedAt = events.findIndex((event) => event.kind === 'turn.ended');
+    expect(completedAt).toBeGreaterThan(-1);
+    expect(endedAt).toBeGreaterThan(completedAt);
+  });
+
+  it('flushes anonymous messages before each turn.ended when prompt groups overlap', async () => {
+    const instance = create();
+    await instance.start();
+    const first = await submitted(instance.submit({ text: 'ANON-A' }));
+    const second = await submitted(instance.submit({ text: 'ANON-B' }));
+    await waitPrompts(2);
+    await input('ANON-A');
+    const client = peer.prompts[0]!.ctx.client;
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'answer A' },
+      },
+    });
+    await record('PLANNER_RESPONSE', 'answer A');
+    await input('ANON-B');
+    peer.prompts[0]!.result.resolve({ stopReason: 'end_turn' });
+    await expect(first.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'answer A' },
+    });
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'answer B' },
+      },
+    });
+    await record('PLANNER_RESPONSE', 'answer B');
+    peer.prompts[1]!.result.resolve({ stopReason: 'end_turn' });
+    await expect(second.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'answer B' },
+    });
+
+    const timeline = events
+      .filter(
+        (event) =>
+          event.kind === 'assistant.message' || event.kind === 'turn.ended',
+      )
+      .map((event) =>
+        event.kind === 'assistant.message'
+          ? `message:${event.text}`
+          : `ended:${event.status}`,
+      );
+    expect(timeline).toEqual([
+      'message:answer A',
+      'ended:completed',
+      'message:answer B',
+      'ended:completed',
+    ]);
+  });
+
+  it('does not emit token.usage when PromptResponse carries per-turn usage', async () => {
+    const instance = create();
+    await instance.start();
+    const admission = await submitted(instance.submit({ text: 'USAGE-WIRE' }));
+    await waitPrompts(1);
+    await input('USAGE-WIRE');
+    await record('PLANNER_RESPONSE', 'usage answer');
+    peer.prompts[0]!.result.resolve({
+      stopReason: 'end_turn',
+      usage: { inputTokens: 100, outputTokens: 20, totalTokens: 120 },
+    } as PromptResponse);
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'usage answer' },
+    });
+    expect(events.some((event) => event.kind === 'token.usage')).toBe(false);
+  });
+
+  it('settles a turn normally after a non-zero run_command exit_code', async () => {
+    const instance = create();
+    await instance.start();
+    const admission = await submitted(instance.submit({ text: 'CMD-FAIL' }));
+    await waitPrompts(1);
+    const client = peer.prompts[0]!.ctx.client;
+    await input('CMD-FAIL');
+    await record('PLANNER_RESPONSE', '', [{ name: 'run_command' }]);
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call',
+        toolCallId: 'exit-1-call',
+        name: 'run_command',
+        title: 'exit 1',
+        kind: 'execute',
+        status: 'in_progress',
+        rawInput: { CommandLine: 'exit 1', toolSummary: 'Exit non-zero' },
+      },
+    });
+    await client.notify('session/update', {
+      sessionId: 'native-session',
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'exit-1-call',
+        status: 'completed',
+        rawOutput: { output: 'Command exited with code 1.', exit_code: 1 },
+        content: [
+          {
+            type: 'content',
+            content: { type: 'text', text: 'Command exited with code 1.' },
+          },
+        ],
+      },
+    });
+    peer.prompts[0]!.result.resolve({ stopReason: 'end_turn' });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(events.some((event) => event.kind === 'turn.result')).toBe(false);
+    await record('PLANNER_RESPONSE', 'Handled exit 1');
+    await expect(admission.submission.settled).resolves.toEqual({
+      kind: 'completion',
+      completion: { status: 'completed', resultText: 'Handled exit 1' },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: 'tool.call',
+        id: 'exit-1-call',
+        action: 'run',
+        summary: 'Exit non-zero',
+        status: 'failed',
+        result: 'Command exited with code 1.',
+        error: 'Command exited with code 1.',
+      }),
+    );
+    expect(events.some((event) => event.kind === 'token.usage')).toBe(false);
+  });
 });

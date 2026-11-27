@@ -1277,10 +1277,15 @@ materialized additively in a provider-cache `.agents` view or passed through ACP
 session setup; no custom-agent profile or user skill-directory write exists.
 Native `disabledTools` is not applied. Full native transcripts under
 `~/.gemini/antigravity-cli/brain/<conversation>/` supply live input/completion
-evidence and bounded cold activity reads. ACP activities are emitted only when
-agy supplies the required native object ids; it does not invent interrupted-turn,
-message, or cumulative-usage identities. Neutral `outputSchema` is rejected at
-provider creation.
+evidence and bounded cold activity reads. ACP tool, compaction, and
+interrupted-turn activities require native ids, and cumulative `token.usage`
+remains omitted because agy reports per-turn counters rather than session
+totals. For streamed `agent_thought_chunk` and `agent_message_chunk` updates
+where agy structurally omits `messageId`, `AcpActivity` allocates monotonic
+process-local live display block ids solely for live display grouping (never
+persisted or used by cold reads), and `acp/tool-display.ts` maps Antigravity's
+built-in and MCP tools plus plain-text tool results. Neutral `outputSchema` is
+rejected at provider creation.
 
 Source:
 
@@ -1288,6 +1293,8 @@ Source:
 - `/packages/agent-runtime/antigravity/src/native-customizations.ts`
 - `/packages/agent-runtime/antigravity/src/tmux/runtime.ts`
 - `/packages/agent-runtime/antigravity/src/acp/runtime.ts`
+- `/packages/agent-runtime/antigravity/src/acp/activity.ts`
+- `/packages/agent-runtime/antigravity/src/acp/tool-display.ts`
 - `/packages/agent-runtime/antigravity/src/transcript/reader.ts`
 
 ## Invariants
