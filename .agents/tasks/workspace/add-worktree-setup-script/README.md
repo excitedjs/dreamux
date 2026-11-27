@@ -31,7 +31,7 @@
 
 ## Delivery
 
-- Pull request: Not opened.
+- Pull request: https://github.com/excitedjs/dreamux/pull/494
 - Knowledge closeout:
   - Task record (`.agents/tasks/workspace/add-worktree-setup-script/`): Updated (`requirement.md`, `technical-design/final.md`, `review-adjudication.md`, `verification.md`, `README.md`).
   - Product behavior catalog (`.agents/product/README.md`): Updated with managed worktree setup script execution and MCP toolcall timeout/abort behavior.
