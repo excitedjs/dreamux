@@ -34,7 +34,7 @@
 
 ## Delivery
 
-- Pull request: Not opened.
+- Pull request: [#497](https://github.com/excitedjs/dreamux/pull/497).
 - Knowledge closeout:
   - `.agents/product/README.md`: Updated (`Antigravity runtime provider` ACP live display behavior).
   - `.agents/domains/provider-runtime.md`: Updated (`Antigravity External Provider` live activity ids and `acp/tool-display.ts` / `acp/activity.ts` pointers).
