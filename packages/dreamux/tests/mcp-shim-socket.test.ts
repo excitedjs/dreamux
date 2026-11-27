@@ -149,7 +149,7 @@ describe('runDreamuxMcp — end to end over a real admin socket', () => {
             value: 'hi',
           });
           expect(result).toEqual({
-            content: [],
+            content: [{ type: 'text', text: JSON.stringify({ echoed: 'hi' }) }],
             structuredContent: { echoed: 'hi' },
           });
         } finally {

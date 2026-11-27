@@ -1,6 +1,6 @@
 # Requirement Clarification
 
-Enter `clarification` after the task-selection card is answered. Inspect current
+Enter `clarification` after task discovery. Inspect current
 source and relevant evidence. The operator decides desired behavior, scope, and
 constraints; claims about current behavior and root causes require verification.
 
@@ -29,6 +29,8 @@ unconfirmed interpretations labeled. Link the requirement and next action from
 the task README according to [task records](task-records.md).
 
 Allow only read-only investigation and authorized task-document updates here.
-Request entry to `solution` through a requirement-confirmation card when every
-blocking question affecting the outcome, scope, or acceptance criteria is settled.
-Name any remaining non-blocking assumptions, risks, or follow-ups.
+When every blocking question affecting the outcome, scope, or acceptance
+criteria is settled, enter `solution` directly (or send a requirement card first
+only when the scope is large or still needs separate alignment before designing).
+Name any remaining non-blocking assumptions, risks, or follow-ups in
+`requirement.md` so they are played back in the `solution` approval card.

@@ -1303,6 +1303,149 @@ describe('CodexRuntime native turn end', () => {
     await runtime.stop();
   });
 
+  it('unwraps Codex mcpToolCall result envelopes for COT activity display', async () => {
+    const activity: RuntimeActivity[] = [];
+    const client = new FakeCodexRpcClient({ autoComplete: false });
+    const { deps } = makeDeps({
+      client,
+      events: (fact) => {
+        if (
+          fact.kind === 'turn.result' ||
+          fact.kind === 'session.title.changed'
+        )
+          return;
+        activity.push(fact);
+      },
+    });
+    const runtime = new CodexRuntime(identity(null), deps);
+    await runtime.start();
+    const submission = requireSubmitted(
+      await runtime.submit({ text: 'call mcp tools' }),
+    );
+
+    client.emitItem('fresh-thread-1', 'turn-1', 'started', {
+      type: 'mcpToolCall',
+      id: 'mcp-1',
+      server: 'channel-feishu',
+      tool: 'reply',
+      arguments: { text: 'hello' },
+      result: null,
+      error: null,
+    });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'mcpToolCall',
+      id: 'mcp-1',
+      server: 'channel-feishu',
+      tool: 'reply',
+      arguments: { text: 'hello' },
+      result: {
+        content: [{ type: 'text', text: '{"message_ids":["m1"]}' }],
+        structuredContent: { message_ids: ['m1'] },
+        _meta: { server: 'channel-feishu' },
+      },
+      error: null,
+    });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'mcpToolCall',
+      id: 'mcp-2',
+      server: 'teammate',
+      tool: 'spawn',
+      arguments: {},
+      result: {
+        content: [
+          { type: 'text', text: 'Spawned worker-1.' },
+          { type: 'text', text: 'Wait for completion.' },
+        ],
+        structuredContent: null,
+        _meta: null,
+      },
+      error: null,
+    });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'mcpToolCall',
+      id: 'mcp-3',
+      server: 'media',
+      tool: 'screenshot',
+      arguments: {},
+      result: {
+        content: [{ type: 'image', data: 'abc', mimeType: 'image/png' }],
+        structuredContent: null,
+        _meta: null,
+      },
+      error: null,
+    });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'mcpToolCall',
+      id: 'mcp-4',
+      server: 'noop',
+      tool: 'empty',
+      arguments: {},
+      result: { content: [], structuredContent: null, _meta: null },
+      error: null,
+    });
+    client.emitItem('fresh-thread-1', 'turn-1', 'completed', {
+      type: 'mcpToolCall',
+      id: 'mcp-5',
+      server: 'noop',
+      tool: 'null_result',
+      arguments: {},
+      result: null,
+      error: null,
+    });
+
+    expect(
+      activity
+        .filter((fact) => fact.kind === 'tool.call')
+        .map((fact) => ({
+          id: fact.id,
+          toolName: fact.toolName,
+          status: fact.status,
+          result: fact.result,
+        })),
+    ).toEqual([
+      {
+        id: 'mcp-1',
+        toolName: 'channel-feishu.reply',
+        status: 'started',
+        result: null,
+      },
+      {
+        id: 'mcp-1',
+        toolName: 'channel-feishu.reply',
+        status: 'completed',
+        result: { message_ids: ['m1'] },
+      },
+      {
+        id: 'mcp-2',
+        toolName: 'teammate.spawn',
+        status: 'completed',
+        result: 'Spawned worker-1.\nWait for completion.',
+      },
+      {
+        id: 'mcp-3',
+        toolName: 'media.screenshot',
+        status: 'completed',
+        result: [{ type: 'image', data: 'abc', mimeType: 'image/png' }],
+      },
+      {
+        id: 'mcp-4',
+        toolName: 'noop.empty',
+        status: 'completed',
+        result: null,
+      },
+      {
+        id: 'mcp-5',
+        toolName: 'noop.null_result',
+        status: 'completed',
+        result: null,
+      },
+    ]);
+
+    client.emitCompleted('fresh-thread-1', 'turn-1', 'done');
+    await submission.settled;
+    await runtime.stop();
+  });
+
   it('ends a native turn no submission ever bound, after its items displayed', async () => {
     const activity: RuntimeActivity[] = [];
     const client = new FakeCodexRpcClient({ autoComplete: false });

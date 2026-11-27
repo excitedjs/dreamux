@@ -162,7 +162,8 @@ schemas.
 Successful results are canonical values: `reply` returns
 `{ message_ids: string[] }`, `react` returns `{ reaction_id: string }`, and
 `list_chat_bots` returns `{ chat_id, known, trusted }`. Without success text, the
-shared server exposes the value as `structuredContent` with `content: []` and
+shared server exposes the value as `structuredContent` alongside its compact
+serialized JSON in one `content` text block and
 validates any published output schema. Nonempty `ChannelMcpToolOutcome.text`
 is the complete model-visible result: the provider includes actionable facts
 and reminders, and the adapter forwards it verbatim in one `content` block,

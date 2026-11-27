@@ -52,8 +52,8 @@ Keep these fields current and concise:
 
 Use one of these states:
 
-`intake`, `clarification`, `solution`, `awaiting-development-approval`,
-`implementation`, `review`, `knowledge-closeout`, `done`, or `blocked`.
+`intake`, `clarification`, `solution`, `implementation`, `review`,
+`knowledge-closeout`, `done`, or `blocked`.
 
 Do not keep a parallel progress file or free-form maturity field. Preserve the
 operator confirmations, development approval, material re-approval, and review
@@ -70,7 +70,7 @@ already record the first kind authoritatively, for free, and without drifting.
 Apply one test to every line: **can something outside this repository make this
 false while the file sits untouched?**
 
-- A state of `intake`, `blocked`, or `done` survives the test. The six middle
+- A state of `intake`, `blocked`, or `done` survives the test. The five middle
   states do not: `review` stops being true the moment a reviewer answers, and
   `implementation` stops being true when the branch is pushed. They are correct
   and expected on a working branch, which is a working copy — and they are a

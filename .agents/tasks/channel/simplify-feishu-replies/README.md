@@ -30,7 +30,7 @@ Knowledge owners updated in the same change:
 - [Product behavior](/.agents/product/README.md).
 - [Transport invariants](/packages/channel/feishu-transport/CLAUDE.md).
 - [Feishu maintenance](/packages/dreamux/skills/dispatcher/dreamux-maintenance/references/builtin-feishu.md).
-- [Interactive development authorization](/.agents/skills/dev-workflow/references/development-approval.md).
+- [Interactive solution and development authorization](/.agents/skills/dev-workflow/references/solution-consultation.md).
 
 The glossary and root routing need no new concept or entry. Identity remains a
 string; no stored version, shape, migration, or provider contract changes.

@@ -24,3 +24,4 @@
 - [Simplify MCP results and preserve reminders](/.agents/tasks/mcp/simplify-mcp-results/README.md) — Reduce repeated Team and TeamMate MCP data, expose configured runtime guidance and collaboration-space identity, and preserve operation reminders in model-visible results.
 - [Guide English handoff prompts](/.agents/tasks/mcp/english-handoff-prompts/README.md) — Tell callers to write Team and TeamMate MCP prompts in English.
 - [State when an ordinary member should message its owner](/.agents/tasks/mcp/member-send-guidance/README.md) — Name the member's actual owner, state the delivery fact before the send/list capability, and give `send` the condition under which the call is worth making.
+- [Serialize structured MCP results into content text](/.agents/tasks/mcp/emit-structured-content-text/README.md) — Emit serialized JSON text alongside structuredContent so MCP clients that read content (including Antigravity) receive structured tool results.

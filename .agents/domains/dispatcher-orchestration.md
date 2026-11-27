@@ -571,8 +571,8 @@ redeem a token and one who can already holds full admin authority.
 and protocol owner. It serves exactly `2026-07-28`, `2025-11-25`, and
 `2025-06-18` and validates the JSON Schemas it advertises. A success with nonempty
 text forwards that complete authored result verbatim in content only, without a
-JSON copy. With absent or empty text it uses
-`structuredContent` and `content: []`. Tools that can return text publish no
+JSON copy. With absent or empty text it exposes `structuredContent` alongside
+its compact serialized JSON in one `content` text block. Tools that can return text publish no
 output schema. The complete wire contract lives in
 [model-facing writing](model-facing-writing.md#mcp-descriptions-and-results).
 Each delegate owns its tool visibility, bound scope, result projection, and

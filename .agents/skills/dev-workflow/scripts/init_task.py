@@ -16,7 +16,6 @@ STATES = {
     "intake",
     "clarification",
     "solution",
-    "awaiting-development-approval",
     "implementation",
     "review",
     "knowledge-closeout",
@@ -33,7 +32,7 @@ STATES = {
 # named blocker), and `done` (the work is finished and submitted) are all
 # self-consistent — they stay true whatever the pull request does next.
 #
-# The six middle states describe a process in flight. `review` stops being true
+# The five middle states describe a process in flight. `review` stops being true
 # the moment a reviewer answers; `implementation` stops being true when the
 # branch is pushed. They are useful on a working branch, which is a working
 # copy, and they are a lie the moment that branch merges. Merge facts belong to

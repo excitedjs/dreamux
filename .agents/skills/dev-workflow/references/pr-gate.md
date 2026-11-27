@@ -1,7 +1,7 @@
 # GitHub PR, CI, and Merge
 
-Enter delivery after accepted blocking findings are resolved, required local
-verification and knowledge closeout are complete, and the operator has confirmed
+Enter delivery once accepted blocking findings are resolved, required local
+verification and knowledge closeout are complete, and the task README is set to
 `done`. Commit the reviewed change with the required author identity and co-author
 trailer, push the branch, and open or update one public GitHub PR targeting `next`.
 Follow [repository operations](../../../domains/repository-operations-and-release.md)
