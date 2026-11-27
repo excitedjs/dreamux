@@ -21,6 +21,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { TeamCreateCommand } from '@excitedjs/dreamux-types';
 
+import { mapAgentActivityCommandError } from '../agent/activity.js';
+import { agentEntityLastQuery } from '../agent/requests.js';
 import {
   mustNonBlankString,
   mustNonEmptyString,
@@ -29,6 +31,7 @@ import {
   type CommandPayload,
 } from '../../command/payload.js';
 import {
+  BOOLEAN,
   INTEGER,
   NULLABLE_STRING,
   OBJECT,
@@ -72,6 +75,25 @@ import type { TeamsPort } from './teams-port.js';
 
 export const TEAM_MCP_SERVER_NAME = 'team';
 const TEAM_LIST_STATUSES = ['starting', 'running', 'closed'] as const;
+
+const TEAM_LAST_SCHEMA = objectSchema(
+  {
+    team_status: STRING,
+    leader_name: STRING,
+    records: arrayOf(OBJECT),
+    next_cursor: NULLABLE_STRING,
+    truncated: BOOLEAN,
+    transcript_path: NULLABLE_STRING,
+  },
+  [
+    'team_status',
+    'leader_name',
+    'records',
+    'next_cursor',
+    'truncated',
+    'transcript_path',
+  ],
+);
 
 export function createTeamMcpDelegate(input: {
   teams: TeamsPort;
@@ -252,6 +274,23 @@ async function status(
   };
 }
 
+async function last(
+  teams: TeamsPort,
+  args: CommandPayload,
+): Promise<McpToolSuccess> {
+  const query = agentEntityLastQuery(args);
+  try {
+    return {
+      structured: await teams.last(teamNameParam(args, 'team_name'), {
+        ...query,
+        includeTools: query.includeTools ?? false,
+      }),
+    };
+  } catch (error) {
+    return mapAgentActivityCommandError(error);
+  }
+}
+
 async function history(
   teams: TeamsPort,
   args: CommandPayload,
@@ -419,6 +458,45 @@ function teamToolRecords(teams: TeamsPort): McpToolRecord[] {
         },
       ),
       execute: (args) => status(teams, args),
+    },
+    {
+      descriptor: tool(
+        'last',
+        "Read the recent output and activity of one Team's TeamLeader by its team_name, without starting or resuming it. Returns assistant messages oldest first, including an in-progress turn; the leader's status is on `status`. limit defaults to 20 (range 1..200); use cursor for older pages. include_tools defaults to false; set it to true to include tool records and keep that choice when paging. Native turn_id is included only when known (not a Core submission ID). transcript_path is the provider-confirmed current-session file, or null; it may be compressed and does not list ancestor files.",
+        {
+          team_name: {
+            type: 'string',
+            minLength: 1,
+            maxLength: 64,
+            description: 'The concrete team_name returned by create.',
+          },
+          limit: {
+            type: 'integer',
+            minimum: 1,
+            maximum: 200,
+            description: 'Records to return; default 20, max 200.',
+          },
+          cursor: {
+            type: 'string',
+            minLength: 1,
+            description:
+              'next_cursor from the previous page, for older records.',
+          },
+          include_tools: {
+            type: 'boolean',
+            default: false,
+            description:
+              'Include tool records; default false returns assistant messages only.',
+          },
+        },
+        ['team_name'],
+        {
+          title: 'Read recent TeamLeader activity',
+          output: TEAM_LAST_SCHEMA,
+          annotations: READ_ONLY_ANNOTATIONS,
+        },
+      ),
+      execute: (args) => last(teams, args),
     },
     {
       descriptor: tool(

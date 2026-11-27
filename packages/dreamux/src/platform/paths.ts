@@ -123,6 +123,16 @@ export function stateRoot(root = dreamuxRoot()): string {
 }
 
 /**
+ * The plugin directory, `<dreamux root>/plugins`: the one place the package
+ * of an `npm:` ref is looked up (`plugin/resolve.ts`). It is an npm prefix,
+ * so npm's own `package.json`, lock file, and `node_modules` live inside. It
+ * holds package code only; a plugin's own state is `pluginStateDir`.
+ */
+export function pluginRoot(root = dreamuxRoot()): string {
+  return join(root, 'plugins');
+}
+
+/**
  * Root for dreamux-owned volatile run files: IPC sockets, lock files, and
  * one-shot control markers. Nothing under it is durable; it is safe to remove
  * while no dreamux server is running. Durable state stays under `stateRoot()`.

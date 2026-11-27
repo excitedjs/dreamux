@@ -350,7 +350,7 @@ describe('Team MCP result projections', () => {
       expect(descriptor).toBeDefined();
       expect(descriptor).not.toHaveProperty('outputSchema');
     }
-    for (const name of ['list', 'status', 'history', 'dissolve']) {
+    for (const name of ['list', 'status', 'last', 'history', 'dissolve']) {
       expect(tools.find((tool) => tool.name === name)).toHaveProperty(
         'outputSchema',
       );

@@ -1,6 +1,4 @@
 import { pathExists } from '../platform/fs-errors.js';
-
-import { readFile } from 'node:fs/promises';
 import { loadAgentRuntimeProviders } from '../agent-runtime/external-provider.js';
 import { loadChannelProviders } from '../channel/external-channel-provider.js';
 import { parseProviderRef } from '../registry/provider-ref.js';
@@ -13,8 +11,8 @@ import {
   readPluginEntries,
   type LoadedPlugin,
 } from '../plugin/loader.js';
+import { readConfigJson } from './raw-file.js';
 import {
-  assertConfigFileMode,
   globalConfigFile,
   legacyGlobalConfigFile,
   mergeWithDefaults,
@@ -56,24 +54,7 @@ export async function readConfigFile(
   config: DreamuxConfig;
   plugins: LoadedPlugin[];
 }> {
-  if (!(await pathExists(file))) {
-    throw new Error(
-      `dreamux config is missing at ${file}.\n` +
-        'Run `dreamux onboard` to create it before starting the server.',
-    );
-  }
-  await assertConfigFileMode(file);
-  const text = await readFile(file, 'utf8');
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `dreamux config parse error in ${file}: ${msg}\n` +
-        `Fix the JSON syntax in ${file}, then restart. Run \`dreamux onboard\` if you need to recreate the config.`,
-    );
-  }
+  const parsed = await readConfigJson(file);
   // Plugins contribute providers config may address, so they load before
   // provider refs are loaded and validated. A non-object top level is still
   // reported by resolveConfig's mergeWithDefaults.

@@ -7,6 +7,7 @@ import type {
 import type { WorkAdmission } from '../../platform/work-fence.js';
 import {
   assertNotReservedAgentName,
+  type AgentEntityActivityRecord,
   type AgentEntityIdentityStatus,
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
@@ -261,6 +262,20 @@ export interface TeamHistoryRow {
 export interface TeamHistoryResult {
   items: TeamHistoryRow[];
   next_cursor: string | null;
+}
+
+/**
+ * One TeamLeader's recent activity, the answer to `team.last`: which Team and
+ * which leader were read, then the same activity fields `teammate.last`
+ * publishes for an ordinary TeamMate. The leader's status is `team.status`'s.
+ */
+export interface TeamLastResult {
+  team_status: TeamStatus;
+  leader_name: string;
+  records: AgentEntityActivityRecord[];
+  next_cursor: string | null;
+  truncated: boolean;
+  transcript_path: string | null;
 }
 
 export function validateTeamId(id: string): string {

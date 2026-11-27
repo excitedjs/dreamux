@@ -5,8 +5,9 @@
  * the same way `server.status` is, so both definitions read the injected
  * `ConfigService` directly rather than resolving a dispatcher through
  * `mustDispatcher`. There is no `config.dispatchers.*` pair — `dispatchers[]`
- * has no Command and stays a hand-edited, daemon-stopped-only file
- * (`config/service.ts`).
+ * and `plugins[]` have no Command; the plugin commands (`plugin/manage.ts`)
+ * and `onboard/channel-add.ts` write those two arrays while the daemon runs,
+ * and a hand edit waits for it to stop (`config/service.ts`).
  *
  * `parse` on `config.agents.replace` narrows only as far as matching needs: an
  * array of plain objects, each with a non-empty string `id`. Everything else

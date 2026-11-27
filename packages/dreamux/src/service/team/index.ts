@@ -24,15 +24,17 @@ import {
   requireLifecycleText,
   type AgentEntityIdentity,
   type AgentEntityIdentityStatus,
+  type AgentEntityLastQuery,
 } from '../agent/identity.js';
 import { toStatus } from '../agent/records.js';
+import { readAgentActivity } from '../agent/activity.js';
 import {
   agentCollectionMemberCount,
   readAgentIdentity,
 } from '../agent/store.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { TurnAdmission } from '../agent/turn.js';
-import type { TeamMateSharedWorkspace } from '../agent/types.js';
+import type { RunningLaunch, TeamMateSharedWorkspace } from '../agent/types.js';
 import { ensureDispatcherWorkspace } from '../dispatcher-workspace.js';
 import { allocateConcreteNameAsync } from '../name-allocator.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
@@ -63,6 +65,7 @@ import {
   type TeamHistoryQuery,
   type TeamHistoryResult,
   type TeamHistoryRow,
+  type TeamLastResult,
   type TeamListRow,
   type TeamRecord,
 } from './types.js';
@@ -286,6 +289,60 @@ export class TeamCollection implements TeamsPort {
   /** Gated because a read is still per-Team operational access. */
   async history(input: TeamHistoryQuery): Promise<TeamHistoryResult> {
     return this.opts.fence.admit(() => this.historyResult(input));
+  }
+
+  /** Gated for the same reason: it names one Team. */
+  async last(
+    teamId: string,
+    query: AgentEntityLastQuery,
+  ): Promise<TeamLastResult> {
+    return this.opts.fence.admit(() => this.lastResult(teamId, query));
+  }
+
+  /**
+   * One TeamLeader's recent activity.
+   *
+   * An open Team this process holds is read through its held leader, so a
+   * turn in progress is in the answer. Any other Team, a closed one included,
+   * is read from its persisted leader identity with no running launch: the
+   * read never builds a Team, the same way its status is answered.
+   */
+  private async lastResult(
+    teamId: string,
+    query: AgentEntityLastQuery,
+  ): Promise<TeamLastResult> {
+    const record = await this.mustTeam(teamId);
+    const held =
+      record.status === 'closed'
+        ? null
+        : (this.live.get(record.team_id) ?? null);
+    let identity: AgentEntityIdentity | null;
+    let running: RunningLaunch | null;
+    if (held === null) {
+      identity = await this.leaderIdentity(record);
+      running = null;
+    } else {
+      // No await between these two reads; `leaderForRead` says why.
+      const leader = held.leaderForRead();
+      identity = leader.current();
+      running = leader.runningLaunch();
+    }
+    const activity = await readAgentActivity({
+      config: this.opts.config.current(),
+      providers: this.opts.agentRuntimeProviders,
+      identity,
+      running,
+      query,
+      log: this.opts.log,
+    });
+    return {
+      team_status: record.status,
+      leader_name: record.leader_name,
+      records: activity.records,
+      next_cursor: activity.nextCursor,
+      truncated: activity.truncated,
+      transcript_path: activity.transcriptPath,
+    };
   }
 
   /**
@@ -914,7 +971,7 @@ export class TeamCollection implements TeamsPort {
     team: TeamRecord,
   ): Promise<AgentEntityIdentityStatus | null> {
     const live = this.live.get(team.team_id) ?? null;
-    if (live !== null) return live.leaderIdentityStatus();
+    if (live !== null) return live.leaderForRead().current().status;
     return (await this.leaderIdentity(team))?.status ?? null;
   }
 

@@ -92,6 +92,7 @@ export interface FakeDispatcherOverrides {
   listChannels?: unknown;
   getTeamStatus?: unknown;
   getTeamHistory?: unknown;
+  lastTeamLeader?: unknown;
   dissolveTeam?: unknown;
   teamScheduler?: unknown;
   teammates?: Record<string, unknown>;
@@ -238,6 +239,7 @@ export async function createCommandHarness(
     ['listTeams', dispatcher.teams, 'list'],
     ['getTeamStatus', dispatcher.teams, 'summary'],
     ['getTeamHistory', dispatcher.teams, 'history'],
+    ['lastTeamLeader', dispatcher.teams, 'last'],
     ['dissolveTeam', dispatcher.teams, 'dissolve'],
     ['teamScheduler', dispatcher.teams, 'scheduler'],
   ] as const)

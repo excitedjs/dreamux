@@ -198,7 +198,11 @@ the Team.
   this same tier, depending only on modules outside `team/`, never on the
   collection tier below. `leader-mcp.ts` is the service-tier descriptor for
   the held Team's dissolve operation; collection `mcp.ts` serves dispatcher
-  Team operations only.
+  Team operations only. `TeamsPort.last` reads a held Team's leader through
+  `TeamService.leaderForRead()`, and only while the record is not closed;
+  identity and running launch are read with no await between them, since only
+  the running generation publishes a session id. Every other Team answers
+  from its persisted leader identity and is never built for the read.
   The member collection binds `{ id, workspace }` once for a Team, or `null`
   for dispatcher members. Ordinary and Workflow creation both use that scope;
   Team members always record a reuse-cwd workspace and never reclaim the Team

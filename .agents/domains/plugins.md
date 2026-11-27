@@ -122,6 +122,24 @@ before the listed entries, and are not listed; `builtin:bootstrap` is opt-in,
 and an installed build currently fails to load it because its package is not
 published (R56).
 
+An `npm:` ref's package is looked up in the plugin directory,
+`<dreamux root>/plugins` (`plugin/resolve.ts`, the one function both this
+loader and `registry/provider-loader.ts` import through), and nowhere else.
+The entry is resolved as `require` resolves it from that directory and
+imported by file URL, so a package that ships both an `import` and a
+`require` entry loads its `require` one. A package that is not there fails at
+phase `import` naming `dreamux plugin add <package>`.
+
+`dreamux plugin add <npm package name>` installs the package there with
+`npm install --prefix`, loads the one entry alone to prove it is a plugin,
+and appends `"npm:<package>"` to `plugins[]` as written
+(`plugin/manage.ts`); `remove` unlists it and uninstalls it; `list` loads each
+entry alone. They run while the daemon is running and are read at its next
+start. `dreamux plugin run <npm package name> [args..]` runs the package's
+one `bin` with the arguments and nothing of Dreamux's own
+(`plugin/run.ts`); its arguments are read before the argument parser, so a
+plugin's options reach it as typed.
+
 Builtin composition names each package's plugin factory export. Configured npm
 plugins continue to select their default or explicit `#export`. The official
 packages' provider defaults and named plugin exports are described by

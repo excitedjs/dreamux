@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "BREAKING: An npm: plugin or provider package is looked up in the plugin directory, <dreamux root>/plugins, and nowhere else; it was found wherever Node's lookup from Dreamux's own install directory reached it. Rebuild: run dreamux plugin add <package> once for every npm: package config.json names, then start the daemon. New commands: dreamux plugin add, remove, list, and run take an npm package name, and dreamux channel add takes one. plugin add installs the package into the plugin directory and lists it in plugins[] while the daemon runs; the change takes effect at the daemon's next start, which the command says. plugin run runs the plugin's own command line with the arguments as given: Dreamux names no verb for a plugin. channel add creates a new Dispatcher with one channel of a listed plugin, asking what dreamux onboard asks. While the daemon runs, its own config.agents.replace writes back the configuration it loaded at its start, so an entry one of these commands wrote is discarded if that write runs before the restart.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

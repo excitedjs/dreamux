@@ -171,6 +171,14 @@ historical config for this. It materializes no entity, starts no runtime, and
 stores no transcript copy, index, or cursor; it returns provider-neutral bounded message/tool
 records, an opaque backward cursor, and truncation state.
 
+The Dispatcher's `team` `last` is the same read for a Team's leader, addressed
+by `team_name` and returns activity only: the leader's status stays on `team`
+`status`. A Team the process holds is read through its held leader, whose
+identity and running launch are taken in one synchronous step so they name the
+same generation. Any other Team, a closed one included, answers from its
+persisted leader identity and is never built for the read. It is an MCP tool
+with no Command, fenced like every other `TeamsPort` read.
+
 No surface exposes a native history path. The full `AgentEntityRuntimeStatus`
 read retains the opaque `session_id`, workspace, intent, lifecycle state and
 errors, and the identity's `created_at` and `updated_at`. These timestamps are
