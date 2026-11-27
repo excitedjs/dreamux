@@ -31,7 +31,6 @@ export interface CodexRuntimeDeps {
   skillSources: readonly AgentRuntimeSkillSource[];
   codexBinPath: string;
   extraArgs: string[];
-  handshakeTimeoutMs?: number;
   extraEnv?: Record<string, string>;
   restartBackoffBaseMs?: number | undefined;
   restartBackoffMaxMs?: number | undefined;

@@ -14,7 +14,6 @@
 import {
   readOptionalBoolean,
   readOptionalString,
-  readPositiveInt,
   readStringArray,
   readStringRecord,
   RuleViolation,
@@ -25,63 +24,47 @@ import {
  * whose `provider` is `builtin:claude-code` (issue #110 PR6), referenced by a
  * dispatcher via `dispatchers[].agentRuntime`.
  *
- * Deliberately distinct from `DispatcherCodexConfig`: Claude Code runs as a
- * resident headless stream-json process (`claude --print --input-format
- * stream-json …`, issue #120) with no `initialize` handshake, so there is no
- * handshake timeout, approval policy, or sandbox mode here. `bin` is the Claude
- * Code binary; `model` / `permission_mode` map to `--model` / `--permission-mode`;
- * `remote_control` enables Claude Code Remote Control at resident-session
- * startup; `extra_args` / `extra_env` are passed through. `model` and
- * `permission_mode` are `null` when the operator does not pin them (Claude
- * Code's own defaults apply). `turn_timeout_ms` is a per-turn *idle /
- * inactivity* window (issue #120 anti-hang, made idle-based in issue #156): it
- * is reset on every inbound stream line, so it bounds the max time the
- * still-alive child may emit *no* stream activity — not the total turn duration.
- * A child silent for the whole window is failed and reaped/re-spawned (rather
- * than blocking request settlement and TeamMate completion delivery), while a
- * long but actively-streaming turn never trips it.
+ * `bin` is the Claude Code binary; `model` / `effort` map to `--model` /
+ * `--effort` ahead of `extra_args` (`null` leaves selection to Claude Code's
+ * own defaults); `remote_control` enables Claude Code Remote Control at
+ * resident-session startup; `extra_args` / `extra_env` are passed through.
  */
 export interface DispatcherClaudeCodeConfig {
   bin: string;
   model: string | null;
-  permission_mode: string | null;
+  effort: string | null;
   remote_control: boolean;
   extra_args: string[];
   extra_env: Record<string, string>;
-  turn_timeout_ms: number;
 }
 
 /** Default `agents[].config.bin` for `builtin:claude-code`. */
 export const DEFAULT_CLAUDE_CODE_BIN = 'claude';
 
-/**
- * Default per-turn *idle* window for the resident `builtin:claude-code` child
- * (ms). This is the max time the child may emit no stream activity before the
- * turn is failed and the child reaped (issue #120 anti-hang, idle-based since
- * issue #156) — it is reset on every stream line, so it does not cap a long but
- * actively-streaming turn. Operators can override via
- * each dispatcher's `agents[]` entry `config.turn_timeout_ms`.
- */
-export const DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;
-
-/** Permission modes accepted for `builtin:claude-code` (Claude Code `--permission-mode`). */
-export const ALLOWED_CLAUDE_CODE_PERMISSION_MODES = new Set([
-  'default',
-  'acceptEdits',
-  'plan',
-  'bypassPermissions',
-]);
-
 export function defaultDispatcherClaudeCodeConfig(): DispatcherClaudeCodeConfig {
   return {
     bin: DEFAULT_CLAUDE_CODE_BIN,
     model: null,
-    permission_mode: null,
+    effort: null,
     remote_control: false,
     extra_args: [],
     extra_env: {},
-    turn_timeout_ms: DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
   };
+}
+
+function readOptionalNonEmptyString(
+  raw: Record<string, unknown>,
+  key: string,
+  file: string,
+  prefix: string,
+): string | null {
+  const value = readOptionalString(raw, key, file, prefix);
+  if (value !== null && value.trim() === '') {
+    throw new RuleViolation(
+      `dreamux config error in ${file}: ${prefix}${key} must be a non-empty string`,
+    );
+  }
+  return value;
 }
 
 export function readDispatcherClaudeCodeConfig(
@@ -89,6 +72,8 @@ export function readDispatcherClaudeCodeConfig(
   file: string,
   prefix: string,
 ): DispatcherClaudeCodeConfig {
+  // Unknown fields (including retired 'permission_mode' and 'turn_timeout_ms')
+  // are tolerated and ignored under the persisted-shape policy (R21).
   const defaults = defaultDispatcherClaudeCodeConfig();
   const bin =
     readOptionalString(rawClaude, 'bin', file, prefix) ?? defaults.bin;
@@ -97,24 +82,10 @@ export function readDispatcherClaudeCodeConfig(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
-  const permissionMode = readOptionalString(
-    rawClaude,
-    'permission_mode',
-    file,
-    prefix,
-  );
-  if (
-    permissionMode !== null &&
-    !ALLOWED_CLAUDE_CODE_PERMISSION_MODES.has(permissionMode)
-  ) {
-    throw new RuleViolation(
-      `dreamux config error in ${file}: ${prefix}permission_mode='${permissionMode}' is not one of ${Array.from(ALLOWED_CLAUDE_CODE_PERMISSION_MODES).join(' | ')}`,
-    );
-  }
   return {
     bin,
-    model: readOptionalString(rawClaude, 'model', file, prefix),
-    permission_mode: permissionMode,
+    model: readOptionalNonEmptyString(rawClaude, 'model', file, prefix),
+    effort: readOptionalNonEmptyString(rawClaude, 'effort', file, prefix),
     remote_control: readOptionalBoolean(
       rawClaude,
       'remote_control',
@@ -133,13 +104,6 @@ export function readDispatcherClaudeCodeConfig(
       rawClaude,
       'extra_env',
       defaults.extra_env,
-      file,
-      prefix,
-    ),
-    turn_timeout_ms: readPositiveInt(
-      rawClaude,
-      'turn_timeout_ms',
-      defaults.turn_timeout_ms,
       file,
       prefix,
     ),

@@ -733,7 +733,7 @@ describe('idle policy and result contract', () => {
     });
   });
 
-  it('keeps Remote Control and tool permission replies independent of requests', () => {
+  it('keeps Remote Control replies independent and fails fast on unexpected tool permission requests', () => {
     const urls: string[] = [];
     const h = harness({ onRemoteControlUrl: (url) => urls.push(url) });
     h.rpc.enableRemoteControl();
@@ -751,11 +751,13 @@ describe('idle policy and result contract', () => {
       request: { subtype: 'can_use_tool', input: { command: 'pwd' } },
     });
     expect(urls).toEqual(['https://example.invalid/session']);
-    expect(h.controls[1]).toMatchObject({
+    expect(h.controls[1]).toEqual({
       type: 'control_response',
       response: {
+        subtype: 'error',
         request_id: 'permission',
-        response: { behavior: 'allow', updatedInput: { command: 'pwd' } },
+        error:
+          'tool permission requests are unsupported in Dreamux-managed runtimes',
       },
     });
     expect(h.writes).toEqual([]);

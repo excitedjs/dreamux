@@ -377,25 +377,19 @@ export function buildInterruptRequest(
 }
 
 /**
- * Answer a `can_use_tool` control request with `allow`. A Dreamux dispatcher
- * runs unattended, so the answer for a runtime that has no human to consult is
- * "allow"; `updatedInput` echoes the tool's original input back unchanged.
- *
- * This is a defensive path: under a bypassing permission mode the CLI does not
- * gate tools, so `can_use_tool` is not normally emitted. It is wired so that if
- * a build or mode does emit one, the runtime answers it rather than leaving the
- * turn waiting on an unanswered control request.
+ * Reject an unsupported control request (for example an unexpected
+ * `can_use_tool` permission callback). Dreamux launches Claude Code with
+ * `--dangerously-skip-permissions` and does not auto-approve permission
+ * prompts in protocol code; failing fast prevents the CLI from hanging on an
+ * unanswered control request.
  */
-export function buildCanUseToolAllow(
-  requestId: string,
-  input: JsonObject,
-): string {
+export function buildControlError(requestId: string, error: string): string {
   return JSON.stringify({
     type: 'control_response',
     response: {
-      subtype: 'success',
+      subtype: 'error',
       request_id: requestId,
-      response: { behavior: 'allow', updatedInput: input },
+      error,
     },
   });
 }

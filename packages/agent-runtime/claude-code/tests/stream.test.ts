@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   assistantText,
-  buildCanUseToolAllow,
   buildControlAck,
+  buildControlError,
   buildRemoteControlEnable,
   buildUserMessage,
   LineBuffer,
@@ -720,14 +720,16 @@ describe('outbound builders', () => {
       expect(field in parsed).toBe(false);
   });
 
-  it('buildCanUseToolAllow echoes the tool input back as updatedInput', () => {
-    const parsed = JSON.parse(buildCanUseToolAllow('r1', { command: 'ls' }));
+  it('buildControlError emits a fail-fast error control_response', () => {
+    const parsed = JSON.parse(
+      buildControlError('r1', 'permission prompts unsupported'),
+    );
     expect(parsed).toEqual({
       type: 'control_response',
       response: {
-        subtype: 'success',
+        subtype: 'error',
         request_id: 'r1',
-        response: { behavior: 'allow', updatedInput: { command: 'ls' } },
+        error: 'permission prompts unsupported',
       },
     });
   });

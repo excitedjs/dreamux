@@ -882,7 +882,7 @@ describe('native ACP runtime', () => {
     });
   });
 
-  it('answers permission callbacks immediately with an offered allow option', async () => {
+  it('cancels unexpected permission callbacks instead of auto-allowing', async () => {
     const instance = create();
     await instance.start();
     const result = await peer.connection.client.request(
@@ -897,7 +897,7 @@ describe('native ACP runtime', () => {
       },
     );
     expect(result).toEqual({
-      outcome: { outcome: 'selected', optionId: 'permit' },
+      outcome: { outcome: 'cancelled' },
     });
   });
 

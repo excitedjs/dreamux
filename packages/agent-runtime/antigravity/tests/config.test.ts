@@ -17,13 +17,13 @@ describe('readAntigravityConfig', () => {
     expect(readAntigravityConfig({}, FILE, PREFIX).transport).toBe('tmux');
   });
 
-  it('accepts resident ACP and native model settings', () => {
+  it('accepts resident ACP and arbitrary non-empty model and effort strings', () => {
     expect(
       readAntigravityConfig(
         {
           transport: 'acp',
           model: 'gemini-test',
-          effort: 'high',
+          effort: 'ultra',
           extra_args: ['--flag'],
           extra_env: { TEST_VALUE: 'value' },
         },
@@ -34,18 +34,21 @@ describe('readAntigravityConfig', () => {
       transport: 'acp',
       bin: 'agy',
       model: 'gemini-test',
-      effort: 'high',
+      effort: 'ultra',
       extra_args: ['--flag'],
       extra_env: { TEST_VALUE: 'value' },
     });
   });
 
-  it('rejects unknown transports and efforts', () => {
+  it('rejects unknown transports and blank model or effort values', () => {
     expect(() =>
       readAntigravityConfig({ transport: 'headless' }, FILE, PREFIX),
     ).toThrow(/transport must be tmux or acp/);
-    expect(() =>
-      readAntigravityConfig({ effort: 'maximum' }, FILE, PREFIX),
-    ).toThrow(/effort must be/);
+    expect(() => readAntigravityConfig({ model: '   ' }, FILE, PREFIX)).toThrow(
+      /model must be a non-empty string/,
+    );
+    expect(() => readAntigravityConfig({ effort: '' }, FILE, PREFIX)).toThrow(
+      /effort must be a non-empty string/,
+    );
   });
 });

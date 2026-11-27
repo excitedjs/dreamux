@@ -682,9 +682,10 @@ Each provider maps the neutral call to its own protocol:
   `aborted_tools`, the two abort reasons in the Agent SDK's documented set,
   distinct from `model_error` and every other failure reason. The provider reads
   that rather than remembering it asked, so one request's result can never
-  consume another's attribution. Under this dispatcher's unattended posture the
-  only cause is our own request: the other documented cause, a permission
-  callback denying with `interrupt`, cannot arise where every callback allows.
+  consume another's attribution. Under this dispatcher's unattended posture
+  (`--dangerously-skip-permissions`, with unexpected `can_use_tool` callbacks
+  rejected fail-fast as errors rather than denied with `interrupt`), the only
+  cause is our own request.
   The requests the artifact names settle `stopped`: they were answered, but with
   nothing said.
 

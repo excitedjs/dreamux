@@ -1878,8 +1878,8 @@ describe('MCP server list passthrough encoding', () => {
     await runtime.start();
 
     expect(capturedArgs).toBeDefined();
-    // The extraArgs also carry this provider's own approval_policy/sandbox_mode
-    // overrides ahead of the MCP block; what this test owns is that the MCP
+    // The extraArgs also carry this provider's own approval_policy
+    // override ahead of the MCP block; what this test owns is that the MCP
     // block itself is the exact same rendering the pure encoder would produce
     // from the exact same list — the provider never discovers, appends, or
     // mutates servers before handing them to the encoder.

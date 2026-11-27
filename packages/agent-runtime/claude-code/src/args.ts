@@ -105,16 +105,18 @@ function escapeXmlText(text: string): string {
  * each turn is written to stdin as a `user` message line (see
  * `claude-code/stream.ts`).
  *
- * It reads its MCP servers from the inline JSON config (`--mcp-config`), optionally
- * resumes a prior session at spawn time (`--resume`, used both for operator
- * resume and for re-spawn after an unexpected exit), and threads the operator's
- * model / permission mode / extra args through.
+ * It reads its MCP servers from the inline JSON config (`--mcp-config`),
+ * bypasses interactive tool-permission prompts (`--dangerously-skip-permissions`),
+ * optionally resumes a prior session at spawn time (`--resume`, used both for
+ * operator resume and for re-spawn after an unexpected exit), and threads the
+ * operator's model / effort / extra args through.
  */
 export function claudeCodeResidentArgs(
   input: ClaudeCodeResidentArgsInput,
 ): string[] {
   const args = [
     '--print',
+    '--dangerously-skip-permissions',
     '--input-format',
     'stream-json',
     '--output-format',
@@ -134,11 +136,11 @@ export function claudeCodeResidentArgs(
   if (disallowedTools.length > 0) {
     args.push('--disallowedTools', disallowedTools.join(','));
   }
-  if (input.config.permission_mode !== null) {
-    args.push('--permission-mode', input.config.permission_mode);
-  }
   if (input.config.model !== null) {
     args.push('--model', input.config.model);
+  }
+  if (input.config.effort !== null) {
+    args.push('--effort', input.config.effort);
   }
   const systemPromptContent = claudeCodeSystemPromptAppendContent(
     input.systemPromptAppend,

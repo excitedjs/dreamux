@@ -18,13 +18,6 @@ export interface AntigravityConfig {
 
 export const DEFAULT_ANTIGRAVITY_BIN = 'agy';
 export const DEFAULT_ANTIGRAVITY_TRANSPORT: AntigravityTransport = 'tmux';
-export const ANTIGRAVITY_EFFORTS = new Set([
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-]);
 
 export function defaultAntigravityConfig(): AntigravityConfig {
   return {
@@ -35,6 +28,21 @@ export function defaultAntigravityConfig(): AntigravityConfig {
     extra_args: [],
     extra_env: {},
   };
+}
+
+function readOptionalNonEmptyString(
+  raw: Record<string, unknown>,
+  key: string,
+  file: string,
+  prefix: string,
+): string | null {
+  const value = readOptionalString(raw, key, file, prefix);
+  if (value !== null && value.trim() === '') {
+    throw new RuleViolation(
+      `dreamux config error in ${file}: ${prefix}${key} must be a non-empty string`,
+    );
+  }
+  return value;
 }
 
 export function readAntigravityConfig(
@@ -55,17 +63,11 @@ export function readAntigravityConfig(
       `dreamux config error in ${file}: ${prefix}bin must be a non-empty string`,
     );
   }
-  const effort = readOptionalString(raw, 'effort', file, prefix);
-  if (effort !== null && !ANTIGRAVITY_EFFORTS.has(effort)) {
-    throw new RuleViolation(
-      `dreamux config error in ${file}: ${prefix}effort must be low, medium, high, xhigh, or max`,
-    );
-  }
   return {
     transport: transport ?? defaults.transport,
     bin,
-    model: readOptionalString(raw, 'model', file, prefix),
-    effort,
+    model: readOptionalNonEmptyString(raw, 'model', file, prefix),
+    effort: readOptionalNonEmptyString(raw, 'effort', file, prefix),
     extra_args: readStringArray(
       raw,
       'extra_args',

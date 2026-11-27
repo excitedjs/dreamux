@@ -32,9 +32,7 @@ the workspace path and credential placeholders before use.
     {
       "id": "coding",
       "provider": "builtin:codex",
-      "config": {
-        "sandbox_mode": "workspace-write"
-      }
+      "config": {}
     }
   ],
   "dispatchers": [
@@ -100,19 +98,21 @@ Provider: `builtin:codex`. All fields below are optional.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `bin` | `"codex"` | CLI executable or path |
-| `sandbox_mode` | `"workspace-write"` | `read-only`, `workspace-write`, or `danger-full-access` |
-| `extra_args` | `[]` | Additional Codex CLI arguments |
+| `model` | `null` | Non-empty model override (`-c model=...`); otherwise Codex's own selection applies |
+| `effort` | `null` | Non-empty reasoning effort override (`-c model_reasoning_effort=...`); otherwise Codex's own selection applies |
+| `extra_args` | `[]` | Additional Codex CLI arguments (appended last) |
 | `extra_env` | `{}` | Environment overrides for this runtime |
-| `initialize_timeout_ms` | `10000` | App-server initialization timeout |
 
-Dreamux requires Codex **0.137+** and supplies approval policy `never`; configure
-sandbox access for the work you intend to authorize. `approval_policy` and
-`turn_timeout_ms` are not current Codex options in this configuration surface.
+Dreamux requires Codex **0.137+**, always launches with `-c approval_policy=never`
+(rejecting unexpected approval callbacks fail-fast), and does not pass
+`-c sandbox_mode`: configure sandbox policy in `~/.codex/config.toml` or pass
+`-c sandbox_mode=...` in `extra_args`. Retired keys (`approval_policy`,
+`sandbox_mode`, `initialize_timeout_ms`, and `turn_timeout_ms`) are ignored on
+load.
 
 Codex uses its native configuration and authentication. Its home defaults to
 `~/.codex`; set `extra_env.CODEX_HOME` on a named runtime if you need a different
-home. Native model options can be supplied through `extra_args`, for example
-Codex's `-c` options. Dreamux also supplies its own MCP configuration.
+home. Dreamux also supplies its own MCP configuration.
 
 `CODEX_HOST_CODEX_BIN` is a process-level binary override above the configured
 `bin`. For managed services, prefer a configured `bin` or per-runtime environment
@@ -125,16 +125,20 @@ Provider: `builtin:claude-code`. All fields below are optional.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `bin` | `"claude"` | CLI executable or path |
-| `model` | `null` | Model override; otherwise Claude Code's own selection applies |
-| `permission_mode` | `null` | `default`, `acceptEdits`, `plan`, or `bypassPermissions`; otherwise native defaults apply |
+| `model` | `null` | Non-empty model override (`--model`); otherwise Claude Code's own selection applies |
+| `effort` | `null` | Non-empty effort override (`--effort`); otherwise Claude Code's own selection applies |
 | `remote_control` | `false` | Enable Claude Code Remote Control at session startup |
-| `extra_args` | `[]` | Additional CLI arguments |
+| `extra_args` | `[]` | Additional CLI arguments (appended last) |
 | `extra_env` | `{}` | Environment overrides for this runtime |
-| `turn_timeout_ms` | `600000` | Maximum stream inactivity while awaiting a result |
 
-The inactivity timeout resets when stream output arrives; it is not a cap on the
-whole task. Dreamux does not currently enforce a Claude Code minimum version.
-Use a version compatible with its resident stream-json integration.
+Dreamux launches Claude Code with `--dangerously-skip-permissions` and rejects
+unexpected `can_use_tool` callbacks fail-fast. Sandbox behavior follows native
+Claude Code configuration. Note that Claude Code refuses
+`--dangerously-skip-permissions` when running as Linux `root`/`sudo`; run
+Dreamux under a non-root user account. Retired keys (`permission_mode` and
+`turn_timeout_ms`) are ignored on load. Dreamux does not currently enforce a
+Claude Code minimum version; use a version compatible with its resident
+stream-json integration.
 
 Remote Control is an external Claude UI feature. It is separate from sending a
 follow-up through Dreamux, and its URL is logged when the runtime provides one.
@@ -149,14 +153,15 @@ Add this object to the `agents` array alongside the existing Codex entry:
   "provider": "builtin:claude-code",
   "config": {
     "bin": "claude",
-    "permission_mode": "plan"
+    "model": "opus",
+    "effort": "high"
   }
 }
 ```
 
 The Dispatcher can continue using `coding`, while a Team or TeamMate selects
 `reviewer`. You can define multiple entries using the same provider with
-different model arguments, environment, or permissions.
+different models, effort levels, environment, or extra arguments.
 
 ## Feishu credentials and access
 

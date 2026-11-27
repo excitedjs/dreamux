@@ -147,7 +147,7 @@ dreamux onboard --yes --dry-run \
   --dispatcher-id main \
   --dispatcher-cwd "$HOME/projects/agent-workspace" \
   --agent main=builtin:codex \
-  --agent-config-json 'main={"sandbox_mode":"workspace-write"}' \
+  --agent-config-json 'main={"effort":"high"}' \
   --channel primary=builtin:feishu \
   --channel-config-json 'primary={"app_id":"<APP_ID>","app_secret":"<APP_SECRET>"}' \
   --no-register-service

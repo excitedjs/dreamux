@@ -9,9 +9,7 @@ export { default as createClaudeCodePlugin } from './plugin.js';
 export { createClaudeCodeAgentRuntimeProvider } from './provider.js';
 
 export {
-  ALLOWED_CLAUDE_CODE_PERMISSION_MODES,
   DEFAULT_CLAUDE_CODE_BIN,
-  DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS,
   defaultDispatcherClaudeCodeConfig,
   readDispatcherClaudeCodeConfig,
   type DispatcherClaudeCodeConfig,

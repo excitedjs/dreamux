@@ -98,9 +98,8 @@ export async function liveCodexProvider() {
   const config: DispatcherCodexConfig = {
     ...defaultDispatcherCodexConfig(),
     bin,
-    sandbox_mode: 'danger-full-access',
+    extra_args: ['-c', 'sandbox_mode=danger-full-access'],
     extra_env: { CODEX_HOME: codexHome },
-    initialize_timeout_ms: 15_000,
   };
   const paths = {
     cacheDir: () => join(dir, 'cache'),
