@@ -555,7 +555,40 @@ says about itself.
   and those status fields. `readAgentActivity`
   (`packages/dreamux/src/service/agent/activity.ts`) is the existing read
   behind `teammate.last`.
-- Blocking unknowns: none for the requirement.
+- Blocking unknowns. None is ruled; each waits for the operator
+  (message, 2026-11-27: “先写到任务记录里就行了。”):
+  - **What `channel add` does.** Behavior 12 stands as confirmed. The
+    operator then said it should add to an existing Dispatcher and that slice
+    3 is to be re-aligned (messages of 2026-11-25, quoted in the task README).
+    Adding a channel to an existing Dispatcher meets two facts: onboarding
+    gives a new Dispatcher the Feishu channel, and Feishu and Weixin are
+    never on one Dispatcher. Open: replace that Dispatcher's channel; create
+    a new Dispatcher that carries only Weixin; or take `channel add` out of
+    slice 3. Whether it needs a terminal is open too: the main caller is a
+    Dispatcher, which has none.
+  - **The rest of slice 3's surface.** Whether `plugin remove` and
+    `plugin list` stay in slice 3 or are deferred, and whether a package that
+    is not from npm can be installed. Both were raised as advice on
+    2026-11-25 (`technical-design/product-s3-astra.md`,
+    `technical-design/product-s3-neon.md`); the standing ruling is “只认插件
+    目录” and, for the argument, always the npm package name.
+  - **Slice 3's review corrections.** Ruled and not applied: the lookup
+    (“只认插件目录”) and the shape, tests, and records (“全部采纳”). Not
+    ruled: entry matching by package, the `config` block on `list` and
+    `remove`, `npm:` provider refs in the in-use check, and the report when
+    an uninstall fails. Dispositions:
+    `technical-design/review-s3-adjudication.md`.
+  - **Slice 1: where a standalone `login` writes.** The state document is
+    one per Dispatcher and channel, and both exist only once a Dispatcher
+    carries the channel; the operator put the question on 2026-11-27 —
+    “这里其实有个悖论，如果 channel 配置不在 dispatcher 的配置里，那 login
+    产生的文件写入，会写入哪里？” Two ways were named in conversation: keep
+    one per Dispatcher and channel and have `login` read the configuration
+    for its target, or keep one credential per installation. The TeamLeader
+    prefers the second; that is an inference.
+  - **Named by the operator for later, outside this task:** that the Feishu
+    channel does not belong in onboarding, and the Dispatcher's own config
+    self-maintenance.
 - Open risks:
   - Third-party use of the iLink API is not addressed by any WeChat statement;
     the platform may change or restrict it without notice.

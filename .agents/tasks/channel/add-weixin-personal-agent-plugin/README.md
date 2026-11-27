@@ -11,7 +11,7 @@
 - Solution review Issue: Not created.
 - Pull request: [#496](https://github.com/excitedjs/dreamux/pull/496).
 - Verification: [verification.md](/.agents/tasks/channel/add-weixin-personal-agent-plugin/verification.md) — slice 2: build, lint, test, and `typecheck:tests` pass on 2026-11-25, before and after the review corrections; slice 3: the four gates pass on 2026-11-25 before review, with the hand run of the built CLI recorded; slice 1 has nothing to verify yet.
-- Blockers: slice 3's requirement is unsettled — how a channel is wired to a Dispatcher, now that onboarding gives every new Dispatcher the Feishu channel and a Dispatcher with both Feishu and Weixin is not supported, and where a standalone `login` writes its credential before a Dispatcher carries the channel; the operator is re-aligning it in conversation ([advice](/.agents/tasks/channel/add-weixin-personal-agent-plugin/technical-design/product-s3-astra.md), [advice](/.agents/tasks/channel/add-weixin-personal-agent-plugin/technical-design/product-s3-neon.md)). Slice 1's revised design is not written.
+- Blockers: the open decisions listed under “Decisions and unknowns” in the requirement — what `channel add` does, the rest of slice 3's surface, the slice 3 review corrections not yet applied, where a standalone `login` writes (slice 1), and the two follow-ups the operator named for later.
 - Verbatim rulings and the remaining assumptions are kept in the requirement.
 - Next action: the operator settles the slice 3 requirement; it is confirmed by card, the ruled corrections and the re-ruled ones are applied, the change is reviewed again, and the record is set to `done` before the pull request leaves draft.
 - Related tasks: None.
@@ -87,6 +87,10 @@
 - 2026-11-27 — Message: the operator asked where a standalone `login` writes when the channel is not in a Dispatcher's configuration — “这里其实有个悖论，如果 channel 配置不在 dispatcher 的配置里，那 login 产生的文件写入，会写入哪里？”. Checked against the source: a channel session receives the Dispatcher's own state directory as `state_root` (`service/channel-service/index.ts`), and the Weixin state document is named by the channel (`technical-design/final.md`, "State, config, onboarding, diagnostics"), so the target exists only once a Dispatcher carries the channel. The standalone `login` receives neither, and how it finds its target is an open part of the slice 1 revision. The TeamLeader answered in conversation with two ways to settle it — the credential per Dispatcher and channel, with `login` reading the configuration for its target; or one credential per installation — and stated a preference for the second as an inference. Nothing is ruled; no code changed.
 
 - 2026-11-27 — Message: the operator asked for every local change to go up as a pull request — “把你本地所有变更开 pr 上去。” The record is set to `blocked`, because the remaining work waits on the slice 3 requirement and the slice 1 design. The pull request was opened as a draft on 2026-11-27: slice 2 is complete, slice 3 is submitted as reviewed and before its corrections, with its two blocking findings (the lookup reaching outside the plugin directory; `channel add` discarding configuration keys) stated in its description, and slice 1 has no code. Merge waits for the workflow's own gate.
+
+- 2026-11-27 — Message, answering the report that the pull request is open as a draft and two things wait for the operator: “先写到任务记录里就行了。” The open decisions are written under “Decisions and unknowns” in the requirement; none is ruled and no further question card is sent until the operator raises one.
+
+- 2026-11-27 — Message: the operator asked to push the record and dissolve the Team — “推上去就解散吧。” The work stops here by the operator's decision: the pull request stays as opened, the open decisions are the list under “Decisions and unknowns” in the requirement, and whoever resumes starts from this record.
 
 ## Development approval
 
