@@ -1,3 +1,4 @@
+import { createChannelCommand } from './channel.js';
 import { createChangelogCommand } from './changelog.js';
 import { createConfigCommand } from './config.js';
 import { createDaemonCommand } from './daemon.js';
@@ -5,6 +6,7 @@ import { createDispatcherCommand } from './dispatcher.js';
 import { createDoctorCommand } from './doctor.js';
 import { createMcpCommand } from './mcp.js';
 import { createOnboardCommand } from './onboard.js';
+import { createPluginCommand } from './plugin.js';
 import { createServeCommand } from './serve.js';
 import { createStatusCommand } from './status.js';
 import { createUninstallCommand } from './uninstall.js';
@@ -23,6 +25,8 @@ export function createDreamuxCommands(): DreamuxCommand[] {
     // for whom, lives entirely in the lease token it is launched with.
     createMcpCommand(),
     createConfigCommand(),
+    createPluginCommand(),
+    createChannelCommand(),
     createChangelogCommand(),
   ];
 }

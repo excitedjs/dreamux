@@ -137,14 +137,23 @@ While `dreamux serve` runs, the Config Service (`config/service.ts`) holds
 `TransactionalStore` the routing document and `access.json`/`chat-bots.json`
 use (see Durable State Layout below). A hand edit made to the file after start
 is not read, and the next `config.agents.replace` commits the held value to the
-whole file without re-reading it, so it discards the edit: hand-edit
-`config.json` with the daemon stopped.
+whole file without re-reading it, so it discards the edit: a hand edit to
+`config.json` is made with the daemon stopped. `dreamux plugin add`, `dreamux
+plugin remove`, and `dreamux channel add` are the commands that write
+`plugins[]` and `dispatchers[]` while the daemon runs, because a Dispatcher
+installs plugins for itself and stopping the daemon would stop its session.
+They change nothing in the running process: the change is read at the next
+start, and the same `config.agents.replace` before that restart discards the
+command's entry (accepted by the operator; see
+[the task record](/.agents/tasks/channel/add-weixin-personal-agent-plugin/requirement.md)).
+Source: `/packages/dreamux/src/plugin/manage.ts`.
 `agents[]` is additionally readable and replaceable live, without a restart,
 through the `config.agents.get`/`config.agents.replace` Commands (secrets
 returned as `''`, a whole-section replace matched by `id`, a submitted `''`
 for a secret-named key keeping the stored value); a replace takes effect for
 the next runtime launch, not the one already running. `dispatchers[]` has no
-Command and stays hand-edit-with-the-daemon-stopped only.
+Command either: those two arrays are changed by the plugin commands above
+or by hand with the daemon stopped.
 
 Source:
 
@@ -181,8 +190,16 @@ state/<dispatcher-id>/
   workflow/<run-id>/
     record.json
     journal.jsonl
+plugins/                      npm prefix holding npm plugins: npm's package.json and lock file,
+                               and node_modules/<package>/ per plugin (package code, not state)
 state/plugins/<plugin-name>/  one plugin's own durable state (R50)
 ```
+
+`plugins/` is an npm prefix, not a Dreamux store: `dreamux plugin add` runs
+`npm install` against it, `npm` owns its contents, and an `npm:` ref's package
+is looked up in its `node_modules` and nowhere else
+(`/packages/dreamux/src/plugin/resolve.ts`). Rebuildable from `plugins[]` by
+re-running `dreamux plugin add` for each entry.
 
 `teammate/` and `team/` hold only entity directories, because listing a
 collection is a blind `readdir`: an owner's own Agent record, its Team record,

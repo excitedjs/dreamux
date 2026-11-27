@@ -4,6 +4,7 @@ import type {
   TeamSummary,
 } from '@excitedjs/dreamux-types';
 
+import type { AgentEntityLastQuery } from '../agent/identity.js';
 import type { TeammateSubmitInput } from '../agent/submission.js';
 import type { TurnAdmission } from '../agent/turn.js';
 import type { SchedulerCommands } from '../scheduler/types.js';
@@ -12,6 +13,7 @@ import type {
   TeamDissolveReceipt,
   TeamHistoryQuery,
   TeamHistoryResult,
+  TeamLastResult,
   TeamListRow,
 } from './types.js';
 
@@ -43,6 +45,11 @@ export interface TeamsPort {
   scheduler(teamId: string): Promise<SchedulerCommands>;
   history(input: TeamHistoryQuery): Promise<TeamHistoryResult>;
   summary(teamId: string): Promise<TeamSummary>;
+  /**
+   * Read one Team's TeamLeader's recent activity, a turn in progress included.
+   * A cold read: it never builds the Team or starts a runtime.
+   */
+  last(teamId: string, query: AgentEntityLastQuery): Promise<TeamLastResult>;
   list(): Promise<TeamListRow[]>;
   createFromRequest(input: {
     requestId: string;

@@ -2,9 +2,11 @@
  * Plugin loading and the host: `plugins[]` parsing, the load order, the
  * same-name rules, and api publication after every `server`.
  *
- * Plugin modules come from a fake importer keyed by package name, so no real
- * plugin package is imported; the always-loaded Feishu plugin is answered by a
- * fake whose provider is the channel the configs below address.
+ * Plugin modules come from fakes keyed by package name, so no real plugin
+ * package is imported: built-in packages through `vi.doMock`, `npm:` packages
+ * through `importNpmPackage`'s mock (`./helpers/npm-packages.ts`). The
+ * always-loaded Feishu plugin is answered by a fake whose provider is the
+ * channel the configs below address.
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -37,6 +39,14 @@ import {
   BUILTIN_FEISHU_PROVIDER_REF,
 } from '../src/registry/builtins.js';
 import { ProviderRegistry } from '../src/registry/registry.js';
+import { fakeNpmModules } from './helpers/npm-packages.js';
+
+vi.mock('../src/plugin/resolve.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../src/plugin/resolve.js')>();
+  const { importFakeNpmPackage } = await import('./helpers/npm-packages.js');
+  return { ...actual, importNpmPackage: importFakeNpmPackage };
+});
 
 const silentLog = {
   error: () => {},
@@ -114,17 +124,27 @@ function installModules(modules: PluginModuleImporter) {
     ...modules,
   };
   for (const [name, module] of Object.entries(all)) {
-    mockedPackages.add(name);
-    vi.doMock(name, () =>
-      name === FEISHU_PACKAGE
-        ? { ...module, createFeishuPlugin: module['default'] }
-        : module,
-    );
+    if (BUILTIN_PACKAGE_NAMES.has(name)) {
+      mockedPackages.add(name);
+      vi.doMock(name, () =>
+        name === FEISHU_PACKAGE
+          ? { ...module, createFeishuPlugin: module['default'] }
+          : module,
+      );
+    } else {
+      fakeNpmModules.set(name, module);
+    }
   }
 }
+const BUILTIN_PACKAGE_NAMES = new Set([
+  '@excitedjs/agent-runtime-codex',
+  '@excitedjs/agent-runtime-claude-code',
+  FEISHU_PACKAGE,
+]);
 afterEach(() => {
   for (const name of mockedPackages) vi.doUnmock(name);
   mockedPackages.clear();
+  fakeNpmModules.clear();
   vi.unstubAllEnvs();
 });
 function codexRegistry(): ProviderRegistry {

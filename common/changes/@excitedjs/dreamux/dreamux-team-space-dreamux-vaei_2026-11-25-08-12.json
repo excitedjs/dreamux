@@ -1,0 +1,11 @@
+{
+  "changes": [
+    {
+      "comment": "Dispatcher MCP team tools gain last, a read-only tool that returns a TeamLeader's recent assistant messages (tool records on request), oldest first and including a turn in progress, beside the Team's status and the leader's name. It pages like teammate last. Neither team.last nor the teammate last MCP tool returns a status, a runtime status, or a last error any more: team.status and teammate status on the same servers carry them, and teammate.last as a Command keeps its full value.",
+      "type": "minor",
+      "packageName": "@excitedjs/dreamux"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux",
+  "email": "hvjfccdy6s@privaterelay.appleid.com"
+}

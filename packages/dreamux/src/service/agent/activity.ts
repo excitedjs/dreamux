@@ -43,7 +43,12 @@ export interface ReadAgentActivityInput {
   /** Resolves the provider and config of an entity with no running runtime. */
   config: DreamuxConfig;
   providers: AgentRuntimeProviderCatalog;
-  identity: AgentEntityIdentity;
+  /**
+   * `null` when no identity is recorded for the entity, as for a Team whose
+   * record was published before its leader's identity was: there is no
+   * session to read either way.
+   */
+  identity: AgentEntityIdentity | null;
   /**
    * The provider and config of the running generation, when there is one. It
    * wins over `config`: a runtime keeps the config it launched with, so the
@@ -76,29 +81,31 @@ export async function readAgentActivity(
   const requestedRecords = validateLastLimit(input.query.limit);
   const cursor = validateActivityCursor(input.query.cursor);
   const includeTools = validateIncludeTools(input.query.includeTools);
-  const sessionId = input.identity.session_id;
-  if (sessionId === null) {
+  const identity = input.identity;
+  if (identity === null || identity.session_id === null) {
     throw new AgentActivityReadError('session_unavailable');
   }
-  const { provider, config } = input.running ?? resolveStoppedSource(input);
+  const { provider, config } =
+    input.running ??
+    resolveStoppedSource(identity, input.config, input.providers);
   let page: AgentActivityPage;
   try {
     page = await provider.readRecentActivity(
       {
-        sessionId,
+        sessionId: identity.session_id,
         ...(cursor !== undefined ? { cursor } : {}),
         limit: requestedRecords,
         includeTools,
       },
       {
         config,
-        cwd: input.identity.runtime_cwd,
+        cwd: identity.runtime_cwd,
         logger: input.log,
       },
     );
     verifyActivityPage(page, requestedRecords);
   } catch (error) {
-    throwActivityReadError(error, input.log, input.identity.name);
+    throwActivityReadError(error, input.log, identity.name);
   }
   return {
     requestedRecords,
@@ -110,14 +117,18 @@ export async function readAgentActivity(
 }
 
 /** With no runtime running, the entity reads through the current config. */
-function resolveStoppedSource(input: ReadAgentActivityInput): RunningLaunch {
+function resolveStoppedSource(
+  identity: AgentEntityIdentity,
+  config: DreamuxConfig,
+  providers: AgentRuntimeProviderCatalog,
+): RunningLaunch {
   const agent = resolveAgent(
-    input.config,
-    input.identity.dispatcher_id,
-    input.identity.agent_runtime,
+    config,
+    identity.dispatcher_id,
+    identity.agent_runtime,
   );
   return {
-    provider: input.providers.resolve(agent.provider).implementation,
+    provider: providers.resolve(agent.provider).implementation,
     config: agent.config,
   };
 }

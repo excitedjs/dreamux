@@ -11,14 +11,38 @@ a field-targeted secret-safe view.
 While `dreamux serve` runs, the Config Service holds `config.json` in memory
 as the running process's single authority over it. A hand edit made to the
 file after start is not read, and the next `config.agents.replace` commits the
-held value to the whole file without re-reading it, so it discards the edit:
-stop the daemon before hand-editing `config.json`. `agents[]` is additionally
+held value to the whole file without re-reading it, so it discards the edit: make a hand
+edit to `config.json` with the daemon stopped. `agents[]` is additionally
 readable and replaceable live through the `config.agents.get`/
 `config.agents.replace` Commands (secrets returned as `''`, a whole-section
 replace matched by `id`, a submitted `''` for a secret-named key keeping the
 stored value) — a replace takes effect for the next runtime launch, not the
-one already running. `dispatchers[]` has no Command and stays hand-edit-with-
-the-daemon-stopped only.
+one already running. `dispatchers[]` and `plugins[]` have no Command.
+
+## Plugins
+
+`dreamux plugin add <npm package name>` installs an npm plugin into the
+plugin directory, `<dreamux root>/plugins`, proves it loads, and appends
+`"npm:<package>"` to `plugins[]`. `dreamux plugin remove <npm package name>`
+unlists it and uninstalls it, and refuses while a configured Dispatcher or
+agent uses a provider it contributes. `dreamux plugin list` shows each listed
+plugin and whether it loads. These commands and `dreamux channel add` (below)
+run while the daemon is running: do not ask for it to be stopped. They change
+nothing in the running process; the change is read at its next start, which
+the command's last line says. Because of the write described above, a
+`config.agents.replace` issued between such a command and the restart
+discards the command's entry.
+
+An `npm:` plugin is looked up in the plugin directory only. A plugin that
+fails there says `dreamux plugin add <package>`; run it. `dreamux plugin run
+<npm package name> [args..]` runs the plugin's own command line; what it does
+is the plugin's documentation, not this reference.
+
+`dreamux channel add <npm package name>` creates a new Dispatcher with one
+channel of a listed plugin. It asks what `dreamux onboard` asks and the
+channel's own configuration, writes through the onboarding path, and refuses
+a Dispatcher id that exists. It does not add a channel to a Dispatcher that
+exists: that is a hand edit with the daemon stopped.
 
 The complete current host envelope has independently optional `plugins`,
 `agents`, and `dispatchers` arrays. An omitted `agents` or `dispatchers` array
@@ -120,7 +144,9 @@ structural-editing procedure below when unrelated fields must be preserved.
    exact fields. When the change is only to `agents[]` and the daemon is
    running, prefer `config.agents.get`/`config.agents.replace` over a hand
    edit: a hand edit made while the daemon runs is not read and is discarded by
-   the next replace. Any other hand edit is made with the daemon stopped.
+   the next replace. To add or remove a plugin, or to create a Dispatcher for
+   an external plugin's channel, use the plugin commands above instead of a
+   hand edit. Any other hand edit is made with the daemon stopped.
 2. Resolve the file with `dreamux config path` without printing its contents.
 3. Load the separate provider reference for each affected built-in provider
    or built-in plugin; for an external provider or plugin, including a

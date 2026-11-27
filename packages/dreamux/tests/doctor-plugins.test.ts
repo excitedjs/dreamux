@@ -29,6 +29,7 @@ import type { LoadedPlugin } from '../src/plugin/loader.js';
 import { createConfigCommand } from '../src/cli/commands/config.js';
 import { dispatcherDir } from '../src/platform/paths.js';
 import { testSingleDispatcherFileObject } from './helpers/config.js';
+import { writeNpmPackage } from './helpers/npm-packages.js';
 
 const silentLog = {
   error: () => {},
@@ -294,17 +295,19 @@ describe('runDreamuxDoctor plugin wiring', () => {
   });
 
   it('a load-phase config.read failure pushes config and plugin rows and doctor continues', async () => {
-    vi.doMock('@acme/rejecting-doctor', () => ({
-      default: (): DreamuxPlugin => ({
+    await writeNpmPackage(
+      join(root, 'dreamux'),
+      '@acme/rejecting-doctor',
+      `export default () => ({
         name: 'rejecting-doctor',
         config: {
           read() {
             throw new Error('invalid plugin setting');
           },
         },
-      }),
-    }));
-    try {
+      });`,
+    );
+    {
       await writeConfig({
         plugins: [{ ref: 'npm:@acme/rejecting-doctor', config: {} }],
         dispatchers: [],
@@ -324,8 +327,6 @@ describe('runDreamuxDoctor plugin wiring', () => {
       ]);
       expect(result.checks.map((row) => row.name)).toContain('user service');
       expect(result.checks.map((row) => row.name)).toContain('dispatchers');
-    } finally {
-      vi.doUnmock('@acme/rejecting-doctor');
     }
   });
 

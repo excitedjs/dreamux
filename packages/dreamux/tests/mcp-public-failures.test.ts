@@ -358,6 +358,7 @@ describe('every advertised tool answers both kinds of failure the same way', () 
       listTeams: fn,
       getTeamStatus: fn,
       getTeamHistory: fn,
+      lastTeamLeader: fn,
       submitToTeamLeader: fn,
       dissolveTeam: fn,
       teammates: {
@@ -389,7 +390,6 @@ describe('every advertised tool answers both kinds of failure the same way', () 
     dissolve: { team_name: 'blue-1a2b', note: 'done' },
     spawn: { name_prefix: 'mate', prompt: 'go', intent: 'do the thing' },
     close: { name: 'mate-9z', note: 'done' },
-    last: { name: 'mate-9z' },
     get_capabilities: {},
     workflow_run: { script: 'export const meta = {}' },
     workflow_status: { run_id: 'run-1' },
@@ -400,6 +400,14 @@ describe('every advertised tool answers both kinds of failure the same way', () 
     cron_list: {},
     cron_delete: { id: 'job-1' },
   };
+
+  /** The team and the teammate server both advertise `last`, for different addressees. */
+  const LAST_ARGS: Readonly<Record<string, Record<string, unknown>>> = {
+    team: { team_name: 'blue-1a2b' },
+    teammate: { name: 'mate-9z' },
+  };
+  const argsFor = (server: string, tool: string): Record<string, unknown> =>
+    tool === 'last' ? (LAST_ARGS[server] ?? {}) : (ARGS[tool] ?? {});
 
   const servers: {
     server: string;
@@ -422,7 +430,11 @@ describe('every advertised tool answers both kinds of failure the same way', () 
       expect(tools.length).toBeGreaterThan(0);
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(delegate, tool.name, ARGS[tool.name] ?? {}),
+          await throughTheRegistry(
+            delegate,
+            tool.name,
+            argsFor(server, tool.name),
+          ),
         );
         expect(message, `tool '${tool.name}'`).toMatch(/^BAD_REQUEST: /);
         expect(message, `tool '${tool.name}'`).not.toMatch(UNCLASSIFIED);
@@ -441,7 +453,11 @@ describe('every advertised tool answers both kinds of failure the same way', () 
       }>;
       for (const tool of tools) {
         const message = refusalMessage(
-          await throughTheRegistry(delegate, tool.name, ARGS[tool.name] ?? {}),
+          await throughTheRegistry(
+            delegate,
+            tool.name,
+            argsFor(server, tool.name),
+          ),
         );
         expect(message, `tool '${tool.name}'`).toBe(
           'INTERNAL: cannot read properties of undefined (reading nope)',
@@ -944,10 +960,8 @@ describe('the Command surface and the MCP delegate are two adapters over one ope
         truncated: false,
         transcript_path: null,
       },
+      // The tool carries the activity alone; the leader's status is `status`'s.
       expectedMcp: {
-        status: 'running',
-        runtime_status: 'ready',
-        last_error: null,
         records: [{ kind: 'assistant_message', text: 'hi', occurred_at: null }],
         next_cursor: null,
         truncated: false,

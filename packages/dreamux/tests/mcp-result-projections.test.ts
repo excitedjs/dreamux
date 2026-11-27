@@ -439,7 +439,7 @@ describe('history projection', () => {
 });
 
 describe('last projection', () => {
-  it('keeps activity, status and pagination', async () => {
+  it('keeps activity and pagination, and leaves the status to `status`', async () => {
     const f = await dispatcherFixture();
     const observation: AgentEntityLastResult = {
       teammate: teammateStatus({
@@ -471,9 +471,6 @@ describe('last projection', () => {
     expect(result).toEqual({
       ok: true,
       structured: {
-        status: 'closed',
-        runtime_status: null,
-        last_error: 'runtime exited',
         records: [
           {
             kind: 'assistant_message',

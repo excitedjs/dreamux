@@ -406,6 +406,18 @@ conversation. The reason is in the Dreamux log.` — and delivers nothing to
   this Team and grants no global Team list/history or selection. Member rows
   remain on `teammate.list`; status adds no message-history storage.
   (Requirement: [simplify MCP results](/.agents/tasks/mcp/simplify-mcp-results/README.md).)
+- **The Dispatcher can read a TeamLeader's recent output.** `team.last`
+  returns a TeamLeader's recent assistant messages (tool records on request),
+  oldest first and including a turn in progress, beside the Team's status and
+  the leader's name. Reading never starts, resumes, or builds anything: a
+  Team this process does not hold and a closed Team answer from their
+  records. A leader that has not run a turn yet says so. Paging follows
+  `teammate` `last` (`limit` up to 200, `cursor`, `include_tools`).
+- **`last` returns activity only.** Neither `team.last` nor `teammate.last`
+  carries a status, a runtime status, or a last error; `team.status` and
+  `teammate status` on the same servers do. `teammate.last` as a Command
+  keeps its full value.
+  (Task: [Add the Weixin personal-agent plugin](/.agents/tasks/channel/add-weixin-personal-agent-plugin/README.md).)
 - **A Codex leader's session title updates its Team intent.** When the native
   title notification arrives, Core queues it as the Team's topic; after that
   write commits, `/teams` displays it. A failed title write retains the previous
@@ -850,8 +862,10 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   — is reported as `BAD_REQUEST` with the validator's own wording, and writes
   nothing. A replace takes effect for the next runtime launch; a runtime
   already running keeps what it launched with.
-  `dispatchers[]` has no Command; it is still edited by hand with the
-  daemon stopped. (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
+  `dispatchers[]` and `plugins[]` have no Command: `dreamux plugin add`,
+  `dreamux plugin remove`, and `dreamux channel add` write them while the
+  daemon runs, and any other edit is made by hand with the daemon stopped.
+  (Domain: [add runtime config Commands](/.agents/tasks/architecture/add-runtime-config-commands/README.md).)
 
 - **Runtime discovery uses configured selection metadata.** `get_capabilities`
   returns runtime `id` with optional `description` and `tags`. It does not
@@ -875,6 +889,34 @@ Requirement: [enhanced member communication](/.agents/tasks/mcp/enable-team-memb
   A plugin callback that
   fails while an agent launches is logged and skipped, and the launch goes on
   without that plugin's additions. (Domain: [plugins](/.agents/domains/plugins.md).)
+- **Plugins are installed and added while Dreamux runs.** `dreamux plugin add
+  <npm package name>` installs the package into the plugin directory
+  (`<dreamux root>/plugins`), loads it once to prove it is a plugin, and
+  lists it in `plugins[]`; `plugin remove` unlists it and uninstalls it, and
+  refuses while a configured Dispatcher or agent uses a provider it
+  contributes; `plugin list` shows each listed plugin and whether it loads.
+  An `npm:` plugin is looked up in the plugin directory only. None asks for
+  the daemon to be stopped: a change takes effect the next time the daemon
+  starts, and the commands say so. While the daemon runs, its own
+  `config.agents.replace` writes back the configuration it loaded at its
+  start, so a plugin command followed by that write, before a restart, loses
+  the command's entry.
+- **A plugin's operator actions are its own command line.** `dreamux plugin
+  run <npm package name> [args..]` runs the installed package's one command
+  line (`bin`, a string or a single entry) with the arguments as given and
+  exits with its exit code. Dreamux names no verb for a plugin: a login, a
+  pairing, or any other action is whatever the package's command line does,
+  and a plugin that needs none ships none. The command needs the package
+  installed, not listed.
+- **A Dispatcher for an external plugin's channel is created by `dreamux
+  channel add`.** `dreamux channel add <npm package name>` asks what
+  `dreamux onboard` asks for a new Dispatcher, with the channel fixed to one
+  the listed plugin contributes, and asks the channel's own configuration
+  through the plugin's onboarding. It refuses a Dispatcher id that exists;
+  `dreamux onboard` itself still offers only the always-loaded plugins.
+  (Domain: [plugins](/.agents/domains/plugins.md#loading),
+  [state-config-and-files](/.agents/domains/state-config-and-files.md).
+  Task: [Add the Weixin personal-agent plugin](/.agents/tasks/channel/add-weixin-personal-agent-plugin/README.md).)
 - **A plugin can append to every TeamMate's launch, the same way it already
   can for the Dispatcher and a TeamLeader.** Every ordinary TeamMate —
   dispatcher-spawned, a Team's own member, or a Workflow agent — gets a

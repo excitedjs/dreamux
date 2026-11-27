@@ -456,7 +456,7 @@ function nonInteractivePromptValue(
   );
 }
 
-async function promptText(
+export async function promptText(
   label: string,
   initialValue?: string,
   required = true,

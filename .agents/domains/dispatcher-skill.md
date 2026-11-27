@@ -88,8 +88,11 @@ Detailed `status` retains identity, session, workspace, and lifecycle facts;
 its `created_at` and `updated_at` are identity timestamps, not recent activity.
 Use `last` for recent activity.
 
-Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `history`,
-and `dissolve`. `create.name_prefix` is only a requested label; use the returned
+Dispatcher `team` MCP tools are `create`, `send`, `list`, `status`, `last`,
+`history`, and `dissolve`. `last` reads a TeamLeader's recent output and
+activity by `team_name`, a turn in progress included, with the same `limit`,
+`cursor`, and `include_tools` as `teammate` `last`; it shows what a leader said
+and did between its replies. `create.name_prefix` is only a requested label; use the returned
 concrete `team_name` for every later Team call. A valid Team record occupies
 that name. Fully retired history is read from disk, so deleting or invalidating
 its record can release that occupation; active and pending owners retain their

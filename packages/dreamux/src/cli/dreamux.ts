@@ -13,12 +13,20 @@ import { hideBin } from 'yargs/helpers';
 
 import { packagedManifestPath } from '../platform/paths.js';
 import { createDreamuxCommands } from './commands/index.js';
+import { forwardPluginRun } from './commands/plugin.js';
 
 async function main(): Promise<void> {
   const { version } = JSON.parse(
     await readFile(packagedManifestPath(), 'utf8'),
   ) as { version: string };
-  await yargs(hideBin(process.argv))
+  const argv = hideBin(process.argv);
+  // `plugin run` hands the plugin everything after the package name, options
+  // included, so it is read before the argument parser sees it.
+  if (argv[0] === 'plugin' && argv[1] === 'run') {
+    process.exitCode = await forwardPluginRun(argv.slice(2));
+    return;
+  }
+  await yargs(argv)
     .scriptName('dreamux')
     .version(version)
     .usage('$0 <command> [options]')

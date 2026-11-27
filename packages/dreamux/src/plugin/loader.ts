@@ -33,6 +33,7 @@ import {
   readNonEmptyString,
   RuleViolation,
 } from '@excitedjs/dreamux-utils';
+import { importNpmPackage } from './resolve.js';
 
 /** One `plugins[]` item: a bare ref string is `{ ref }`. */
 export interface PluginConfigEntry {
@@ -239,7 +240,12 @@ async function constructPlugin(ref: ProviderRef): Promise<DreamuxPlugin> {
   }
   let module: Record<string, unknown>;
   try {
-    module = await defaultImportModule(packageName);
+    // An `npm:` ref is found in the plugin directory; a built-in is a package
+    // of Dreamux's own install.
+    module =
+      ref.source === 'npm'
+        ? await importNpmPackage(packageName)
+        : await defaultImportModule(packageName);
   } catch (err) {
     throw new PluginLoadError(
       ref.raw,

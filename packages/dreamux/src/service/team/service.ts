@@ -25,7 +25,6 @@ import {
   optionalLifecycleText,
   requireLifecycleText,
   type AgentEntityIdentity,
-  type AgentEntityIdentityStatus,
   type AgentEntityWorktreeIdentity,
 } from '../agent/identity.js';
 import { TeammateCollection } from '../agent/index.js';
@@ -1042,12 +1041,14 @@ export class TeamService implements Team {
   }
 
   /**
-   * This Team's leader identity status, read straight from the leader this
-   * Team always holds once constructed — there is no lazy rebuild path left
-   * that could ever leave this Team without one.
+   * The leader this Team holds, for reading only: its current identity and
+   * its running launch. Both are read in one synchronous step by a caller
+   * that needs both, because only the running generation can publish a
+   * session id, and an await between the two reads could pair a session with
+   * the next generation's provider and config.
    */
-  leaderIdentityStatus(): AgentEntityIdentityStatus {
-    return this.mustLeader().current().status;
+  leaderForRead(): Pick<AgentService, 'current' | 'runningLaunch'> {
+    return this.mustLeader();
   }
 
   /**

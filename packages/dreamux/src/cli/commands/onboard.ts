@@ -74,7 +74,7 @@ function buildOnboardOptions(y: Argv): Argv<OnboardCliOptions> {
     }) as Argv<OnboardCliOptions>;
 }
 
-function printOnboardResult(result: OnboardRunResult): void {
+export function printOnboardResult(result: OnboardRunResult): void {
   console.log('dreamux onboard file ledger:');
   for (const entry of result.files) {
     console.log(`${entry.status}\t${entry.path}\t${entry.reason}`);

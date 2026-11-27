@@ -33,6 +33,7 @@ import type {
   NpmProviderRef,
 } from '@excitedjs/dreamux-types';
 import type { ProviderImplementation, ProviderRegistry } from './registry.js';
+import { importNpmPackage } from '../plugin/resolve.js';
 import { UnknownBuiltinProviderPackageError } from './builtins.js';
 
 export type ProviderModule = Record<string, unknown> & {
@@ -137,13 +138,14 @@ async function loadOneProviderPackage<TProvider extends ProviderImplementation>(
   registry.register(descriptor, provider);
 }
 
+/** `ref` is always `npm:`: a built-in one was refused before this ran. */
 async function importProviderModule<TProvider>(
   ref: ProviderRef,
   packageName: string,
   spec: ProviderPackageLoaderSpec<TProvider>,
 ): Promise<ProviderModule> {
   try {
-    return await defaultImportModule(packageName);
+    return await importNpmPackage(packageName);
   } catch (err) {
     throw spec.createLoadError(
       ref.raw,
@@ -176,12 +178,6 @@ function uniqueLoadableRefs(refs: Iterable<string>): ProviderRef[] {
     out.set(parsed.raw, parsed);
   }
   return [...out.values()];
-}
-
-async function defaultImportModule(
-  packageName: string,
-): Promise<ProviderModule> {
-  return import(packageName) as Promise<ProviderModule>;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

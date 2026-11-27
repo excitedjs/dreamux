@@ -178,26 +178,15 @@ const TEAMMATE_HISTORY_ROW_SCHEMA: JsonSchema = objectSchema(
   ],
 );
 
-/** One activity observation, without the roster detail the call did not ask for. */
+/** One activity observation: `status` on this server carries the roster row. */
 const TEAMMATE_LAST_SCHEMA: JsonSchema = objectSchema(
   {
-    status: STRING,
-    runtime_status: NULLABLE_STRING,
-    last_error: NULLABLE_STRING,
     records: arrayOf(OBJECT),
     next_cursor: NULLABLE_STRING,
     truncated: BOOLEAN,
     transcript_path: NULLABLE_STRING,
   },
-  [
-    'status',
-    'runtime_status',
-    'last_error',
-    'records',
-    'next_cursor',
-    'truncated',
-    'transcript_path',
-  ],
+  ['records', 'next_cursor', 'truncated', 'transcript_path'],
 );
 
 /** What a close leaves to inspect: the lifecycle status and cleanup outcome. */
@@ -698,9 +687,6 @@ async function last(
     // already has from `status`/`list`.
     return {
       structured: {
-        status: result.teammate.status,
-        runtime_status: result.teammate.runtime_status,
-        last_error: result.teammate.last_error,
         records: result.records,
         next_cursor: result.next_cursor,
         truncated: result.truncated,
