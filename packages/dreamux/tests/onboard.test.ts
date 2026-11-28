@@ -1023,7 +1023,13 @@ describe('dreamux onboard', () => {
     });
     expect(
       config.agents[config.dispatchers[0]!.agentRuntime]?.config,
-    ).toMatchObject({ sandbox_mode: 'workspace-write' });
+    ).toMatchObject({
+      bin: process.execPath,
+      model: null,
+      effort: null,
+      extra_args: [],
+      extra_env: {},
+    });
   });
 
   /**

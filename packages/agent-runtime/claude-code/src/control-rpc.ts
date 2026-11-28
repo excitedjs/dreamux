@@ -4,8 +4,8 @@ import type { Writable } from 'node:stream';
 import type { DreamuxLogger } from '@excitedjs/dreamux-types';
 
 import {
-  buildCanUseToolAllow,
   buildControlAck,
+  buildControlError,
   buildInterruptRequest,
   buildRemoteControlEnable,
 } from './stream.js';
@@ -83,24 +83,20 @@ export class ClaudeCodeControlRpc {
     );
   }
 
-  onControlRequest(
-    requestId: string | null,
-    subtype: string | null,
-    request: Record<string, unknown>,
-  ): void {
+  onControlRequest(requestId: string | null, subtype: string | null): void {
     if (requestId === null || !this.stdin.writable) return;
-    // Unattended posture: answer permission callbacks so a turn never wedges
-    // waiting on a human.
+    // Unattended posture: CLI launch passes `--dangerously-skip-permissions`;
+    // unexpected tool-permission callbacks fail fast rather than auto-allowing.
     let reply: string;
     if (subtype === 'can_use_tool') {
-      const rawInput = request['input'];
-      const input =
-        typeof rawInput === 'object' &&
-        rawInput !== null &&
-        !Array.isArray(rawInput)
-          ? (rawInput as Record<string, unknown>)
-          : {};
-      reply = buildCanUseToolAllow(requestId, input);
+      this.options.logger?.warn(
+        {},
+        'rejected Claude Code can_use_tool request; permission prompts are unsupported in Dreamux-managed runtimes',
+      );
+      reply = buildControlError(
+        requestId,
+        'tool permission requests are unsupported in Dreamux-managed runtimes',
+      );
     } else {
       reply = buildControlAck(requestId);
     }

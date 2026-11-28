@@ -16,9 +16,6 @@ export {
   readDispatcherCodexConfig,
   defaultDispatcherCodexConfig,
   DEFAULT_CODEX_BIN,
-  DEFAULT_INITIALIZE_TIMEOUT_MS,
-  DEFAULT_SANDBOX_MODE,
-  ALLOWED_SANDBOX_MODES,
 } from './config.js';
 
 import type { AgentRuntimeProviderFactory } from '@excitedjs/dreamux-types';

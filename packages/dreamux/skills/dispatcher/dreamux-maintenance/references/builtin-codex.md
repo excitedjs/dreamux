@@ -4,14 +4,18 @@ Accepted `agents[].config` fields, defaults, and meanings:
 
 - `bin`: non-empty string, default `"codex"`; `CODEX_HOST_CODEX_BIN` is the
   higher-priority host binary override.
-- `sandbox_mode`: `read-only | workspace-write | danger-full-access`, default
-  `workspace-write`; configures the Codex launch.
-- `extra_args`: string array, default `[]`; passed to the child process.
+- `model`: non-empty string or null, default `null`; null defers to Codex's own
+  configuration, otherwise maps to `-c model=<toml-string>` ahead of
+  `extra_args`.
+- `effort`: non-empty string or null, default `null`; null defers to Codex's own
+  configuration, otherwise maps to `-c model_reasoning_effort=<toml-string>`
+  ahead of `extra_args`.
+- `extra_args`: string array, default `[]`; passed to the child process after
+  generated arguments.
 - `extra_env`: string-to-string map, default `{}`; merged into the child
   environment.
-- `initialize_timeout_ms`: positive integer milliseconds, default `10000`;
-  bounds the runtime initialize handshake.
 
 Codex approval policy is not configurable: the launch always passes
-`approval_policy=never` (issue #2 trust model — the dreamux MVP only ships
-with a fail-fast approval handler).
+`-c approval_policy=never` and rejects unexpected approval callbacks fail-fast.
+Sandbox policy is not passed by Dreamux and follows native Codex configuration
+or explicit `extra_args`.

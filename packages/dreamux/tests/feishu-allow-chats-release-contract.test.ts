@@ -128,28 +128,28 @@ describe('trusted allow_chats release contract', () => {
     expect(feishuReadme).not.toContain('sender_kind` input');
   });
 
-  it('documents every built-in Codex field and the parsed-but-unused timeout', () => {
+  it('documents every current built-in Codex field and retired keys', () => {
     const readme = readFileSync(
       join(repoRoot, 'packages/dreamux/README.md'),
       'utf8',
     );
     const start = readme.indexOf('For `builtin:codex`, every config field');
-    const end = readme.indexOf('Claude Code agents use a different', start);
+    const end = readme.indexOf('Claude Code (`builtin:claude-code`)', start);
     const codex = readme.slice(start, end);
     for (const field of [
       'bin',
-      'approval_policy',
-      'sandbox_mode',
+      'model',
+      'effort',
       'extra_args',
       'extra_env',
+      'approval_policy',
+      'sandbox_mode',
       'initialize_timeout_ms',
       'turn_timeout_ms',
     ]) {
       expect(codex).toContain(`\`${field}\``);
     }
-    expect(codex).toContain('`600000`');
-    expect(codex).toMatch(/not passed into `CodexRuntime`/);
-    expect(codex).toMatch(/currently has no runtime effect/);
+    expect(codex).toMatch(/retired\s+keys are ignored/);
   });
 
   it('locks the root maintenance synchronization and release-policy carve-out', () => {

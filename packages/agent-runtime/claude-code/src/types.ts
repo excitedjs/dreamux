@@ -67,7 +67,6 @@ export type ParsedLine =
       kind: 'control_request';
       requestId: string | null;
       subtype: string | null;
-      request: JsonObject;
       raw: JsonObject;
     }
   | {

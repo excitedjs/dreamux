@@ -1,47 +1,29 @@
 /**
- * Build the CLI-arg model passed to the codex app-server child from the
- * dispatcher's structured `agents[]` entry config (`sandbox_mode`,
- * `extra_args`).
+ * Build the CLI arguments passed to the codex app-server child from the
+ * agent's structured `agents[].config` entry (`model`, `effort`, `extra_args`).
  *
- * `approvalPolicy` is always `'never'` (issue #2 "trust model": the dreamux
- * MVP only ships with a fail-fast approval handler, so no other policy is
- * safe to run) — it is not read from config.
- *
- * The provider config reader validates sandbox mode; this module only encodes it.
+ * `approval_policy` is always `'never'` (Dreamux runs unattended and installs a
+ * fail-fast approval handler). Sandbox policy is intentionally not passed so
+ * native Codex configuration (`~/.codex/config.toml`) or explicit `extra_args`
+ * governs it.
  */
 
-export interface ParsedCodexArgs {
-  approvalPolicy: string;
-  sandboxMode: string;
-  extraArgs: string[];
-}
+import type { DispatcherCodexConfig } from './config.js';
 
-/**
- * Build the codex CLI-arg model from the structured codex config block
- * (the dispatcher's `agents[]` entry config).
- */
-export function codexArgsFromConfig(config: {
-  sandbox_mode: string;
-  extra_args: string[];
-}): ParsedCodexArgs {
-  return {
-    approvalPolicy: 'never',
-    sandboxMode: config.sandbox_mode,
-    extraArgs: [...config.extra_args],
-  };
-}
-
-export function codexArgsToCli(parsed: ParsedCodexArgs): string[] {
-  // codex >= 0.134 dropped --approval-policy and --sandbox at the
-  // app-server level; the remaining mechanism is `-c key=value` config
-  // overrides for both. Pass approval_policy first, then sandbox_mode,
-  // then the dispatcher's extra args — letting extra_args contain a same-key
-  // `-c` override that wins (codex parses last write wins).
-  return [
-    '-c',
-    `approval_policy=${parsed.approvalPolicy}`,
-    '-c',
-    `sandbox_mode=${parsed.sandboxMode}`,
-    ...parsed.extraArgs,
-  ];
+export function codexCliArgs(
+  config: Pick<DispatcherCodexConfig, 'model' | 'effort' | 'extra_args'>,
+): string[] {
+  // codex >= 0.134 accepts `-c key=value` config overrides parsed as TOML.
+  // Emit approval_policy, then optional model and model_reasoning_effort, then
+  // extra_args so explicit extra_args overrides win (codex parses last write
+  // wins). JSON.stringify produces valid TOML basic strings.
+  const args = ['-c', 'approval_policy=never'];
+  if (config.model !== null) {
+    args.push('-c', `model=${JSON.stringify(config.model)}`);
+  }
+  if (config.effort !== null) {
+    args.push('-c', `model_reasoning_effort=${JSON.stringify(config.effort)}`);
+  }
+  args.push(...config.extra_args);
+  return args;
 }

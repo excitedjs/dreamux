@@ -185,14 +185,13 @@ export class AcpRuntime implements AgentRuntime {
       const writer = encoded.writable.getWriter();
       const app = client({ name: 'dreamux-antigravity' })
         .onNotification('session/update', ({ params }) => this.onUpdate(params))
-        .onRequest('session/request_permission', ({ params }) => {
-          const allow =
-            params.options.find((option) => option.kind === 'allow_once') ??
-            params.options.find((option) => option.kind === 'allow_always');
+        .onRequest('session/request_permission', () => {
+          this.context.logger.warn(
+            {},
+            'rejected Antigravity ACP permission request; permission prompts are unsupported in Dreamux-managed runtimes',
+          );
           return {
-            outcome: allow
-              ? { outcome: 'selected', optionId: allow.optionId }
-              : { outcome: 'cancelled' },
+            outcome: { outcome: 'cancelled' },
           };
         });
       const connection = app.connect({

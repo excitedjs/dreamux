@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Synchronize bundled dreamux-maintenance provider references (builtin-codex.md and builtin-claude-code.md), README, and provider contract tests with the aligned codex, claude-code, and antigravity config schemas and unattended approval posture.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

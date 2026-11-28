@@ -49,7 +49,7 @@ function looksLikeApprovalRequest(method: string): boolean {
 /**
  * Server→client request handler for Codex server-requests (issue #2, "trust
  * model" and "implementation pitfalls"):
- *   - MVP runs Codex with approval-policy=never (or auto-approve).
+ *   - Dreamux runs Codex with approval_policy=never.
  *   - If a server-request still arrives (e.g. because policy was
  *     misconfigured or codex escalates anyway), fail loudly — never return
  *     null. Silent null is the trap that hangs the daemon.
@@ -284,9 +284,7 @@ export class CodexRuntime implements AgentRuntime {
       },
     });
     this.client.setServerRequestHandler(approvalHandler);
-    const initResponse = await performInitializeHandshake(this.client, {
-      timeoutMs: this.deps.handshakeTimeoutMs,
-    });
+    const initResponse = await performInitializeHandshake(this.client);
     this.assertGeneration(generation);
     this.log(
       'info',

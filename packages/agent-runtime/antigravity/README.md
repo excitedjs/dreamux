@@ -32,9 +32,11 @@ OAuth, login, account pools, or rotation.
 }
 ```
 
-`transport` accepts `tmux` or `acp`. `effort`, when set, accepts `low`,
-`medium`, `high`, `xhigh`, or `max`. The provider never falls back to the other
-transport.
+`transport` accepts `tmux` or `acp`. `model` and `effort`, when set, accept any
+non-empty string and pass through to the native CLI or ACP session options. The
+provider never falls back to the other transport. Both transports launch with
+`--dangerously-skip-permissions` without setting `--sandbox`, and ACP cancels
+unexpected `session/request_permission` callbacks fail-fast.
 
 Both transports use agy's default agent, not a generated custom-agent. ACP
 receives prompt append and MCP descriptors natively; tmux discovers Core-provided

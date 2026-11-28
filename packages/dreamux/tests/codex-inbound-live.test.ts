@@ -230,9 +230,8 @@ describe('real Codex #63 inbound gate', () => {
                 provider: 'builtin:codex',
                 config: {
                   bin,
-                  sandbox_mode: 'danger-full-access',
+                  extra_args: ['-c', 'sandbox_mode=danger-full-access'],
                   extra_env: { CODEX_HOME: codexHome },
-                  initialize_timeout_ms: 15_000,
                 },
               },
             ],

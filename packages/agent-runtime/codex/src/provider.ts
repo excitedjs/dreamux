@@ -5,7 +5,7 @@ import type {
   AgentRuntimeSystemPrompt,
 } from '@excitedjs/dreamux-types';
 import { readCodexRecentActivity } from './activity/reader.js';
-import { codexArgsFromConfig, codexArgsToCli } from './args.js';
+import { codexCliArgs } from './args.js';
 import { resolveCodexBinPath } from './bin.js';
 import {
   DEFAULT_CODEX_BIN,
@@ -98,9 +98,8 @@ export function createCodexAgentRuntimeProvider(
       context: AgentRuntimeCreateContext<DispatcherCodexConfig>,
     ): Promise<AgentRuntime> {
       const codexConfig = context.config;
-      const codexArgs = codexArgsFromConfig(codexConfig);
       const runtimeArgs = [
-        ...codexArgsToCli(codexArgs),
+        ...codexCliArgs(codexConfig),
         ...codexMcpServerArgs(context.mcpServers),
       ];
       const paths = context.paths;
@@ -122,7 +121,6 @@ export function createCodexAgentRuntimeProvider(
         paths,
         codexBinPath: resolveCodexBinPath(codexConfig.bin),
         extraArgs: runtimeArgs,
-        handshakeTimeoutMs: codexConfig.initialize_timeout_ms,
         extraEnv: codexConfig.extra_env,
         // context.skillSources is a required field on AgentRuntimeCreateContext
         // (never undefined) — assign it directly.

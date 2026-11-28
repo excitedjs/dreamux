@@ -86,19 +86,22 @@ For `builtin:codex`, every config field below has a default:
 | Field | Default |
 | --- | --- |
 | `bin` | `"codex"` |
-| `sandbox_mode` | `"workspace-write"` |
+| `model` | `null` |
+| `effort` | `null` |
 | `extra_args` | `[]` |
 | `extra_env` | `{}` |
-| `initialize_timeout_ms` | `10000` |
 
-Older configurations may still contain `approval_policy` and `turn_timeout_ms`.
-Both keys are ignored by the current config reader. Dreamux supplies approval
-policy `never`; the old timeout setting (formerly documented with default
-`600000`) is not passed into `CodexRuntime` and currently has no runtime effect.
-Do not use either retired key to configure new installations.
+Dreamux always launches Codex with `-c approval_policy=never` and does not pass
+`-c sandbox_mode`; sandbox policy follows native Codex configuration or explicit
+`extra_args`. Older configurations may still contain `approval_policy`,
+`sandbox_mode`, `initialize_timeout_ms`, or `turn_timeout_ms`; all four retired
+keys are ignored by the current config reader. Do not use retired keys to
+configure new installations.
 
-Claude Code agents use a different provider config: its `turn_timeout_ms` is an
-active stream-inactivity timeout. See the
+Claude Code (`builtin:claude-code`) shares the same five base fields plus
+`remote_control` (default `false`), launches with
+`--dangerously-skip-permissions`, and ignores retired `permission_mode` and
+`turn_timeout_ms` keys. See the
 [configuration guide](https://github.com/excitedjs/dreamux/blob/next/docs/configuration.md)
 for both providers and complete examples.
 

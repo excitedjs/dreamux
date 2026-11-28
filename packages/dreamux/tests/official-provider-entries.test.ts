@@ -36,10 +36,7 @@ const logger: DreamuxLogger = {
 describe('official package public entries', () => {
   it('Codex exposes exactly the reviewed public runtime names', () => {
     expect(Object.keys(codexApi).sort()).toEqual([
-      'ALLOWED_SANDBOX_MODES',
       'DEFAULT_CODEX_BIN',
-      'DEFAULT_INITIALIZE_TIMEOUT_MS',
-      'DEFAULT_SANDBOX_MODE',
       'createCodexAgentRuntimeProvider',
       'createCodexPlugin',
       'default',
@@ -55,9 +52,7 @@ describe('official package public entries', () => {
   });
   it('Claude Code exposes exactly the reviewed public runtime names', () => {
     expect(Object.keys(claudeApi).sort()).toEqual([
-      'ALLOWED_CLAUDE_CODE_PERMISSION_MODES',
       'DEFAULT_CLAUDE_CODE_BIN',
-      'DEFAULT_CLAUDE_CODE_TURN_TIMEOUT_MS',
       'createClaudeCodeAgentRuntimeProvider',
       'createClaudeCodePlugin',
       'default',

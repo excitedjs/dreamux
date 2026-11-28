@@ -83,7 +83,6 @@ describe('provider log permissions', () => {
           config: {
             ...defaultDispatcherClaudeCodeConfig(),
             bin,
-            turn_timeout_ms: 5_000,
             extra_env: {
               DREAMUX_TEST_LOG_OBSERVATION: observation,
               DREAMUX_TEST_LOG_PATHS: JSON.stringify([

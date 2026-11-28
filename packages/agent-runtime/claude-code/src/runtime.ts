@@ -31,6 +31,9 @@ import { materializeClaudeSkillAddDir } from './skill-materializer.js';
 import type { ClaudeCodeSession } from './supervisor.js';
 import type { ClaudeProtocolEvent } from './types.js';
 
+/** Per-turn stream-inactivity timeout (ms) before reaping a stalled resident child. */
+const CLAUDE_CODE_TURN_TIMEOUT_MS = 600_000;
+
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -377,7 +380,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       stderrLogPath: this.stderrLogPath,
       sessionId: candidateSessionId,
       outputSchemaEnabled: this.deps.outputSchema !== undefined,
-      turnTimeoutMs: this.config.turn_timeout_ms,
+      turnTimeoutMs: CLAUDE_CODE_TURN_TIMEOUT_MS,
       remoteControl: this.config.remote_control,
       onRemoteControlUrl: this.config.remote_control
         ? (url) => {

@@ -336,11 +336,7 @@ export class ClaudeCodeStreamRpc {
         break;
       }
       case 'control_request':
-        this.control.onControlRequest(
-          line.requestId,
-          line.subtype,
-          line.request,
-        );
+        this.control.onControlRequest(line.requestId, line.subtype);
         break;
       case 'control_response':
         this.control.onControlResponse(
