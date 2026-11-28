@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/agent-runtime-antigravity",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "External Antigravity CLI Agent Runtime provider for Dreamux, with config-selected native tmux and resident ACP v1 transports.",
   "license": "MIT",
   "repository": {

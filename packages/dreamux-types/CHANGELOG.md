@@ -1,6 +1,17 @@
 # Change Log - @excitedjs/dreamux-types
 
-This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 0.14.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- A submission now states why its turn exists as an optional `trigger`. Only `user` may interrupt work in progress; every other value exists so a runtime can deliver news without cutting a running response short. A runtime that ignores the value behaves exactly as before.
+
+### Patches
+
+- Publish the current neutral provider contracts required by the Antigravity alpha runtime.
 
 ## 0.13.0
 Tue, 27 Oct 2026 13:36:02 GMT

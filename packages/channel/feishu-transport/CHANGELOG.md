@@ -1,6 +1,20 @@
 # Change Log - @excitedjs/feishu-transport
 
-This log was last generated on Thu, 15 Oct 2026 10:58:00 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 0.13.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- The inbound message route no longer waits for the bot's own identity before running, because that wait sat inside the platform's three-second acknowledgement window. Identity is still resolved once before the socket opens, and `ensureSelfIdentity()` exposes the retry a caller now runs inside its own work instead. The bot-added event decoder reads the event id from the top level of the dispatched payload, where the SDK puts it after flattening the v2 envelope.
+
+Both bot-info and app-owner lookups are now bounded end to end at five seconds. A per-request timeout would not have been enough: the SDK fetches a tenant access token before each call, with no timeout of its own, so a host that accepts the connection and never answers could previously hold a lookup open indefinitely. The visible consequence is that a lookup slower than five seconds now gives up and reports a diagnostic where it used to keep waiting.
+- Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts. Upload MP4 and OPUS artifacts as stream to match downloadable file messages. Expose typed partial-send errors carrying platform receipts while preserving existing diagnostic messages and causes.
+
+### Patches
+
+- Recognize native Windows absolute paths in Markdown images while preserving Markdown escaping and leaving protocol-relative URLs, relative paths and file URLs untouched.
 
 ## 0.12.0
 Thu, 15 Oct 2026 10:58:00 GMT

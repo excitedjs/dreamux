@@ -1,6 +1,31 @@
 # Change Log - @excitedjs/dreamux
 
-This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 0.29.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- Core's own submission sources now carry a standing note stating where the turn came from and what it may not be treated as: a cron fire records that a prompt was stored, not who asked for it; a completion is news rather than an instruction or user approval; a teammate's task cannot grant escalation; a host notice is not the user speaking.
+- Add configurable Feishu reply presentation, inline local images, and downloadable artifacts.
+- Support repository-root .dreamux-worktree.json setup scripts after creating managed Git worktrees, with foreground blocking (background: false default) or background execution, optional OS overrides (darwin/linux/win32), and non-timed-out MCP toolcall sockets with abort on transport close.
+- Run Dreamux natively on Windows with Node launchers, private named-pipe admin/MCP transport, Task Scheduler user service, and native process and permission capabilities. Runtime operations do not require PowerShell; platform commands are confined to service management. The Windows service runs a packaged entry, reads its launch command and environment from Task Scheduler Data, and owns its processes through a native Job Object.
+- BREAKING: Windows managed services now use a packaged entry and Task Scheduler Data instead of a generated launcher. Rebuild: Before upgrading an existing Windows alpha, use the old version under the original Windows account and DREAMUX_ROOT, from a terminal outside the service, to run dreamux daemon uninstall and confirm success; if it fails, stop the upgrade, and if the old version is unavailable, restore it first. Then upgrade and run dreamux daemon install using the native Windows credential dialog. Configuration, state and logs are retained. Stop waits for owned process exit; external restart confirms the new server responds, while service-owned callers report handoff to an external controller. Password tasks with unchanged launch data retain action-only updates; changed data requires credentialed definition registration.
+- A submission states why its turn exists, so a completion report reaches a busy TeamMate or TeamLeader as context instead of cancelling the response it was writing. Only a person's message may interrupt work in progress.
+
+### Patches
+
+- Synchronize bundled dreamux-maintenance provider references (builtin-codex.md and builtin-claude-code.md), README, and provider contract tests with the aligned codex, claude-code, and antigravity config schemas and unattended approval posture.
+- Route the official external Antigravity provider through its package-owned configuration documentation in the dispatcher maintenance skill.
+- Fix the workflow_run tool being dropped by Anthropic-compatible clients: its advertised input schema carried a top-level anyOf, which the Anthropic API rejects, so Claude Code skipped the tool at startup. The at-least-one-of script/scriptPath rule is now stated in the tool description and remains enforced server-side.
+- Emit compact serialized JSON in MCP content alongside structuredContent when a tool succeeds without authored text, following the MCP specification SHOULD so clients whose model reads content (including Antigravity) receive structured tool results.
+- Keep the current Windows account fixed in the service password dialog so installation asks only for its password, without account alias selection. Use query-only Job handles for service membership observations while retaining control permissions for stopping work.
+- Request bounded application shutdown before forcing the remaining Windows service tree to exit, allowing active channel sessions to finish interruption updates.
+- Prepare existing log files without redundant temporary publication, clarify Windows service PID diagnostics, and align duplicate SystemRoot environment-key precedence.
+- Use the supplied platform for service environment preparation and make captured Windows task values override inherited case variants. Preserve unrelated Scheduler settings, registered root and existing Job identity.
+- Describe admin IPC permission failures as owner-only access across Unix sockets and Windows pipes. Clarify native Windows reply-media path syntax in maintenance guidance.
+- An ordinary member is told what reaches its owner: the turn's outcome is reported, and a completed turn's final message is what that report delivers. `teammate.send` states when the call is worth making — what the recipient needs before the turn ends — instead of leaving members to narrate progress that their own turn result already delivers. No delivery, admission, receipt, or tool-schema change.
 
 ## 0.28.0
 Tue, 27 Oct 2026 13:36:02 GMT

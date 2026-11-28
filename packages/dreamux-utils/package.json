@@ -1,6 +1,6 @@
 {
   "name": "@excitedjs/dreamux-utils",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Shared utilities for Dreamux providers and host: neutral config validation, native OS/filesystem capabilities, and completion-body resolution. Independent of Dreamux core and provider types.",
   "license": "MIT",
   "repository": {

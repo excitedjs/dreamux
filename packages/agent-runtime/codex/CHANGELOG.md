@@ -1,6 +1,21 @@
 # Change Log - @excitedjs/agent-runtime-codex
 
-This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 0.10.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- Align agents[].config with claude-code and antigravity: add optional non-empty model and effort fields (emitting TOML-quoted -c model and -c model_reasoning_effort ahead of extra_args), remove sandbox_mode and initialize_timeout_ms from config (tolerated and ignored under R21; sandbox defers to native ~/.codex/config.toml or extra_args and handshake timeout stays an internal 10s constant), and drop the removed config constants from public exports.
+- Support native Windows Codex app-server sessions over private stdio JSON-RPC, including native home resolution and process cleanup.
+- A non-`user` submission arriving while the thread is busy is appended to the conversation as context instead of starting a turn, so a completion report can no longer cancel the response being written. Idle threads still start a turn, and a `user` submission still steers. Thread busy state is tracked from codex's own `thread/status/changed`.
+- A started turn now carries its trigger as codex's own `turn/start` `turnTrigger`, so a turn opened by a schedule, a completion report, or another agent is distinguishable from one a person typed. The value reaches only the turn's `x-codex-turn-metadata` payload and changes no delivery behaviour.
+
+### Patches
+
+- Unwrap completed Codex mcpToolCall result envelopes to structuredContent or joined content text blocks for RuntimeActivity COT display.
+- Prepare private current-user ownership for Codex log directories and append files before child output, including elevated Windows startup, while preserving existing log contents.
 
 ## 0.9.0
 Tue, 27 Oct 2026 13:36:02 GMT

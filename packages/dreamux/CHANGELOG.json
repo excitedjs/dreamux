@@ -2,6 +2,105 @@
   "name": "@excitedjs/dreamux",
   "entries": [
     {
+      "version": "0.29.0",
+      "tag": "@excitedjs/dreamux_v0.29.0",
+      "date": "Sat, 28 Nov 2026 02:21:15 GMT",
+      "comments": {
+        "none": [
+          {
+            "comment": "The live #63 inbound gate waits for the folded turn to be acknowledged instead of counting turn/start requests the moment the route returns. A chat message and a document comment are now acknowledged as soon as the session owns the work, so the route resolving is no longer the same instant as the submission; the gate proves the same two facts through a wait on the fact rather than on the function."
+          },
+          {
+            "comment": "Document the same-version notification restart procedure in the Dispatcher maintenance skill."
+          },
+          {
+            "comment": "Document provider-owned log preparation for elevated Windows foreground startup and later limited service startup."
+          },
+          {
+            "comment": "Add fresh-process regression coverage for native addon loading through host entry modules."
+          },
+          {
+            "comment": "Use native Vitest setup and teardown for disposable test homes, including focused runs and fail-closed watch reruns after setup failure."
+          },
+          {
+            "comment": "Keep content-scan fixture cleanup in the async operation that awaits its subprocesses, avoiding premature directory removal after a test timeout."
+          },
+          {
+            "comment": "Give the two real tarball subprocess test fixtures explicit time budgets while preserving scanner assertions and cleanup."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Synchronize bundled dreamux-maintenance provider references (builtin-codex.md and builtin-claude-code.md), README, and provider contract tests with the aligned codex, claude-code, and antigravity config schemas and unattended approval posture."
+          },
+          {
+            "comment": "Route the official external Antigravity provider through its package-owned configuration documentation in the dispatcher maintenance skill."
+          },
+          {
+            "comment": "Fix the workflow_run tool being dropped by Anthropic-compatible clients: its advertised input schema carried a top-level anyOf, which the Anthropic API rejects, so Claude Code skipped the tool at startup. The at-least-one-of script/scriptPath rule is now stated in the tool description and remains enforced server-side."
+          },
+          {
+            "comment": "Emit compact serialized JSON in MCP content alongside structuredContent when a tool succeeds without authored text, following the MCP specification SHOULD so clients whose model reads content (including Antigravity) receive structured tool results."
+          },
+          {
+            "comment": "Keep the current Windows account fixed in the service password dialog so installation asks only for its password, without account alias selection. Use query-only Job handles for service membership observations while retaining control permissions for stopping work."
+          },
+          {
+            "comment": "Request bounded application shutdown before forcing the remaining Windows service tree to exit, allowing active channel sessions to finish interruption updates."
+          },
+          {
+            "comment": "Prepare existing log files without redundant temporary publication, clarify Windows service PID diagnostics, and align duplicate SystemRoot environment-key precedence."
+          },
+          {
+            "comment": "Use the supplied platform for service environment preparation and make captured Windows task values override inherited case variants. Preserve unrelated Scheduler settings, registered root and existing Job identity."
+          },
+          {
+            "comment": "Describe admin IPC permission failures as owner-only access across Unix sockets and Windows pipes. Clarify native Windows reply-media path syntax in maintenance guidance."
+          },
+          {
+            "comment": "An ordinary member is told what reaches its owner: the turn's outcome is reported, and a completed turn's final message is what that report delivers. `teammate.send` states when the call is worth making — what the recipient needs before the turn ends — instead of leaving members to narrate progress that their own turn result already delivers. No delivery, admission, receipt, or tool-schema change."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "Core's own submission sources now carry a standing note stating where the turn came from and what it may not be treated as: a cron fire records that a prompt was stored, not who asked for it; a completion is news rather than an instruction or user approval; a teammate's task cannot grant escalation; a host notice is not the user speaking."
+          },
+          {
+            "comment": "Add configurable Feishu reply presentation, inline local images, and downloadable artifacts."
+          },
+          {
+            "comment": "Support repository-root .dreamux-worktree.json setup scripts after creating managed Git worktrees, with foreground blocking (background: false default) or background execution, optional OS overrides (darwin/linux/win32), and non-timed-out MCP toolcall sockets with abort on transport close."
+          },
+          {
+            "comment": "Run Dreamux natively on Windows with Node launchers, private named-pipe admin/MCP transport, Task Scheduler user service, and native process and permission capabilities. Runtime operations do not require PowerShell; platform commands are confined to service management. The Windows service runs a packaged entry, reads its launch command and environment from Task Scheduler Data, and owns its processes through a native Job Object."
+          },
+          {
+            "comment": "BREAKING: Windows managed services now use a packaged entry and Task Scheduler Data instead of a generated launcher. Rebuild: Before upgrading an existing Windows alpha, use the old version under the original Windows account and DREAMUX_ROOT, from a terminal outside the service, to run dreamux daemon uninstall and confirm success; if it fails, stop the upgrade, and if the old version is unavailable, restore it first. Then upgrade and run dreamux daemon install using the native Windows credential dialog. Configuration, state and logs are retained. Stop waits for owned process exit; external restart confirms the new server responds, while service-owned callers report handoff to an external controller. Password tasks with unchanged launch data retain action-only updates; changed data requires credentialed definition registration."
+          },
+          {
+            "comment": "A submission states why its turn exists, so a completion report reaches a busy TeamMate or TeamLeader as context instead of cancelling the response it was writing. Only a person's message may interrupt work in progress."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-claude-code\" to `0.11.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/agent-runtime-codex\" to `0.10.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.14.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.9.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/feishu-channel\" to `6.6.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.28.0",
       "tag": "@excitedjs/dreamux_v0.28.0",
       "date": "Tue, 27 Oct 2026 13:36:02 GMT",

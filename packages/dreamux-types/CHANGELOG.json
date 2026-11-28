@@ -2,6 +2,28 @@
   "name": "@excitedjs/dreamux-types",
   "entries": [
     {
+      "version": "0.14.0",
+      "tag": "@excitedjs/dreamux-types_v0.14.0",
+      "date": "Sat, 28 Nov 2026 02:21:15 GMT",
+      "comments": {
+        "patch": [
+          {
+            "comment": "Publish the current neutral provider contracts required by the Antigravity alpha runtime."
+          }
+        ],
+        "none": [
+          {
+            "comment": "Run development checks with portable quoting and disposable test homes on Windows, Linux and macOS."
+          }
+        ],
+        "minor": [
+          {
+            "comment": "A submission now states why its turn exists as an optional `trigger`. Only `user` may interrupt work in progress; every other value exists so a runtime can deliver news without cutting a running response short. A runtime that ignores the value behaves exactly as before."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.13.0",
       "tag": "@excitedjs/dreamux-types_v0.13.0",
       "date": "Tue, 27 Oct 2026 13:36:02 GMT",

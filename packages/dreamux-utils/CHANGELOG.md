@@ -1,6 +1,24 @@
 # Change Log - @excitedjs/dreamux-utils
 
-This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 0.9.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- Add native Windows executable and npm shim launching with literal multiline arguments, launch-owned Job Object termination, and owner-only filesystem and pipe ACLs through native bindings. Process and file capabilities no longer invoke PowerShell, taskkill, icacls, or whoami.
+
+### Patches
+
+- Publish the current shared runtime utilities required by the Antigravity alpha provider.
+- Match Node's Windows duplicate environment-key precedence during executable lookup and wait for large Job process trees without exceeding the native asynchronous-call limit.
+- Load Koffi only on first Windows capability use, keeping utility and host imports free of unused native addon initialization.
+- Apply Windows private-file permissions to namespaced paths so long state paths work consistently with Node filesystem operations.
+- Allow Administrators-owned private paths to be adopted when Windows grants owner and DACL write permissions, without requiring an enabled administrator group. Retain foreign-owner refusal with the affected path, and support query-only Job observation independently of control access.
+- Retain a verified Windows Job member process for bounded exit observation without requiring process control rights.
+- Report child launch failure through the rejected start promise only; reserve onError notifications for errors emitted by an established child.
+- Allow explicit-platform environment lookup and provide nonmutating environment overrides that replace Windows key aliases while preserving Unix case sensitivity and undefined values.
 
 ## 0.8.0
 Tue, 27 Oct 2026 13:36:02 GMT

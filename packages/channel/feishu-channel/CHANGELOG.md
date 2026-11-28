@@ -1,6 +1,21 @@
 # Change Log - @excitedjs/feishu-channel
 
-This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 6.6.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- An inbound chat message and an inbound document comment are now acknowledged as soon as the session has taken ownership of the work, instead of after the submission finishes. Feishu allows three seconds before it considers an event unhandled and re-pushes it, while this path's own budget is sixty, so a slow inbound — a cold agent-runtime start above all — was systematically re-pushed and opened a second conversation card. A failure after the acknowledgement is reported on the channel log; it is no longer left to the platform to retry. The bot's own identity is retried inside that work rather than ahead of the route, and the bot-added event id is now read from where the SDK actually delivers it, which restores the redelivery dedupe that had been silently inactive.
+- Add reply-only Feishu card_mode, inline local image uploads and ordered native file artifacts with complete delivery receipts. Settle text and artifact partial reply failures with the same structured failure shape, preserving platform errors and receipts.
+- A submit receipt can now answer `appended`: Core put the message into the recipient's history without opening a turn, because it was news rather than a request. It is reported as its own outcome rather than as `duplicate`, which means the reverse — that Core refused before any submission — and its delivery log says so.
+
+### Patches
+
+- Use RE2-compatible artifact path patterns so Antigravity ACP can build the Feishu reply toolbox without rejecting Perl lookaheads.
+- Use native path containment for attachment downloads and enforce Windows ACLs for private channel state.
+- Align reply artifact schemas with native absolute-path parsing on Windows, preserving protocol-relative URL exclusion and upload-before-send behavior.
 
 ## 6.5.0
 Tue, 27 Oct 2026 13:36:02 GMT

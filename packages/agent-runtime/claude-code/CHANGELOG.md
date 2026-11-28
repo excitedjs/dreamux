@@ -1,6 +1,21 @@
 # Change Log - @excitedjs/agent-runtime-claude-code
 
-This log was last generated on Tue, 27 Oct 2026 13:36:02 GMT and should not be manually modified.
+This log was last generated on Sat, 28 Nov 2026 02:21:15 GMT and should not be manually modified.
+
+## 0.11.0
+Sat, 28 Nov 2026 02:21:15 GMT
+
+### Minor changes
+
+- Align agents[].config and unattended approval posture with codex and antigravity: add optional non-empty effort (--effort ahead of extra_args), reject blank model/effort strings, remove permission_mode and turn_timeout_ms from config (tolerated and ignored under R21; stream-inactivity timeout stays an internal 600s constant), always launch with --dangerously-skip-permissions, reject unexpected can_use_tool callbacks fail-fast instead of auto-allowing, and drop removed config constants from public exports.
+- A submission's trigger now states what the message is in the stream-json envelope. A `user` trigger sends `origin: { kind: "human" }`, the CLI's documented kind for what a person typed; every other trigger sends `isSynthetic: true` with no origin, the CLI's documented shape for text the user did not write. Delivery is unchanged: this runtime already reads input mid-turn and never aborts a running response, so no trigger needs to change when the text arrives.
+
+### Patches
+
+- Support native Windows skill junctions and resolve activity homes through the shared provider resolver.
+- Prepare private current-user ownership for Claude log directories and append files before child output, including elevated Windows startup, and close the file handle if preparation fails.
+- Validate Claude activity cursor syntax and query fingerprints before history discovery so unavailable or slow history cannot mask an invalid cursor.
+- Coordinate Claude skill publication per adapter root within the host process. Reuse a valid concurrent winner while preserving stable-path inventory refresh, failure propagation and later retries.
 
 ## 0.10.0
 Tue, 27 Oct 2026 13:36:02 GMT

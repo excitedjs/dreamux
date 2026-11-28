@@ -2,6 +2,43 @@
   "name": "@excitedjs/agent-runtime-codex",
   "entries": [
     {
+      "version": "0.10.0",
+      "tag": "@excitedjs/agent-runtime-codex_v0.10.0",
+      "date": "Sat, 28 Nov 2026 02:21:15 GMT",
+      "comments": {
+        "minor": [
+          {
+            "comment": "Align agents[].config with claude-code and antigravity: add optional non-empty model and effort fields (emitting TOML-quoted -c model and -c model_reasoning_effort ahead of extra_args), remove sandbox_mode and initialize_timeout_ms from config (tolerated and ignored under R21; sandbox defers to native ~/.codex/config.toml or extra_args and handshake timeout stays an internal 10s constant), and drop the removed config constants from public exports."
+          },
+          {
+            "comment": "Support native Windows Codex app-server sessions over private stdio JSON-RPC, including native home resolution and process cleanup."
+          },
+          {
+            "comment": "A non-`user` submission arriving while the thread is busy is appended to the conversation as context instead of starting a turn, so a completion report can no longer cancel the response being written. Idle threads still start a turn, and a `user` submission still steers. Thread busy state is tracked from codex's own `thread/status/changed`."
+          },
+          {
+            "comment": "A started turn now carries its trigger as codex's own `turn/start` `turnTrigger`, so a turn opened by a schedule, a completion report, or another agent is distinguishable from one a person typed. The value reaches only the turn's `x-codex-turn-metadata` payload and changes no delivery behaviour."
+          }
+        ],
+        "patch": [
+          {
+            "comment": "Unwrap completed Codex mcpToolCall result envelopes to structuredContent or joined content text blocks for RuntimeActivity COT display."
+          },
+          {
+            "comment": "Prepare private current-user ownership for Codex log directories and append files before child output, including elevated Windows startup, while preserving existing log contents."
+          }
+        ],
+        "dependency": [
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-types\" to `0.14.0`"
+          },
+          {
+            "comment": "Updating dependency \"@excitedjs/dreamux-utils\" to `0.9.0`"
+          }
+        ]
+      }
+    },
+    {
       "version": "0.9.0",
       "tag": "@excitedjs/agent-runtime-codex_v0.9.0",
       "date": "Tue, 27 Oct 2026 13:36:02 GMT",
