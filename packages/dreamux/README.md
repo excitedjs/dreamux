@@ -91,12 +91,12 @@ For `builtin:codex`, every config field below has a default:
 | `extra_args` | `[]` |
 | `extra_env` | `{}` |
 
-Dreamux always launches Codex with `-c approval_policy=never` and does not pass
-`-c sandbox_mode`; sandbox policy follows native Codex configuration or explicit
-`extra_args`. Older configurations may still contain `approval_policy`,
-`sandbox_mode`, `initialize_timeout_ms`, or `turn_timeout_ms`; all four retired
-keys are ignored by the current config reader. Do not use retired keys to
-configure new installations.
+Dreamux always launches Codex with `-c approval_policy=never` and
+`-c sandbox_mode=danger-full-access` ahead of `extra_args` (override sandbox
+mode via `extra_args` if stricter isolation is needed). Older configurations may
+still contain `approval_policy`, `sandbox_mode`, `initialize_timeout_ms`, or
+`turn_timeout_ms`; all four retired keys are ignored by the current config
+reader. Do not use retired keys to configure new installations.
 
 Claude Code (`builtin:claude-code`) shares the same five base fields plus
 `remote_control` (default `false`), launches with

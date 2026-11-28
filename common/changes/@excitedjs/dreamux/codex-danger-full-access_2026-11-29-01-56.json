@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/dreamux",
+      "comment": "Synchronize Codex documentation and bundled dreamux-maintenance reference with the default -c sandbox_mode=danger-full-access launch flag.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/dreamux"
+}

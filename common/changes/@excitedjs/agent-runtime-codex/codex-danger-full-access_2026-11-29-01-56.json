@@ -1,0 +1,10 @@
+{
+  "changes": [
+    {
+      "packageName": "@excitedjs/agent-runtime-codex",
+      "comment": "Pass -c sandbox_mode=danger-full-access alongside -c approval_policy=never ahead of extra_args so default Codex unattended execution matches Claude Code and Antigravity instead of falling back to read-only on untrusted worktrees.",
+      "type": "patch"
+    }
+  ],
+  "packageName": "@excitedjs/agent-runtime-codex"
+}
