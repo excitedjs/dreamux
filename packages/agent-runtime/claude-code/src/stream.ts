@@ -246,7 +246,6 @@ export function parseLine(line: string): ParsedLine {
         kind: 'control_request',
         requestId: str(parsed['request_id']),
         subtype: isObject(request) ? str(request['subtype']) : null,
-        request: isObject(request) ? request : {},
         raw: parsed,
       };
     }

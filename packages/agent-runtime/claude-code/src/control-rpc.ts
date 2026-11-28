@@ -83,11 +83,7 @@ export class ClaudeCodeControlRpc {
     );
   }
 
-  onControlRequest(
-    requestId: string | null,
-    subtype: string | null,
-    _request: Record<string, unknown>,
-  ): void {
+  onControlRequest(requestId: string | null, subtype: string | null): void {
     if (requestId === null || !this.stdin.writable) return;
     // Unattended posture: CLI launch passes `--dangerously-skip-permissions`;
     // unexpected tool-permission callbacks fail fast rather than auto-allowing.
