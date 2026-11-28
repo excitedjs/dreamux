@@ -10,8 +10,8 @@ Commands run against the complete current worktree:
 - `node common/scripts/install-run-rush.js lint` — passed (10/10 packages).
 - `node common/scripts/install-run-rush.js test` — passed across all packages (initial 64-way parallel run hit one transient tmux startup flake in untouched `@excitedjs/agent-runtime-antigravity` `tests/tmux-runtime.test.ts` `has-session failed (server exited unexpectedly)`; rerun `rush test --only @excitedjs/agent-runtime-antigravity` passed cleanly).
 - `node common/scripts/install-run-rush.js typecheck:tests` — passed (9/9 packages).
-- `node common/scripts/install-run-rush.js change --verify --no-fetch --target-branch next` — verified after committing the 2 change files (`@excitedjs/agent-runtime-codex`, `@excitedjs/dreamux`).
-- `python3 .agents/skills/dev-workflow/scripts/init_task.py check --domain architecture --slug align-provider-config-options --allow-in-flight` — passed (`Task record OK`).
+- `node common/scripts/install-run-rush.js change --verify --no-fetch --target-branch next` — passed (2 change files verified: `@excitedjs/agent-runtime-codex`, `@excitedjs/dreamux`).
+- `node .agents/scripts/check.mjs` — passed.
 - `git diff --check` — passed.
 
 ## Acceptance criteria coverage
@@ -24,7 +24,7 @@ Commands run against the complete current worktree:
 
 ## Review adjudication
 
-- Follow-up slice: Pending independent review from `@Devbox` on the follow-up Draft PR.
+- Follow-up slice ([PR #499](https://github.com/excitedjs/dreamux/pull/499)): [Devbox review](https://github.com/excitedjs/dreamux/pull/499#pullrequestreview-6099518603) **APPROVED** with full 13-file diff coverage, independent `codex-cli 0.172.0` app-server smoke check, independent full monorepo gate rerun (`build`, `lint`, `test`, `typecheck:tests`, `change --verify`), and zero code or documentation findings (only the expected Draft-stage `State: review` KB check, resolved by this closeout).
 - Prior merged slice ([PR #498](https://github.com/excitedjs/dreamux/pull/498), [Devbox review](https://github.com/excitedjs/dreamux/pull/498#pullrequestreview-6088215089)): operator adjudicated on 2026-11-28 ("仅修 1&2，3 留待后续 (Recommended)"); findings 1 and 2 landed in PR #498, finding 3 deferred below.
 
 ## Deferred cleanup trail
@@ -33,11 +33,9 @@ Commands run against the complete current worktree:
 
 ## Knowledge-owner closeout
 
-Pending completion of independent review for the follow-up slice. Planned owner matrix:
-
 | Owner | Status | Notes |
 | --- | --- | --- |
-| Task record (`.agents/tasks/architecture/align-provider-config-options/`) | In progress | Reopened in `review`; will reconcile review adjudication and set `State: done` at closeout. |
+| Task record (`.agents/tasks/architecture/align-provider-config-options/`) | Updated | Reconciled requirement, solution, operator rulings, Devbox review approval, verification, and set `State: done`. |
 | `packages/dreamux/skills/dispatcher/dreamux-maintenance/references/builtin-codex.md` | Updated | Updated current-state Codex launch note (`-c approval_policy=never` and `-c sandbox_mode=danger-full-access`, overridable via `extra_args`). |
 | `.agents/domains/provider-runtime.md` | N/A | Does not hardcode Codex `sandbox_mode` CLI flags; unaffected by this slice. |
 | `.agents/product/README.md` | N/A | No existing product-catalog promise contradicted. |
