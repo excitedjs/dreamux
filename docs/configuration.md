@@ -103,12 +103,12 @@ Provider: `builtin:codex`. All fields below are optional.
 | `extra_args` | `[]` | Additional Codex CLI arguments (appended last) |
 | `extra_env` | `{}` | Environment overrides for this runtime |
 
-Dreamux requires Codex **0.137+**, always launches with `-c approval_policy=never`
-(rejecting unexpected approval callbacks fail-fast), and does not pass
-`-c sandbox_mode`: configure sandbox policy in `~/.codex/config.toml` or pass
-`-c sandbox_mode=...` in `extra_args`. Retired keys (`approval_policy`,
-`sandbox_mode`, `initialize_timeout_ms`, and `turn_timeout_ms`) are ignored on
-load.
+Dreamux requires Codex **0.137+**, always launches with
+`-c approval_policy=never` and `-c sandbox_mode=danger-full-access` ahead of
+`extra_args`, and rejects unexpected approval callbacks fail-fast. Pass
+`-c sandbox_mode=...` in `extra_args` if you want a stricter sandbox. Retired
+keys (`approval_policy`, `sandbox_mode`, `initialize_timeout_ms`, and
+`turn_timeout_ms`) are ignored on load.
 
 Codex uses its native configuration and authentication. Its home defaults to
 `~/.codex`; set `extra_env.CODEX_HOME` on a named runtime if you need a different

@@ -15,7 +15,8 @@ Accepted `agents[].config` fields, defaults, and meanings:
 - `extra_env`: string-to-string map, default `{}`; merged into the child
   environment.
 
-Codex approval policy is not configurable: the launch always passes
-`-c approval_policy=never` and rejects unexpected approval callbacks fail-fast.
-Sandbox policy is not passed by Dreamux and follows native Codex configuration
-or explicit `extra_args`.
+Codex unattended launch always passes `-c approval_policy=never` and
+`-c sandbox_mode=danger-full-access` ahead of `extra_args`, and rejects
+unexpected approval callbacks fail-fast. Override sandbox mode via `extra_args`
+(for example `["-c", "sandbox_mode=workspace-write"]`) when stricter isolation
+is needed.

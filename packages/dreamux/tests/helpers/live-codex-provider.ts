@@ -98,7 +98,6 @@ export async function liveCodexProvider() {
   const config: DispatcherCodexConfig = {
     ...defaultDispatcherCodexConfig(),
     bin,
-    extra_args: ['-c', 'sandbox_mode=danger-full-access'],
     extra_env: { CODEX_HOME: codexHome },
   };
   const paths = {

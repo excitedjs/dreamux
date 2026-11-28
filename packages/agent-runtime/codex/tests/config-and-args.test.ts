@@ -84,13 +84,17 @@ describe('readDispatcherCodexConfig', () => {
 });
 
 describe('codexCliArgs', () => {
-  it('emits only approval_policy=never when model, effort, and extra_args are unset', () => {
+  it('emits approval_policy=never and sandbox_mode=danger-full-access when model, effort, and extra_args are unset', () => {
     const args = codexCliArgs(defaultDispatcherCodexConfig());
-    expect(args).toEqual(['-c', 'approval_policy=never']);
-    expect(args.join(' ')).not.toContain('sandbox_mode');
+    expect(args).toEqual([
+      '-c',
+      'approval_policy=never',
+      '-c',
+      'sandbox_mode=danger-full-access',
+    ]);
   });
 
-  it('emits TOML-quoted model and effort overrides ahead of extra_args', () => {
+  it('emits TOML-quoted model and effort overrides ahead of extra_args so extra_args can override sandbox_mode', () => {
     const args = codexCliArgs({
       model: 'gpt-6.2/test "quoted"',
       effort: 'xhigh',
@@ -99,6 +103,8 @@ describe('codexCliArgs', () => {
     expect(args).toEqual([
       '-c',
       'approval_policy=never',
+      '-c',
+      'sandbox_mode=danger-full-access',
       '-c',
       'model="gpt-6.2/test \\"quoted\\""',
       '-c',
